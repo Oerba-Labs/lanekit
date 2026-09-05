@@ -184,7 +184,7 @@ const create = (config, name, options) => {
 
 const list = (config) => {
     const mainRepo = mainRepoFrom(process.cwd())
-    const found = lanes(process.cwd())
+    const found = lanes(process.cwd(), config.integrationBranch)
 
     const rows = [{
         name: 'main', path: mainRepo, branch: config.integrationBranch,
@@ -241,7 +241,7 @@ const list = (config) => {
 const sweep = (config, only, options) => {
     const mainRepo = mainRepoFrom(process.cwd())
     const here = process.cwd()
-    const candidates = lanes(here).filter((lane) => !only || lane.name === only)
+    const candidates = lanes(here, config.integrationBranch).filter((lane) => !only || lane.name === only)
 
     if (!candidates.length) {
         console.log(only ? `\n  no lane called "${only}"\n` : '\n  no lanes\n')
