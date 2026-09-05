@@ -21,6 +21,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
+import { planQueue, landBlockers } from '../lib/queue.mjs'
 import {
     lanes, laneDirFor, mainRepoFrom, prefixFor,
     nextFreePort, portOf, listenersOn, writeEnv, readEnv, isUnder
@@ -29,6 +30,7 @@ import {
 const DIM = '\x1b[2m'
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
+const YELLOW = '\x1b[33m'
 const OFF = '\x1b[0m'
 
 const log = (message) => console.log(`${DIM}[lane]${OFF} ${message}`)
@@ -223,6 +225,157 @@ const list = (config) => {
 }
 
 // ---------------------------------------------------------------------------
+// queue
+// ---------------------------------------------------------------------------
+
+const VERDICT_COLOUR = {
+    'land now': GREEN,
+    'gate now': '',
+    'hold the gate': YELLOW,
+    'commit first': YELLOW,
+    'rebase first': YELLOW,
+    parked: DIM
+}
+
+const queue = (config, only) => {
+    const mainRepo = mainRepoFrom(process.cwd())
+    const found = lanes(process.cwd(), config.integrationBranch)
+    if (!found.length) {
+        console.log('\n  no lanes\n')
+        return 0
+    }
+
+    const plan = planQueue(mainRepo, found, config)
+
+    if (only) {
+        const blockers = landBlockers(plan, only)
+        if (!blockers.length) {
+            console.log(`\n  ${GREEN}${only} is clear to land.${OFF}\n`)
+            return 0
+        }
+        console.log(`\n  ${YELLOW}${only} is not clear to land:${OFF}\n`)
+        for (const blocker of blockers) {
+            console.log(`    ${blocker.id.padEnd(8)} ${blocker.why}${blocker.overridable ? `  ${DIM}(--force overrides this one)${OFF}` : ''}`)
+        }
+        console.log('')
+        return 1
+    }
+
+    const width = Math.max(...plan.entries.map((entry) => entry.name.length), 4)
+    console.log('')
+    console.log(`  ${'LANE'.padEnd(width)}  TIER  VERDICT`)
+    const ordered = [...plan.entries].sort((a, b) =>
+        (a.position ?? 99) - (b.position ?? 99) || a.name.localeCompare(b.name))
+    for (const entry of ordered) {
+        const colour = VERDICT_COLOUR[entry.verdict] ?? ''
+        const tier = entry.tier ? `${entry.tier}` : '—'
+        console.log(`  ${entry.name.padEnd(width)}  ${tier.padEnd(4)}  ${colour}${entry.verdict}${OFF}  ${DIM}${entry.why ?? ''}${OFF}`)
+        for (const collision of entry.collisions ?? []) {
+            console.log(`  ${' '.repeat(width)}        ${DIM}collides with ${collision.lane}: ${collision.paths.slice(0, 3).join(', ')}${OFF}`)
+        }
+    }
+    console.log('')
+    return 0
+}
+
+// ---------------------------------------------------------------------------
+// land
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge a lane into the integration branch, then clear it away.
+ *
+ * THE PLAN IS RE-READ, never taken from a previous command. A plan read a
+ * minute ago predates the merge about to be made, and the thing it is most
+ * likely to be wrong about is whether somebody else just landed.
+ *
+ * CONTAINMENT IS READ PLAINLY rather than inferred from the merge's exit code,
+ * because everything after it acts on the answer — the sweep removes a worktree
+ * on the strength of "this landed", and a merge that reported success without
+ * landing would take the work with it.
+ */
+const land = (config, name, options) => {
+    const mainRepo = mainRepoFrom(process.cwd())
+    const here = process.cwd()
+
+    if (!name) fail('lane land needs a name.')
+
+    const found = lanes(here, config.integrationBranch)
+    const lane = found.find((candidate) => candidate.name === name)
+    if (!lane) fail(`there is no lane called "${name}".`)
+
+    if (isUnder(here, lane.path)) {
+        fail(`${name} is the lane you are standing in.\n\n` +
+            `  cd ${mainRepo} first — landing removes this worktree, and that would take\n` +
+            '  the ground out from under the command doing it.')
+    }
+
+    const current = gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], mainRepo)
+    if (current.out !== config.integrationBranch) {
+        fail(`${mainRepo} is on "${current.out}", not ${config.integrationBranch}.\n\n` +
+            `  A land merges into ${config.integrationBranch}; switch to it first.`)
+    }
+
+    const dirtyMain = gitQuiet(['status', '--porcelain'], mainRepo).out
+        .split('\n').filter(Boolean)
+        .filter((line) => !(config.lane.linkOnCreate ?? []).some((rel) => line.includes(rel)))
+    if (dirtyMain.length) {
+        fail(`${config.integrationBranch} has uncommitted changes.\n\n` +
+            dirtyMain.map((line) => `  ${line}`).join('\n') +
+            '\n\n  A merge into a dirty branch mixes them into what landed.')
+    }
+
+    const plan = planQueue(mainRepo, found, config)
+    const blockers = landBlockers(plan, name)
+    const fatal = blockers.filter((blocker) => !(blocker.overridable && options.force))
+    if (fatal.length) {
+        const waived = blockers.length - fatal.length
+        fail(`${name} cannot land yet.\n\n` +
+            fatal.map((blocker) => `  ${blocker.id.padEnd(8)} ${blocker.why}`).join('\n') +
+            (waived ? `\n\n  ${waived} overridden by --force.` : '') +
+            '\n\n  `lane queue` shows the whole picture.')
+    }
+    if (blockers.length) log(`${blockers.length} blocker overridden by --force`)
+
+    const entry = plan.entries.find((candidate) => candidate.name === name)
+    const branch = lane.branch ?? name
+
+    if (options.dryRun) {
+        log(`would merge ${branch} into ${config.integrationBranch} (--no-ff), then sweep it`)
+        log(`green: tier ${entry.tier} run on ${String(entry.snapshot).slice(0, 10)}`)
+        return
+    }
+
+    log(`merging ${branch} into ${config.integrationBranch} at ${mainRepo}`)
+    const merge = spawnSync('git', ['merge', '--no-ff', '--no-edit', branch],
+        { cwd: mainRepo, encoding: 'utf8' })
+    if (merge.status !== 0) {
+        spawnSync('git', ['merge', '--abort'], { cwd: mainRepo })
+        fail(`the merge conflicted and was aborted — ${config.integrationBranch} is as it was.\n\n` +
+            `${(merge.stdout ?? '').trim().split('\n').slice(0, 8).map((l) => `  ${l}`).join('\n')}\n\n` +
+            `  Resolve it deliberately from ${mainRepo}:\n` +
+            `    git merge --no-ff ${branch}`)
+    }
+
+    // Read, not inferred. Everything below acts on this answer.
+    const landed = gitQuiet(['merge-base', '--is-ancestor', branch, config.integrationBranch], mainRepo)
+    if (!landed.ok) {
+        fail(`the merge reported success but ${branch} is not contained in ${config.integrationBranch}.\n\n` +
+            '  Nothing has been swept. Look before doing anything else.')
+    }
+    const at = gitQuiet(['rev-parse', '--short', 'HEAD'], mainRepo).out
+    log(`merged — ${config.integrationBranch} is at ${at}`)
+
+    if (options.sweep) sweep(config, name, { dryRun: false })
+    else log('left the lane in place (--no-sweep)')
+
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}`)
+    console.log(`  ${GREEN}LANDED${OFF}  ·  ${name}  ·  ${config.integrationBranch} at ${at}`)
+    console.log(`${rule}\n`)
+}
+
+// ---------------------------------------------------------------------------
 // sweep
 // ---------------------------------------------------------------------------
 
@@ -295,13 +448,13 @@ const sweep = (config, only, options) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep }
+const COMMANDS = { new: create, list, sweep, queue, land }
 
 const main = () => {
     const argv = process.argv.slice(2)
     const command = argv[0]
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep> [name] [--base <ref>] [--install] [--no-provision] [--dry-run]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land> [name] [--base <ref>] [--install] [--no-provision] [--no-sweep] [--force] [--dry-run]\n`)
         process.exit(2)
     }
 
@@ -309,7 +462,9 @@ const main = () => {
         base: argv.includes('--base') ? argv[argv.indexOf('--base') + 1] : undefined,
         provision: !argv.includes('--no-provision'),
         install: argv.includes('--install'),
-        dryRun: argv.includes('--dry-run')
+        dryRun: argv.includes('--dry-run'),
+        sweep: !argv.includes('--no-sweep'),
+        force: argv.includes('--force')
     }
     const positional = argv.slice(1).filter((arg) => !arg.startsWith('--'))
     const name = positional[0] !== options.base ? positional[0] : positional[1]
@@ -324,6 +479,8 @@ const main = () => {
     if (command === 'new' && !name) fail('lane new needs a name.')
     if (command === 'new') return create(config, name, options)
     if (command === 'list') return list(config)
+    if (command === 'queue') return process.exit(queue(config, name))
+    if (command === 'land') return land(config, name, options)
     return sweep(config, name, options)
 }
 

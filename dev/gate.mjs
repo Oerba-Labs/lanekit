@@ -29,6 +29,7 @@ import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
 import { mintRunId, recordRun } from '../lib/runs.mjs'
+import { tierFor } from '../lib/tiers.mjs'
 
 const DIM = '\x1b[2m'
 const RED = '\x1b[31m'
@@ -204,11 +205,6 @@ log(`${artifactCount} generated artifact${artifactCount === 1 ? '' : 's'} checke
 // 5. the tier
 // ---------------------------------------------------------------------------
 
-const seam = matching(config.gate?.seam ?? [])
-const sides = config.gate?.sides ?? {}
-const relevant = files.filter((file) => !file.endsWith('.md'))
-const touchesApp = relevant.some((file) => (sides.app ?? []).some((p) => file.startsWith(p)))
-
 /**
  * WHY THE SEAM CANNOT EARN MORE THAN THE APP BUILD, YET.
  *
@@ -218,11 +214,11 @@ const touchesApp = relevant.some((file) => (sides.app ?? []).some((p) => file.st
  * still reported — knowing a change can break the far side with nothing to
  * catch it is worth saying out loud, and it is the argument for the tests that
  * would let this mean something.
+ *
+ * `tierFor` is shared with the queue, so the tier predicted when ordering lanes
+ * is the tier actually run here.
  */
-const earned = touchesApp || seam.length ? 2 : 1
-const why = seam.length
-    ? `touches the client↔server seam (${seam.join(', ')})`
-    : touchesApp ? 'changes the app' : 'server or tooling only'
+const { tier: earned, seam, why } = tierFor(files, config)
 
 const chosen = options.fast ? 1 : (options.tier ?? earned)
 const short = chosen < earned
