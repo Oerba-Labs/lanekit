@@ -24,6 +24,16 @@ Two files, and nothing else:
 dependencies, so a Python or Swift project does not grow a `node_modules` to
 use it. It needs Node on the machine and nothing in the tree.
 
+## Starting a project that has lanes from its first commit
+
+    node <lanekit>/bin/init.mjs "Piano Sheets"
+
+writes both files, a `check` script that is the whole of tier 1 and says it checks
+nothing until the project's tests are put in it, and the first commit on `main`. It takes
+a port window above any sibling project's (`--port-base` to choose), and refuses a
+directory with anything in it: an existing repository's roots, environment file and tests
+are decisions already made, and its two files are written by hand against the table below.
+
 ## Commands
 
     <shim> lane new <name>     start a lane: worktree, branch, port, own state
@@ -41,7 +51,7 @@ directories, and `--no-provision` to make the worktree and stop.
 | `name`, `slug` | display, and the safe-in-a-path form |
 | `integrationBranch` | what "landed" means, and what a lane branches from |
 | `roots` | the project's directories; refused if one names nothing |
-| `lane.portBase` / `portCeiling` | the window a lane's port is allocated from; a machine takes a share of it with `LANEKIT_PORT_BASE` / `LANEKIT_PORT_CEILING`, which narrow it and never widen it |
+| `lane.portBase` / `portCeiling` | the window a lane's port is allocated from; a machine takes a share of it with `LANEKIT_PORTS="<slug>=<first>-<last> …"`, which names the project, narrows its window and never widens it |
 | `lane.copyOnCreate` | gitignored files a checkout needs — copied, never shared |
 | `lane.linkOnCreate` | big rebuildable directories — shared by symlink |
 | `lane.env` | the file a lane records its port and paths in, and which keys |
