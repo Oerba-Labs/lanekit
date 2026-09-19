@@ -41,12 +41,13 @@ directories, and `--no-provision` to make the worktree and stop.
 | `name`, `slug` | display, and the safe-in-a-path form |
 | `integrationBranch` | what "landed" means, and what a lane branches from |
 | `roots` | the project's directories; refused if one names nothing |
-| `lane.portBase` / `portCeiling` | the window a lane's port is allocated from |
+| `lane.portBase` / `portCeiling` | the window a lane's port is allocated from; a machine takes a share of it with `LANEKIT_PORT_BASE` / `LANEKIT_PORT_CEILING`, which narrow it and never widen it |
 | `lane.copyOnCreate` | gitignored files a checkout needs — copied, never shared |
 | `lane.linkOnCreate` | big rebuildable directories — shared by symlink |
 | `lane.env` | the file a lane records its port and paths in, and which keys |
 | `lane.makeDirs` | directories the environment now points at |
 | `lane.provision` | commands that make the lane's stack runnable |
+| `lane.seed` | commands that fill what a lane must own (its database, its media); run on every `new` unless `--no-seed` |
 
 `{lane}`, `{main}`, `{port}` and `{name}` are substituted in any configured
 value.

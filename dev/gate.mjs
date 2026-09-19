@@ -167,12 +167,20 @@ const matching = (prefixes) => files.filter((file) => prefixes.some((prefix) => 
  * one: a stale artifact is restored and reported rather than silently fixed.
  * Regenerating for you would mean the gate commits work nobody reviewed.
  */
+// Declared here, above its first use: a generator's command is expanded the same way a
+// step's is, so that a project can point either at a script of its own (`{repo}/tools/…`)
+// rather than at a program that happens to be installed on the machine running the gate.
+const expand = (value) => value
+    .replace(/\{repo\}/g, REPO)
+    .replace(/\{app\}/g, path.join(REPO, config.roots.app ?? ''))
+    .replace(/\{server\}/g, path.join(REPO, config.roots.server ?? ''))
+
 const staleArtifacts = []
 for (const artifact of config.gate?.generated ?? []) {
     if (!touches(artifact.when)) continue
     log(`checking ${artifact.what} is what its source generates…`)
     const cwd = artifact.cwd ? path.join(REPO, artifact.cwd) : REPO
-    const generated = spawnSync(artifact.command, artifact.args ?? [],
+    const generated = spawnSync(expand(artifact.command), (artifact.args ?? []).map(expand),
         { cwd, encoding: 'utf8' })
     if (generated.status !== 0) {
         fail('generate', `could not regenerate ${artifact.what}.`,
@@ -237,11 +245,6 @@ log(`tier ${chosen}: ${plan.label}`)
 // ---------------------------------------------------------------------------
 // 6. run it
 // ---------------------------------------------------------------------------
-
-const expand = (value) => value
-    .replace(/\{repo\}/g, REPO)
-    .replace(/\{app\}/g, path.join(REPO, config.roots.app ?? ''))
-    .replace(/\{server\}/g, path.join(REPO, config.roots.server ?? ''))
 
 const failures = []
 for (const step of plan.steps ?? []) {

@@ -158,6 +158,20 @@ const create = (config, name, options) => {
         fs.mkdirSync(expand(template, vars), { recursive: true })
     }
 
+    // Seeding is not provisioning. Provisioning builds what a lane can share with main
+    // and is skipped when it is linked instead; seeding fills what the lane must own —
+    // its database, its media — and a lane without it serves an empty catalogue that
+    // answers every question sensibly and wrongly. So it runs whether or not anything
+    // was linked, and only `--no-seed` or `--no-provision` leaves it out.
+    if (options.provision && options.seed) {
+        for (const step of config.lane.seed ?? []) {
+            log(`${step.what}…`)
+            const cwd = step.cwd ? path.join(laneDir, expand(step.cwd, vars)) : laneDir
+            const args = (step.args ?? []).map((arg) => expand(arg, vars))
+            run(expand(step.command, vars), args, cwd, step.what)
+        }
+    }
+
     if (!options.provision) {
         log('skipped provisioning — the worktree is ready, the stack is not')
     } else if (options.install || !(config.lane.linkOnCreate ?? []).length) {
@@ -454,7 +468,7 @@ const main = () => {
     const argv = process.argv.slice(2)
     const command = argv[0]
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land> [name] [--base <ref>] [--install] [--no-provision] [--no-sweep] [--force] [--dry-run]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run]\n`)
         process.exit(2)
     }
 
@@ -462,6 +476,7 @@ const main = () => {
         base: argv.includes('--base') ? argv[argv.indexOf('--base') + 1] : undefined,
         provision: !argv.includes('--no-provision'),
         install: argv.includes('--install'),
+        seed: !argv.includes('--no-seed'),
         dryRun: argv.includes('--dry-run'),
         sweep: !argv.includes('--no-sweep'),
         force: argv.includes('--force')
