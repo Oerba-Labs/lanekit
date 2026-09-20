@@ -38,6 +38,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { CONFIG_NAME } from '../lib/config.mjs'
+import { writeClaudeCommands } from './claude-commands.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -224,6 +225,9 @@ const main = () => {
     // the first port of the window, so main and its first lane never serve on one.
     write('.env', `PORT=${portBase}\n`)
     log(`wrote ${CONFIG_NAME}, ./${slug}, ./check, .gitignore and README.md`)
+    // /lane and /land for Claude Code, in the repository so they are wherever a checkout is.
+    writeClaudeCommands(dir, name, slug)
+    log('wrote .claude/commands/lane.md and land.md')
 
     const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
     try {

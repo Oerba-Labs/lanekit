@@ -34,6 +34,17 @@ a port window above any sibling project's (`--port-base` to choose), and refuses
 directory with anything in it: an existing repository's roots, environment file and tests
 are decisions already made, and its two files are written by hand against the table below.
 
+## `/lane` and `/land` for Claude Code
+
+`init` writes them into `.claude/commands/`, and an existing repository gets them with
+
+    node /path/to/lanekit/bin/claude-commands.mjs
+
+They are committed rather than kept in a home directory, so they exist in a fresh workspace,
+an agent's sandbox and a lane alike, and they name the project's own shim. They hold the
+procedure, which is the same everywhere; what is particular to a project belongs in its
+copy, and an existing file is left alone without `--force`.
+
 ## Commands
 
     <shim> lane new <name>     start a lane: worktree, branch, port, own state
