@@ -163,6 +163,9 @@ const toggle = (key) => {
     draw(true)
 }
 const pending = new Map()       // `${repo}/${lane}` -> { verb, stage, jobId }
+let naming = null               // { repo, sha, from }: the commit row a new lane is being named on
+let committing = null           // { key, amend }: the lane whose commit message is being written
+let here = null                 // { repo, lane }: where the editor is, the file in front's lane (null lane: main)
 const sections = new Map()      // repo id -> the parts of its section that are kept
 let shownJob = null
 let shownFrom = 0
@@ -227,6 +230,12 @@ setInterval(() => {
     for (const node of document.querySelectorAll('.live-clock')) node.textContent = secondsSince(Number(node.dataset.since))
 }, 1000)
 host.on('focus', (message) => focusLane(message.repo, message.lane))
+host.on('here', (message) => {
+    const next = message.repo ? { repo: message.repo, lane: message.lane ?? null } : null
+    if (JSON.stringify(next) !== JSON.stringify(here)) { here = next; draw(true) }
+})
+const isHere = (repo, lane) => here && here.repo === repo.id && (here.lane ?? null) === (lane?.name ?? null)
+const herePill = () => el('span', { class: 'here', text: 'You are here', title: 'The file in front of you in the editor is in this checkout' })
 
 const press = async (body) => {
     let pressed
@@ -458,15 +467,120 @@ const failureOf = (repo, lane) => {
     ]))
 }
 
-const commitRow = (repo, commit, className, label) => opens(
-    el('li', { class: `commit ${className}` },
+/** A new lane's name, typed in the row of the commit it will start from. Enter makes it; Escape leaves it. */
+const namingForm = (repo, commit, from) => {
+    const input = el('input', {
+        name: 'name', placeholder: 'its name, like practice-mode', autocomplete: 'off', spellcheck: 'false', pattern: '[a-z0-9][a-z0-9\\-]*', required: true,
+        title: 'Lowercase letters, digits and dashes: it becomes a folder and a branch', 'aria-label': `A name for a new lane from ${commit.short}`
+    })
+    const form = el('form', {
+        class: 'name-lane',
+        onsubmit: async (event) => {
+            event.preventDefault()
+            if (!form.reportValidity()) return
+            const name = input.value.trim()
+            naming = null
+            draw(true)
+            await press({ repo: repo.id, verb: 'new', name, base: commit.sha })
+        },
+        onkeydown: (event) => { if (event.key === 'Escape') { event.preventDefault(); naming = null; draw(true) } }
+    }, input,
+    el('button', { type: 'submit', class: 'btn primary', text: 'Make it' }),
+    el('button', { type: 'button', class: 'btn quiet', text: 'Cancel', onclick: () => { naming = null; draw(true) } }),
+    el('span', { class: 'muted', text: from ? `on top of ${from}` : `from ${commit.short}` }))
+    setTimeout(() => input.focus(), 0)
+    return form
+}
+const isNaming = (repo, commit) => naming && naming.repo === repo.id && naming.sha === commit.sha
+const startNaming = (repo, commit, from = null) => { naming = { repo: repo.id, sha: commit.sha, from }; draw(true) }
+
+/** What a commit row offers on hover: a new lane from it (and, in the editor, the row itself opens its changes). */
+const rowActions = (repo, commit, from = null) => el('span', { class: 'row-actions' },
+    el('button', {
+        type: 'button', class: 'btn', text: 'New lane here', disabled: busyIn(repo.id),
+        title: from ? `A lane on top of ${from}, from ${commit.short}` : `A lane of its own, starting from ${commit.short}`,
+        onclick: (event) => { event.stopPropagation(); startNaming(repo, commit, from) }
+    }))
+
+/** A row a lane can be dropped on: rebased onto that commit of main, after a look at what would happen. */
+const dropTarget = (row, repo, commit) => {
+    row.addEventListener('dragover', (event) => {
+        if (!event.dataTransfer?.types?.includes(LANE_DRAG)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        row.classList.add('drop-here')
+    })
+    row.addEventListener('dragleave', () => row.classList.remove('drop-here'))
+    row.addEventListener('drop', (event) => {
+        row.classList.remove('drop-here')
+        const key = event.dataTransfer?.getData(LANE_DRAG)
+        if (!key || !key.startsWith(`${repo.id}/`)) return
+        event.preventDefault()
+        pending.set(key, { verb: 'rebase-onto', stage: 'confirm', sha: commit.sha, short: commit.short, subject: commit.subject })
+        draw(true)
+        focusLane(repo.id, key.slice(repo.id.length + 1))
+    })
+    return row
+}
+const LANE_DRAG = 'text/x-lanekit-lane'
+
+const commitRow = (repo, commit, className, label) => {
+    const row = el('li', { class: `commit ${className}` },
         label ? el('span', { class: 'branch-name', text: label }) : null,
+        label && isHere(repo, null) ? herePill() : null,
         el('span', { class: 'sha', text: commit.short }),
-        el('span', { class: 'subject', text: commit.subject, title: `${commit.subject}\n${commit.author}` }),
-        el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) })),
-    `${commit.short} ${commit.subject}: show its changes`, showCommit(repo, commit))
+        isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
+            el('span', { class: 'subject', text: commit.subject, title: `${commit.subject}\n${commit.author}` }),
+            el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) }),
+            rowActions(repo, commit)
+        ])
+    dropTarget(row, repo, commit)
+    return isNaming(repo, commit) ? row : opens(row, `${commit.short} ${commit.subject}: show its changes`, showCommit(repo, commit))
+}
 
 /** "N uncommitted", which in the editor opens them against the checkout's own commit. */
+const STATUS_WORD = { M: 'changed', A: 'added', D: 'deleted', R: 'renamed', C: 'copied', T: 'changed', '?': 'new' }
+const CHANGES_SHOWN = 8
+
+/** What is uncommitted in a lane, file by file, with Commit… and Amend; the file opens its diff in the editor. */
+const changesOf = (repo, lane, key) => {
+    const files = lane.changes ?? []
+    if (!lane.dirty || lane.operation) return null
+    const all = expanded.has(`${key}:changes`)
+    const shown = all ? files : files.slice(0, CHANGES_SHOWN)
+    const writing = committing?.key === key
+    const busy = busyIn(repo.id)
+    const message = el('input', { name: 'message', placeholder: committing?.amend ? 'a new message, or leave it as it was' : 'what this commit does', autocomplete: 'off', 'aria-label': 'Commit message' })
+    const form = writing ? el('form', {
+        class: 'commit-form',
+        onsubmit: async (event) => {
+            event.preventDefault()
+            const text = message.value.trim()
+            if (!committing.amend && !text) { message.focus(); return }
+            const amend = committing.amend
+            committing = null
+            draw(true)
+            await press({ repo: repo.id, verb: 'commit', lane: lane.name, message: text, amend })
+        },
+        onkeydown: (event) => { if (event.key === 'Escape') { event.preventDefault(); committing = null; draw(true) } }
+    }, message,
+    el('button', { type: 'submit', class: 'btn primary', text: committing.amend ? 'Amend' : 'Commit' }),
+    el('button', { type: 'button', class: 'btn quiet', text: 'Cancel', onclick: () => { committing = null; draw(true) } })) : null
+    if (writing) setTimeout(() => message.focus(), 0)
+    return el('div', { class: 'changes' },
+        el('div', { class: 'changes-head' },
+            el('span', { class: 'files-head', text: `Uncommitted changes · ${lane.dirty}` }),
+            el('span', { class: 'grow' }),
+            writing ? null : el('button', { type: 'button', class: 'btn', text: 'Commit…', disabled: busy, title: 'Commit every file below, with a message', onclick: () => { committing = { key, amend: false }; draw(true) } }),
+            writing || !lane.ahead ? null : el('button', { type: 'button', class: 'btn quiet', text: 'Amend', disabled: busy, title: `Fold every file below into ${lane.name}'s newest commit`, onclick: () => { committing = { key, amend: true }; draw(true) } })),
+        form,
+        el('ul', { class: 'change-list' }, shown.map((file) => opens(el('li', {},
+            el('span', { class: `change-status s-${file.status === '?' ? 'new' : file.status}`, text: file.status === '?' ? 'U' : file.status, title: STATUS_WORD[file.status] ?? file.status }),
+            el('span', { class: 'change-path', text: file.path })),
+        `Show what is uncommitted in ${file.path}`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: lane.name, path: file.path })))),
+        files.length > CHANGES_SHOWN ? el('button', { type: 'button', class: 'btn link', text: all ? 'Show fewer' : `Show ${files.length - CHANGES_SHOWN} more`, onclick: () => toggle(`${key}:changes`) }) : null)
+}
+
 const uncommittedOf = (repo, checkout, name, count, words = `${count} uncommitted`) =>
     opens(state('warn', words, 'small'), `Show what is uncommitted in ${name}`,
         () => openIn('uncommitted', { repo: repo.path, checkout, name }))
@@ -509,6 +623,11 @@ const confirmOf = (repo, lane, key) => {
             el('p', { text: `Rebase ${lane.name} onto ${base}? It replays its ${plural(lane.ahead || 0, 'commit')} on ${base} as it is now (${lane.behind} behind). If they conflict it stops, names the files, and waits for you to resolve them.` }),
             go('Rebase it', { repo: repo.id, verb: 'rebase', lane: lane.name }), cancel)
     }
+    if (waiting.verb === 'rebase-onto') {
+        return el('div', { class: 'confirm' },
+            el('p', { text: `Rebase ${lane.name} onto ${waiting.short} "${waiting.subject}"? Its ${plural(lane.ahead || 0, 'commit')} will start from that commit of ${base} instead of where they start now. If they conflict it stops, names the files, and waits for you.` }),
+            go('Rebase it', { repo: repo.id, verb: 'rebase', lane: lane.name, onto: waiting.sha }), cancel)
+    }
     if (waiting.verb === 'abort') {
         return el('div', { class: 'confirm' },
             el('p', { text: `Abort ${lane.name}'s rebase? It puts the lane back exactly as it was before the rebase began; what you resolved so far is dropped.` }),
@@ -544,21 +663,22 @@ const laneCard = (repo, lane) => {
 
     const buttons = []
     const ask = (verb) => () => { pending.set(key, { verb, stage: 'confirm' }); draw(true) }
+    // Stopped mid-rebase: the three ways on sit in the conflict panel, shown whether or not the pointer is here.
+    const conflictButtons = []
     if (lane.operation === 'rebase') {
-        // Stopped mid-rebase: the files, and the three ways on.
         if (host.inEditor && lane.conflicts?.length) {
-            buttons.push(el('button', {
+            conflictButtons.push(el('button', {
                 type: 'button', class: 'btn primary', text: `Conflicts (${lane.conflicts.length})`,
                 title: 'Open the conflicting files in the editor, where each conflict can be accepted one way, the other, or both',
                 onclick: () => openIn('conflicts', { repo: repo.path, lane: lane.name })
             }))
         }
-        buttons.push(el('button', {
+        conflictButtons.push(el('button', {
             type: 'button', class: `btn${!host.inEditor || !lane.conflicts?.length ? ' primary' : ''}`, text: 'Continue', disabled: busy,
             title: 'Stage the files whose conflicts are resolved, and carry on with the rebase',
             onclick: () => press({ repo: repo.id, verb: 'rebase', lane: lane.name, continue: true })
         }))
-        buttons.push(el('button', { type: 'button', class: 'btn quiet', text: 'Abort…', disabled: busy, title: 'Put the lane back as it was before the rebase', onclick: ask('abort') }))
+        conflictButtons.push(el('button', { type: 'button', class: 'btn quiet', text: 'Abort…', disabled: busy, title: 'Put the lane back as it was before the rebase', onclick: ask('abort') }))
     }
     if (working && !lane.operation) {
         buttons.push(el('button', {
@@ -602,7 +722,7 @@ const laneCard = (repo, lane) => {
         lane.branch !== lane.name ? el('span', { text: `branch ${lane.branch}` }) : null,
         lane.ahead ? el('span', { text: plural(lane.ahead, 'commit') }) : null,
         lane.behind ? el('span', { text: `${lane.behind} behind ${repo.integrationBranch}` }) : null,
-        lane.dirty ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
+        lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         serverOf(lane),
         gateOf(lane),
         pushedOf(lane),
@@ -614,11 +734,16 @@ const laneCard = (repo, lane) => {
     const hidden = stack.length - shown.length
     const stackList = stack.length
         ? el('ul', { class: 'stack' },
-            shown.map((commit) => opens(el('li', {},
-                el('span', { class: 'sha', text: commit.short }),
-                el('span', { class: 'subject', text: commit.subject, title: `${commit.subject}\n${commit.author}` }),
-                el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) })),
-            `${commit.short} ${commit.subject}: show its changes`, showCommit(repo, commit))),
+            shown.map((commit) => {
+                const row = el('li', {},
+                    el('span', { class: 'sha', text: commit.short }),
+                    isNaming(repo, commit) ? namingForm(repo, commit, lane.name) : [
+                        el('span', { class: 'subject', text: commit.subject, title: `${commit.subject}\n${commit.author}` }),
+                        el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) }),
+                        rowActions(repo, commit, lane.name)
+                    ])
+                return isNaming(repo, commit) ? row : opens(row, `${commit.short} ${commit.subject}: show its changes`, showCommit(repo, commit))
+            }),
             hidden > 0 || (all && stack.length > STACK_SHOWN) || lane.more
                 ? el('li', {}, el('button', {
                     type: 'button', class: 'btn link',
@@ -646,26 +771,63 @@ const laneCard = (repo, lane) => {
             `Show what ${lane.name} changed in ${file}`, () => openIn('file', { repo: repo.path, lane: lane.name, path: file }))))
         : null
 
-    return el('li', { class: `lane tone-${tone}`, 'data-key': key, tabindex: '0' },
+    // Dragged onto a commit of main, a clean lane is rebased there (after a look): ISL's drag-to-rebase.
+    const draggable = !lane.dirty && !lane.operation && (lane.kind === 'working' || lane.kind === 'fresh') && !busy
+    // The side bar is too narrow for the toolbar to keep its room, and opening it under the pointer would move
+    // every lane below. So a hover there floats the one thing to do next and a ⋯ over the lane's corner, and ⋯
+    // opens the rest in the card: a click, so the card growing is what was asked for.
+    const toolsKey = `${key}:tools`
+    const toolsOpen = IN_SIDEBAR && expanded.has(toolsKey)
+    const next = IN_SIDEBAR ? buttons.find((button) => button.classList.contains('primary')) : null
+    const corner = IN_SIDEBAR && buttons.length
+        ? el('div', { class: 'corner' },
+            next ?? null,
+            el('button', {
+                type: 'button', class: 'btn quiet more', text: '⋯', 'aria-expanded': String(toolsOpen),
+                'aria-label': toolsOpen ? `Hide what ${lane.name} can do` : `Everything ${lane.name} can do`,
+                title: toolsOpen ? 'Hide the buttons' : 'Everything this lane can do',
+                onclick: (event) => { event.stopPropagation(); toggle(toolsKey) }
+            }))
+        : null
+    const card = el('li', {
+        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}`, 'data-key': key, tabindex: '0', draggable: draggable ? 'true' : null,
+        title: draggable ? 'Drag it onto a commit of main to rebase it there' : null
+    },
         el('div', { class: 'lane-head' },
             el('span', { class: 'lane-name', text: lane.name }),
             state(tone, word),
+            isHere(repo, lane) ? herePill() : null,
             el('span', { class: 'grow' }),
-            el('div', { class: 'actions' }, buttons)),
+            corner,
+            el('div', { class: 'actions hover-actions' }, next ? buttons.filter((button) => button !== next) : buttons)),
         facts,
         liveOf(repo, lane),
         detail ? el('p', { class: 'why', text: detail }) : null,
         failureOf(repo, lane),
-        lane.operation && lane.conflicts?.length
-            ? el('div', { class: 'files conflicts' }, el('div', { class: 'files-head', text: `Conflicts in ${plural(lane.conflicts.length, 'file')}` }),
-                lane.conflicts.map((file) => opens(el('div', { text: file }), `Open ${file} to resolve it`,
+        lane.operation && (lane.conflicts?.length || conflictButtons.length)
+            ? el('div', { class: 'files conflicts' },
+                el('div', { class: 'conflicts-head' },
+                    el('span', { class: 'files-head', text: lane.conflicts?.length ? `Conflicts in ${plural(lane.conflicts.length, 'file')}` : 'Every conflict resolved: Continue carries on' }),
+                    el('span', { class: 'grow' }), el('div', { class: 'actions' }, conflictButtons)),
+                (lane.conflicts ?? []).map((file) => opens(el('div', { text: file }), `Open ${file} to resolve it`,
                     () => openIn('conflicts', { repo: repo.path, lane: lane.name, path: file }))))
             : null,
+        changesOf(repo, lane, key),
         stackList,
         collisions,
         filesToggle ? el('p', { class: 'why' }, filesToggle) : null,
         filesList,
         confirmOf(repo, lane, key))
+    if (draggable) {
+        card.addEventListener('dragstart', (event) => {
+            event.dataTransfer.setData(LANE_DRAG, key)
+            event.dataTransfer.effectAllowed = 'move'
+            card.classList.add('dragging')
+            document.body.classList.add('dragging-lane')
+        })
+        card.addEventListener('dragend', () => { card.classList.remove('dragging'); document.body.classList.remove('dragging-lane') })
+    }
+    return card
 }
 
 const landedRow = (repo, lane) => {
@@ -765,7 +927,7 @@ const logOf = (repo) => {
     const newestFirst = (a, b) => (b.head?.at ?? 0) - (a.head?.at ?? 0)
     const rows = []
     if (!live.length) {
-        rows.push(el('li', { class: 'empty-lanes', text: 'No lanes yet. A lane is a folder of its own, on its own branch and port: name one above and press New lane.' }))
+        rows.push(el('li', { class: 'empty-lanes', text: 'No lanes yet. A lane is a folder of its own, on its own branch and port: hover a commit of main below and choose New lane here.' }))
     }
     const spine = spineOf(repo, live)
     spine.forEach((commit, index) => {
@@ -875,33 +1037,6 @@ const settledOf = (repo) => {
     ]
 }
 
-const newLaneForm = (repoId) => {
-    const name = el('input', {
-        name: 'name', placeholder: 'new-lane-name', autocomplete: 'off', spellcheck: 'false',
-        pattern: '[a-z0-9][a-z0-9\\-]*', required: true,
-        title: 'Lowercase letters, digits and dashes: it becomes a folder and a branch',
-        'aria-label': 'New lane name'
-    })
-    const base = el('input', {
-        name: 'base', placeholder: 'from main', autocomplete: 'off', spellcheck: 'false',
-        title: 'Branch from something other than the integration branch (optional)', 'aria-label': 'Branch from'
-    })
-    const button = el('button', { type: 'submit', class: 'btn primary', text: 'New lane' })
-    const form = el('form', {
-        class: 'new-lane',
-        onsubmit: async (event) => {
-            event.preventDefault()
-            if (!form.reportValidity()) return
-            const body = { repo: repoId, verb: 'new', name: name.value.trim() }
-            if (base.value.trim()) body.base = base.value.trim()
-            const answer = await press(body)
-            if (answer) { name.value = ''; base.value = '' }
-        }
-    }, name, base, button)
-    form.button = button
-    return form
-}
-
 const terminalOf = (repo) => {
     const shim = repo.slug ? `./${repo.slug}` : './<project>'
     return el('details', { class: 'terminal' },
@@ -926,13 +1061,12 @@ const sectionFor = (repo) => {
     kept = {
         root: el('section', { class: 'repo' }),
         head: el('div', {}),
-        form: newLaneForm(repo.id),
         queue: el('div', {}),
         log: el('ol', { class: 'log' }),
         settled: el('div', {}),
         terminal: terminalOf(repo)
     }
-    kept.root.append(kept.head, kept.form, kept.queue, kept.log, kept.settled, kept.terminal)
+    kept.root.append(kept.head, kept.queue, kept.log, kept.settled, kept.terminal)
     sections.set(repo.id, kept)
     return kept
 }
@@ -969,8 +1103,6 @@ const draw = (force = false) => {
     current.repos.forEach((repo, index) => {
         const kept = sectionFor(repo)
         kept.head.replaceChildren(...headOf(repo))
-        kept.form.hidden = Boolean(repo.error)
-        kept.form.button.disabled = busyIn(repo.id)
         kept.queue.replaceChildren(...queueOf(repo))
         kept.log.replaceChildren(...logOf(repo))
         kept.settled.replaceChildren(...settledOf(repo))
@@ -994,7 +1126,7 @@ const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
     ...(host.inEditor ? [['t', 'a terminal in it'], ['o', 'open it in a window']] : []),
-    ['f', 'fetch'], ['n', 'a new lane'], ['?', 'these keys'], ['Esc', 'close this, or the output']
+    ['c', 'commit what is uncommitted'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'], ['?', 'these keys'], ['Esc', 'close this, or the output']
 ]
 const keysPanel = el('div', { class: 'keys', hidden: true, role: 'dialog', 'aria-label': 'Keys' },
     el('p', { class: 'keys-title', text: 'Keys' }),
@@ -1029,13 +1161,18 @@ document.addEventListener('keydown', (event) => {
     }
     const here = laneInFocus()
     const repo = here?.repo ?? current?.repos.find((candidate) => !candidate.error)
-    if (key === 'n' && repo) { sections.get(repo.id)?.form.querySelector('input[name="name"]')?.focus(); return done() }
+    if (key === 'n' && repo) {
+        const from = here?.lane?.stack?.[0] ? { commit: here.lane.stack[0], lane: here.lane.name } : null
+        if (from) startNaming(repo, from.commit, from.lane); else if (repo.spine?.[0]) startNaming(repo, repo.spine[0])
+        return done()
+    }
     if (key === 'f' && repo) { press({ repo: repo.id, verb: 'fetch' }); return done() }
     if (!here) return
     const { lane } = here
     const confirm = (verb) => { pending.set(here.key, { verb, stage: 'confirm' }); draw(true) }
     const act = {
         Enter: () => host.inEditor && (lane.kind === 'working' || lane.dirty) ? openIn('changes', { repo: repo.path, lane: lane.name }) : toggle(`${here.key}:files`),
+        c: () => { if (lane.dirty && !lane.operation) { committing = { key: here.key, amend: false }; draw(true) } },
         g: () => confirm('gate'),
         l: () => check(repo, lane, 'land'),
         r: () => lane.behind > 0 && confirm('rebase'),

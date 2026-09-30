@@ -541,18 +541,53 @@ const rebase = (config, name, options) => {
             fail(`${name} has uncommitted changes.\n\n${dirt.map((line) => `  ${line}`).join('\n')}\n\n` +
                 '  A rebase replays commits, and these are in none: commit or stash them first.')
         }
-        const behind = gitQuiet(['rev-list', '--count', `HEAD..${base}`], dir).out
-        if (behind === '0') { log(`${name} is on top of ${base} already`); return }
+        // Onto main's newest commit, or onto another commit of main's line (--onto, a lane dragged there). The
+        // lane's own commits are those since it forked, so main's commits between the two are never replayed.
+        const onto = options.onto ?? base
+        if (options.onto) {
+            if (!/^[0-9a-f]{4,40}$/.test(options.onto) || !gitQuiet(['cat-file', '-e', `${options.onto}^{commit}`], dir).ok) fail(`"${options.onto}" is not a commit here.`)
+            if (!gitQuiet(['merge-base', '--is-ancestor', options.onto, base], dir).ok) fail(`${options.onto} is not on ${base}: a lane is rebased onto a commit of ${base}.`)
+        }
+        const fork = gitQuiet(['merge-base', base, 'HEAD'], dir).out
+        if (!fork) fail(`${name} shares no history with ${base}.`)
+        const ontoSha = git(['rev-parse', onto], dir)
+        if (fork === ontoSha) { log(`${name} is on ${options.onto ? options.onto.slice(0, 7) : `top of ${base}`} already`); return }
         const wasAt = git(['rev-parse', '--short', 'HEAD'], dir)
-        log(`rebasing ${name} onto ${base}, ${behind} ${behind === '1' ? 'commit' : 'commits'} behind ${DIM}(was ${wasAt}: git reset --hard ${wasAt} puts it back)${OFF}`)
-        const replayed = spawnSync('git', ['rebase', base], { cwd: dir, stdio: 'inherit', env })
+        log(`rebasing ${name} onto ${options.onto ? `${base}'s ${ontoSha.slice(0, 7)}` : base} ${DIM}(was ${wasAt}: git reset --hard ${wasAt} puts it back)${OFF}`)
+        const replayed = spawnSync('git', ['rebase', '--onto', ontoSha, fork], { cwd: dir, stdio: 'inherit', env })
         if (replayed.status !== 0) {
             if (inRebase(dir)) stoppedMidRebase(name, dir)
             fail('git rebase did not finish (above).')
         }
     }
     const rule = '─'.repeat(64)
-    console.log(`\n${rule}\n  ${GREEN}REBASED${OFF}  ·  ${name}  ·  on ${base} at ${git(['rev-parse', '--short', base], dir)}\n${rule}\n`)
+    console.log(`\n${rule}\n  ${GREEN}REBASED${OFF}  ·  ${name}  ·  on ${git(['rev-parse', '--short', `${git(['merge-base', base, 'HEAD'], dir)}`], dir)} of ${base}\n${rule}\n`)
+}
+
+/**
+ * Commit everything uncommitted in a lane: a commit of its own with the message given, or with
+ * `--amend` into the lane's newest commit, keeping its message unless one is given.
+ *
+ * AMEND ONLY WHAT IS THE LANE'S. A lane with no commits of its own has the integration branch's
+ * commit at its head; amending that would rewrite main's history under every other lane.
+ */
+const commitIn = (config, name, options) => {
+    const lane = laneNamed(config, name, 'commit')
+    const dir = lane.path
+    if (inRebase(dir)) fail(`${name} is part-way through a rebase: resolve and continue it instead.`)
+    const message = (options.message ?? '').trim()
+    if (!options.amend && !message) fail('a commit needs a message: -m "what it does"')
+    const own = Number(gitQuiet(['rev-list', '--count', `${config.integrationBranch}..HEAD`], dir).out || 0)
+    if (options.amend && !own) fail(`${name} has no commit of its own to amend: its newest commit is ${config.integrationBranch}'s.`)
+    const dirt = dirtIn(dir, config)
+    if (!dirt.length && !options.amend) fail(`${name} has nothing uncommitted to commit.`)
+    if (dirt.length) git(['add', '-A'], dir)
+    const args = ['commit', '-q', ...(options.amend ? ['--amend', ...(message ? ['-m', message] : ['--no-edit'])] : ['-m', message])]
+    const made = spawnSync('git', args, { cwd: dir, stdio: 'inherit', env: { ...process.env, GIT_EDITOR: 'true' } })
+    if (made.status !== 0) fail('git commit did not finish (above).')
+    const head = gitQuiet(['log', '-1', '--format=%h %s'], dir).out
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}${options.amend ? 'AMENDED' : 'COMMITTED'}${OFF}  ·  ${name}  ·  ${head}\n${rule}\n`)
 }
 
 /**
@@ -628,7 +663,7 @@ const pull = (config) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull }
+const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull, commit: commitIn }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -637,7 +672,7 @@ const main = () => {
     // is started before this one's is looked for: /work above the checkouts has none.
     if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--force-with-lease]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend]\n`)
         process.exit(2)
     }
 
@@ -651,9 +686,14 @@ const main = () => {
         force: argv.includes('--force'),
         continue: argv.includes('--continue'),
         abort: argv.includes('--abort'),
-        forceWithLease: argv.includes('--force-with-lease')
+        forceWithLease: argv.includes('--force-with-lease'),
+        onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
+        amend: argv.includes('--amend'),
+        message: argv.includes('-m') ? argv[argv.indexOf('-m') + 1] : undefined
     }
-    const positional = argv.slice(1).filter((arg) => !arg.startsWith('--'))
+    // What follows a flag that takes a value is the value, not a name.
+    const valued = new Set(['--base', '--onto', '-m'])
+    const positional = argv.slice(1).filter((arg, i, all) => !arg.startsWith('-') && !valued.has(all[i - 1]))
     const name = positional[0] !== options.base ? positional[0] : positional[1]
 
     let config
@@ -672,6 +712,7 @@ const main = () => {
     if (command === 'push') return push(config, name, options)
     if (command === 'pr') return pr(config, name, options)
     if (command === 'pull') return pull(config, options)
+    if (command === 'commit') return commitIn(config, name, options)
     return sweep(config, name, options)
 }
 

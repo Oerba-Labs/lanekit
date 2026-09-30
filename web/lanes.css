@@ -59,13 +59,13 @@ body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high
   --rail: var(--vscode-editorIndentGuide-activeBackground1, var(--vscode-editorIndentGuide-activeBackground, #cfd4dc));
   --accent: var(--vscode-textLink-foreground, #2563eb);
   --accent-ink: var(--vscode-button-foreground, #ffffff);
-  --accent-wash: var(--vscode-editor-selectionHighlightBackground, #eef4ff);
+  --accent-wash: var(--vscode-editor-selectionHighlightBackground, color-mix(in srgb, var(--vscode-textLink-foreground, #2563eb) 16%, transparent));
   --done: var(--vscode-testing-iconPassed, #15803d);
   --done-wash: transparent;
   --warn: var(--vscode-editorWarning-foreground, #b45309);
-  --warn-wash: var(--vscode-inputValidation-warningBackground, #fff8eb);
+  --warn-wash: var(--vscode-inputValidation-warningBackground, color-mix(in srgb, var(--vscode-editorWarning-foreground, #b45309) 16%, transparent));
   --risk: var(--vscode-errorForeground, #c2261d);
-  --risk-wash: var(--vscode-inputValidation-errorBackground, #fef1f0);
+  --risk-wash: var(--vscode-inputValidation-errorBackground, color-mix(in srgb, var(--vscode-errorForeground, #c2261d) 16%, transparent));
   --sans: var(--vscode-font-family, system-ui, sans-serif);
   --mono: var(--vscode-editor-font-family, ui-monospace, monospace);
   --s14: var(--vscode-font-size, 13px);
@@ -77,12 +77,7 @@ body.in-editor .btn:not(.primary):not(.link):not(.quiet) {
   border-color: var(--vscode-button-border, var(--line));
 }
 body.in-editor .btn:not(.primary):not(.link):not(.quiet):hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--soft)); }
-body.in-editor .new-lane input {
-  background: var(--vscode-input-background, var(--bg));
-  color: var(--vscode-input-foreground, var(--ink));
-  border-color: var(--vscode-input-border, var(--line));
-}
-/* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
+body.in-editor /* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
 body.in-editor .product { display: none; }
 body.in-editor .bar { padding-top: 8px; padding-bottom: 8px; }
 
@@ -136,16 +131,7 @@ a:hover { text-decoration: underline; }
 .facts > .state { white-space: normal; align-items: baseline; }
 .facts > .state::before { align-self: center; }
 
-.new-lane { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0 8px; }
-.new-lane input {
-  font: inherit; font-size: var(--s13);
-  padding: 5px 8px; min-width: 0;
-  color: var(--ink); background: var(--bg);
-  border: 1px solid var(--line); border-radius: 6px;
-}
-.new-lane input[name="name"] { width: 220px; font-family: var(--mono); }
-.new-lane input[name="base"] { width: 140px; font-family: var(--mono); }
-.new-lane input:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn:focus-visible, .name-lane input:focus-visible, .commit-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ---- buttons ------------------------------------------------------------ */
 .btn {
@@ -256,9 +242,6 @@ html[data-surface="sidebar"] .repo-head { flex-wrap: wrap; gap: 4px 8px; }
 html[data-surface="sidebar"] .repo-head h2 { font-size: var(--s14); }
 html[data-surface="sidebar"] .repo-sub, html[data-surface="sidebar"] .terminal { display: none; }
 html[data-surface="sidebar"] .facts { gap: 2px 10px; font-size: var(--s12); }
-html[data-surface="sidebar"] .new-lane { margin: 10px 0 6px; gap: 6px; }
-html[data-surface="sidebar"] .new-lane input[name="name"] { flex: 1 1 100%; width: auto; }
-html[data-surface="sidebar"] .new-lane input[name="base"] { flex: 1 1 60%; width: auto; }
 html[data-surface="sidebar"] .btn { padding: 2px 8px; font-size: var(--s12); }
 html[data-surface="sidebar"] .log::before { left: 7px; }
 html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px 24px; font-size: var(--s12); }
@@ -299,6 +282,70 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 .log.has-collisions { padding-right: 18px; }
 .log > svg.collisions { position: absolute; top: 0; right: 0; overflow: visible; pointer-events: stroke; }
 .log > svg.collisions path { stroke: var(--warn); }
+
+/*
+ * ISL's way: a lane shows what it is; what can be done with it shows on hover, or when the keyboard is on
+ * it. On a wide page the toolbar keeps its room, so nothing moves under the pointer. In the side bar a hover
+ * floats the next thing to do and a ⋯ over the lane's corner, and ⋯ opens the rest in the card. A screen
+ * with no pointer to hover shows them always.
+ */
+.lane .hover-actions { visibility: hidden; opacity: 0; transition: opacity 0.12s ease; }
+.lane:hover .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions { visibility: visible; opacity: 1; }
+.lane .corner { display: none; }
+html[data-surface="sidebar"] .lane .hover-actions { display: none; }
+html[data-surface="sidebar"] .lane.tools-open .hover-actions { display: flex; visibility: visible; opacity: 1; }
+html[data-surface="sidebar"] .lane .corner {
+  display: flex; gap: 4px; align-items: center;
+  position: absolute; top: 5px; right: 6px; z-index: 2;
+  padding: 0 0 0 16px;
+  background: linear-gradient(to right, transparent, var(--bg) 14px);
+  visibility: hidden; opacity: 0; transition: opacity 0.12s ease;
+}
+html[data-surface="sidebar"] .lane:hover .corner, html[data-surface="sidebar"] .lane:focus-within .corner,
+html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .lane.tools-open .corner { visibility: visible; opacity: 1; }
+.lane .more { min-width: 26px; padding-left: 6px; padding-right: 6px; letter-spacing: 0.05em; }
+.lane .more[aria-expanded="true"] { background: var(--soft); }
+@media (hover: none) {
+  .lane .hover-actions { visibility: visible; opacity: 1; }
+  html[data-surface="sidebar"] .lane .corner { visibility: visible; opacity: 1; }
+  .row-actions { display: inline-flex !important; }
+}
+/* A commit's own actions, New lane here, in place of its time while the pointer is on it. */
+.row-actions { display: none; flex: none; gap: 6px; }
+.commit:hover .row-actions, .commit:focus-within .row-actions, .stack li:hover .row-actions, .stack li:focus-within .row-actions { display: inline-flex; }
+.commit:hover .when, .commit:focus-within .when, .stack li:hover .when, .stack li:focus-within .when { display: none; }
+.row-actions .btn { padding: 1px 8px; font-size: var(--s12); }
+/* A new lane named in the row of the commit it starts from. */
+.name-lane { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.name-lane input, .commit-form input {
+  font: inherit; font-size: var(--s13); padding: 3px 8px; min-width: 0; flex: 1 1 160px;
+  color: var(--vscode-input-foreground, var(--ink)); background: var(--vscode-input-background, var(--bg));
+  border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 6px;
+}
+.name-lane input { font-family: var(--mono); max-width: 240px; }
+.name-lane .muted { font-size: var(--s12); }
+/* Where the editor is. */
+.here { flex: none; padding: 0 7px; border-radius: 999px; font-size: var(--s11); font-weight: 600; line-height: 1.7;
+  color: var(--vscode-badge-foreground, var(--accent-ink)); background: var(--vscode-badge-background, var(--accent)); }
+/* What is uncommitted, file by file, ISL's way. */
+.changes { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: var(--s12); }
+.changes-head, .conflicts-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.changes .files-head { color: var(--ink); }
+.commit-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.change-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.change-list li { display: flex; gap: 8px; align-items: baseline; padding: 1px 4px; min-width: 0; }
+.change-status { flex: none; width: 1.2em; font-family: var(--mono); font-weight: 700; text-align: center; }
+.change-status.s-M, .change-status.s-T, .change-status.s-R, .change-status.s-C { color: var(--warn); }
+.change-status.s-A, .change-status.s-new { color: var(--done); }
+.change-status.s-D { color: var(--risk); }
+.change-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* A lane dragged onto a commit of main: the lane greys, and the commits it can land on say so. */
+.lane[draggable="true"] { cursor: grab; }
+.lane.dragging { opacity: 0.45; }
+body.dragging-lane .log > li.commit { border-radius: 6px; }
+body.dragging-lane .log > li.commit::after { content: ""; position: absolute; inset: 1px 0 1px 26px; border: 1px dashed var(--line); border-radius: 6px; pointer-events: none; }
+.log > li.commit.drop-here { background: var(--accent-wash); }
+.log > li.commit.drop-here::after { border-color: var(--accent) !important; border-style: solid !important; }
 
 /* The keyboard: a lane in focus, and the list of keys. */
 li[data-key]:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: 2px; }
@@ -367,6 +414,5 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
   .pane { padding: 16px 16px 160px; }
   .job-out { padding: 12px 16px; }
   .lane { padding: 10px 12px; }
-  .new-lane input[name="name"] { flex: 1 1 160px; width: auto; }
-  .commit .when { display: none; }
+    .commit .when { display: none; }
 }

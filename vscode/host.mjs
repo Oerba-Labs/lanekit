@@ -395,6 +395,14 @@ export const activate = async (context, vscode, { root }) => {
             case 'uncommitted': {
                 const left = await service.uncommitted(repo.path, asked.checkout)
                 if (!left) throw new Error('That checkout is not one the page showed.')
+                if (asked.path) {
+                    // One file, from the list of what is uncommitted: its own diff, before and now.
+                    const file = left.files.find((candidate) => candidate.path === asked.path)
+                    if (!file) throw new Error(`${asked.path} is not uncommitted in ${asked.name ?? path.basename(left.checkout)} now.`)
+                    const [label, before, after] = rowsOf(repo, [file], { beforeSha: left.head, checkout: left.checkout })[0]
+                    await vscode.commands.executeCommand('vscode.diff', before ?? atEmpty(label), after ?? atEmpty(label), `${path.basename(file.path)} · uncommitted`)
+                    return true
+                }
                 return showChanges(`${asked.name ?? path.basename(left.checkout)}: uncommitted`, rowsOf(repo, left.files, { beforeSha: left.head, checkout: left.checkout }))
             }
             case 'commit': {
@@ -439,6 +447,8 @@ export const activate = async (context, vscode, { root }) => {
         if (!message || typeof message !== 'object') return
         if (message.type === 'ready') {
             lastSent = null
+            hereSaid = null   // a page just made has not heard where the editor is
+            updateBar()
             // A lane asked for before this page could hear it: said now, and then forgotten.
             if (pendingFocus?.surface === page.surface) {
                 page.webview.postMessage({ type: 'focus', repo: pendingFocus.repo, lane: pendingFocus.lane })
@@ -471,9 +481,18 @@ export const activate = async (context, vscode, { root }) => {
         const first = (vscode.workspace.workspaceFolders ?? []).find((folder) => folder.uri.scheme === 'file')
         return first?.uri.fsPath ?? null
     }
+    // Where the editor is, told to every page as it moves, for its "You are here".
+    let hereSaid = null
+    const sayHere = (at) => {
+        const now = JSON.stringify(at ? { repo: at.repo.id, lane: at.lane?.name ?? null } : null)
+        if (now === hereSaid) return
+        hereSaid = now
+        post({ type: 'here', ...(at ? { repo: at.repo.id, lane: at.lane?.name ?? null } : { repo: null }) })
+    }
     const updateBar = () => {
         const file = whereNow()
         const at = file ? service.laneAt(file) : null
+        sayHere(at)
         if (!at) { bar.hide(); return }
         if (at.lane) {
             bar.text = `$(git-branch) ${at.lane.name} · ${wordOf(at.lane)}`

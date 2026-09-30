@@ -436,3 +436,23 @@ test('New lane from here starts on top of the lane in front', async () => {
     assert.equal(host.service.job(job.id).code, 0, host.service.job(job.id).output)
     editor.answers.input = undefined
 })
+
+test('the pages are told where the editor is, for their You are here', async () => {
+    editor.seen.posted.length = 0
+    editor.setActive(path.join(working, 'feature.txt'))
+    await editor.ask('state')
+    assert.ok(editor.seen.posted.some((m) => m.type === 'here' && m.repo === 'demo' && m.lane === 'working'), JSON.stringify(editor.seen.posted.filter((m) => m.type === 'here')))
+    editor.setActive(path.join(repo, 'app.txt'))
+    await editor.ask('state')
+    assert.ok(editor.seen.posted.some((m) => m.type === 'here' && m.repo === 'demo' && m.lane === null), 'the main checkout')
+})
+
+test('one uncommitted file opens as its own diff', async () => {
+    fs.writeFileSync(path.join(working, 'solo.txt'), 'solo\n')
+    await editor.ask('state')
+    editor.seen.executed.length = 0
+    const reply = await editor.ask('open', { what: 'uncommitted', repo, checkout: working, name: 'working', path: 'solo.txt' })
+    assert.equal(reply.ok, true, reply.error)
+    assert.equal(editor.seen.executed.at(-1)[0], 'vscode.diff')
+    fs.rmSync(path.join(working, 'solo.txt'))
+})
