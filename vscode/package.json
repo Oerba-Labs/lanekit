@@ -34,7 +34,7 @@
         "lanekit.path": {
           "type": "string",
           "default": "",
-          "description": "Where lanekit is checked out. Empty: $LANEKIT_HOME, then /opt/lanekit."
+          "description": "Where lanekit is checked out. Empty: $LANEKIT, then /opt/lanekit, then ~/.lanekit, as the project's shim looks."
         },
         "lanekit.folders": {
           "type": "array",

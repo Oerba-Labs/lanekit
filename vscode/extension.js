@@ -19,8 +19,10 @@ let host = null
 
 const lanekitRoot = () => {
     const set = vscode.workspace.getConfiguration('lanekit').get('path')
-    // Last, the checkout this file is in, when it runs from one (a development host).
-    const candidates = [set, process.env.LANEKIT_HOME, '/opt/lanekit', path.resolve(__dirname, '..')]
+    // The shim's places, in the shim's order, so the editor runs the lanekit the `lane` commands
+    // run; last, the checkout this file is in, when it runs from one (a development host).
+    const home = require('os').homedir()
+    const candidates = [set, process.env.LANEKIT, process.env.LANEKIT_HOME, '/opt/lanekit', path.join(home, '.lanekit'), path.resolve(__dirname, '..')]
     return candidates.find((dir) => typeof dir === 'string' && dir && fs.existsSync(path.join(dir, 'vscode', 'host.mjs'))) ?? null
 }
 
@@ -28,7 +30,7 @@ exports.activate = async (context) => {
     const root = lanekitRoot()
     if (!root) {
         // Every command still answers, with what is missing, rather than "command not found".
-        const said = 'Lanes needs lanekit on this machine: set lanekit.path to a checkout of it (there is no /opt/lanekit here).'
+        const said = 'Lanes needs lanekit on this machine: git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit, or set lanekit.path to a checkout of it.'
         const manifest = require('./package.json')
         for (const { command } of manifest.contributes.commands) {
             context.subscriptions.push(vscode.commands.registerCommand(command, () => vscode.window.showErrorMessage(said)))

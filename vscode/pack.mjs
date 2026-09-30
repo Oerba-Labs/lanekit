@@ -140,8 +140,8 @@ on: open a commit's or a lane's changes as diffs, a lane in its own window or a 
 in it, and gate, land and sweep it. **Lanes: Show** opens it; the status bar says which lane
 the file in front of you is in, and what it needs.
 
-It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LANEKIT_HOME\`,
-else \`/opt/lanekit\`). Apache License 2.0; the source is https://github.com/Oerba-Labs/lanekit.
+It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LANEKIT\`, else
+\`/opt/lanekit\`, else \`~/.lanekit\`). Apache License 2.0; the source is https://github.com/Oerba-Labs/lanekit.
 `
     const bytes = zip([
         ['extension.vsixmanifest', vsixManifest],

@@ -213,7 +213,7 @@ There its clicks drive the editor:
 No server and no port: the extension runs the page's service itself, reads git in a worker
 thread so the editor never waits, and finds repositories in the folders the window has open,
 a lane's own folder included. It runs lanekit from the checkout on the machine (`lanekit.path`,
-else `$LANEKIT`, else `/opt/lanekit`), so it and the `lane` commands are always one version:
+else the places the shim looks: `$LANEKIT`, `/opt/lanekit`, `~/.lanekit`), so it and the `lane` commands are always one version:
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
