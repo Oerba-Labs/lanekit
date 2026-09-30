@@ -184,11 +184,38 @@ export const activate = async (context, vscode, { root }) => {
             updateBar()
             // Somebody is looking: each repository fetched now and then, by itself (the service keeps to five minutes).
             if (anyVisible()) service.fetchQuietly().catch(() => {})
+            gateOnCommit(state)
         } catch (error) {
             output.appendLine(`Reading the lanes failed: ${error.message}`)
         } finally {
             reading = false
             if (readAgain) { readAgain = false; tick() } else schedule(false, state)
+        }
+    }
+
+    /**
+     * `lanekit.gateOnCommit`: a lane whose commit moved since the last reading, with nothing uncommitted, nothing
+     * running in its repository, and no gate result for the new commit, is gated by itself. The gate rebases it
+     * first, as it always does; the rebased commit it then passes is the one its result names, so it does not
+     * start another.
+     */
+    const heads = new Map()
+    const gateOnCommit = (state) => {
+        const on = vscode.workspace.getConfiguration('lanekit').get('gateOnCommit') === true
+        for (const repo of state.repos) {
+            if (repo.error) continue
+            const running = state.jobs.some((job) => job.state === 'running' && job.repo === repo.id)
+            for (const lane of repo.lanes) {
+                if (lane.kind !== 'working' || !lane.head) continue
+                const key = `${repo.path}\0${lane.name}`
+                const before = heads.get(key)
+                heads.set(key, lane.head.sha)
+                if (!on || !before || before === lane.head.sha || running) continue
+                if (lane.dirty || lane.operation || lane.gate?.current) continue
+                service.press({ repo: repo.id, verb: 'gate', lane: lane.name }).then((pressed) => {
+                    if (pressed.status < 400) output.appendLine(`LaneKit: gating ${lane.name} by itself, after a commit (lanekit.gateOnCommit).`)
+                }).catch(() => {})
+            }
         }
     }
 
@@ -213,21 +240,34 @@ export const activate = async (context, vscode, { root }) => {
 
     const fromPalette = new Set()
     let jobPing = null
+    let pingedJob = null
+    // The pages are told of a job with the job itself (its step, its state), and ask for its new output when
+    // they show it: told at most every tenth of a second.
+    service.events.on('started', (job) => post({ type: 'job', id: job.id, job }))
     service.events.on('output', (job, text) => {
         output.append(text)
-        // The page asks for the new output when told there is some: told at most every tenth of a second.
-        if (!jobPing) jobPing = setTimeout(() => { jobPing = null; post({ type: 'job', id: job.id }) }, 100)
+        pingedJob = job
+        if (!jobPing) jobPing = setTimeout(() => { jobPing = null; post({ type: 'job', id: pingedJob.id, job: pingedJob }) }, 100)
     })
     service.events.on('fetched', () => schedule(true))
+    // A press that ends while no LaneKit page is in sight says how it ended, whoever pressed it, with the lane and
+    // its output a click away.
+    const SAID = { gate: ['passed', 'failed'], land: ['landed', 'did not land'], rebase: ['rebased', 'stopped'], push: ['pushed', 'was refused'],
+        pr: ['has a pull request', 'has no pull request'], pull: ['pulled', 'did not pull'], new: ['is made', 'was not made'], sweep: ['swept', 'was not swept'] }
     service.events.on('done', (job) => {
-        post({ type: 'job', id: job.id })
+        post({ type: 'job', id: job.id, job })
         schedule(true)
-        if (fromPalette.delete(job.id) && !anyVisible()) {
-            const what = `${job.verb}${job.lane ? ` ${job.lane}` : ''}`
-            const said = job.code === 0 ? vscode.window.showInformationMessage(`LaneKit: ${what} finished.`, 'Show output')
-                : vscode.window.showErrorMessage(`LaneKit: ${what} failed (exit ${job.code}).`, 'Show output')
-            Promise.resolve(said).then((choice) => { if (choice === 'Show output') output.show(true) })
-        }
+        fromPalette.delete(job.id)
+        if (anyVisible() || job.verb === 'fetch' || job.dryRun) return
+        const [good, bad] = SAID[job.verb] ?? ['finished', 'failed']
+        const what = `${job.lane ?? job.repo} ${job.code === 0 ? good : bad}`
+        const choices = job.lane ? ['Show', 'Show output'] : ['Show output']
+        const said = job.code === 0 ? vscode.window.showInformationMessage(`LaneKit: ${what}.`, ...choices)
+            : vscode.window.showErrorMessage(`LaneKit: ${what} (exit ${job.code}).`, ...choices)
+        Promise.resolve(said).then((choice) => {
+            if (choice === 'Show output') output.show(true)
+            if (choice === 'Show') reveal({ repo: job.repo, lane: job.lane })
+        })
     })
     const finished = (id) => new Promise((resolve) => {
         const kept = service.job(id)
@@ -332,6 +372,24 @@ export const activate = async (context, vscode, { root }) => {
                 for (const file of files) {
                     await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path.join(lane.path, file)), { preview: false })
                 }
+                return true
+            }
+            case 'file-at': {
+                // A file named in a failed step's output, opened at its line: only a file inside the lane, found by
+                // the path given or, from a step run in a sub-folder, by the one file in the lane whose path ends so.
+                if (!lane) throw new Error('Which lane?')
+                const asked_ = String(asked.path ?? '')
+                let target = path.resolve(lane.path, asked_)
+                const inside = (file) => file.startsWith(lane.path + path.sep)
+                if (!inside(target) || !fs.existsSync(target)) {
+                    const tail = asked_.replace(/^(\.{1,2}\/)+/, '')
+                    const listed = await service.filesEndingWith(repo.path, lane.name, tail)
+                    if (listed.length !== 1) throw new Error(listed.length ? `${listed.length} files in ${lane.name} end with ${tail}.` : `There is no ${asked_} in ${lane.name}.`)
+                    target = path.join(lane.path, listed[0])
+                }
+                const line = Math.max(1, Number(asked.line) || 1) - 1
+                const column = Math.max(1, Number(asked.column) || 1) - 1
+                await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(target), { selection: new vscode.Range(line, column, line, column), preview: false })
                 return true
             }
             case 'uncommitted': {

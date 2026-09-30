@@ -210,7 +210,22 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
 
 // The editor tells the page what changed, and which lane to show when asked from outside it.
 host.on('state', (message) => took(message.state))
-host.on('job', (message) => { if (message.id === shownJob) followJob(message.id) })
+host.on('job', (message) => {
+    if (message.job && current) {
+        const jobs = current.jobs ?? (current.jobs = [])
+        const at = jobs.findIndex((job) => job.id === message.job.id)
+        const before = at >= 0 ? jobs[at] : null
+        if (at >= 0) jobs[at] = message.job; else jobs.unshift(message.job)
+        if (!before || before.step !== message.job.step || before.state !== message.job.state) draw(true)
+    }
+    if (message.id === shownJob) followJob(message.id)
+})
+
+// A running press's clock, each second, without redrawing anything else.
+const secondsSince = (at) => `${Math.max(0, Math.round((Date.now() - at) / 1000))} s`
+setInterval(() => {
+    for (const node of document.querySelectorAll('.live-clock')) node.textContent = secondsSince(Number(node.dataset.since))
+}, 1000)
 host.on('focus', (message) => focusLane(message.repo, message.lane))
 
 const press = async (body) => {
@@ -398,6 +413,50 @@ const openLinks = (repo, lane) => {
 }
 
 const showCommit = (repo, commit) => () => openIn('commit', { repo: repo.path, sha: commit.sha })
+
+const DOING = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making it', pull: 'Pulling', fetch: 'Fetching' }
+const runningIn = (repo, lane) => (current?.jobs ?? []).find((job) => job.state === 'running' && job.repo === repo.id && job.lane === lane.name)
+
+/** What a press is doing to a lane, live: the verb, the gate's step, and a clock. */
+const liveOf = (repo, lane) => {
+    const job = runningIn(repo, lane)
+    if (!job) return null
+    return el('p', { class: 'live' },
+        state('info', `${DOING[job.verb] ?? job.verb}${job.dryRun ? ' (a check)' : ''}`, 'small'),
+        job.step ? el('span', { class: 'live-step', text: job.step }) : null,
+        el('span', { class: 'live-clock', 'data-since': String(job.startedAt), text: secondsSince(job.startedAt) }),
+        el('button', { type: 'button', class: 'btn link', text: 'Output', onclick: () => showJob(job.id) }))
+}
+
+// A file and a line in a tool's output: src/app.js:12, ./web/x.ts:3:7, /work/repo-lane/y.py:40.
+const FILE_AT = /((?:\.{1,2}\/|\/)?(?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z][\w]*):(\d+)(?::(\d+))?/g
+
+/** A failed step's last lines; in the editor each file reference opens at its line. */
+const tailOf = (repo, lane, text) => {
+    const pre = el('pre', { class: 'tail' })
+    for (const line of String(text ?? '').split('\n')) {
+        let from = 0
+        for (const match of line.matchAll(FILE_AT)) {
+            pre.append(line.slice(from, match.index))
+            const ref = el('span', { class: 'ref', text: match[0] })
+            pre.append(opens(ref, `Open ${match[1]} at line ${match[2]}`,
+                () => openIn('file-at', { repo: repo.path, lane: lane.name, path: match[1], line: Number(match[2]), column: Number(match[3] ?? 1) })))
+            from = match.index + match[0].length
+        }
+        pre.append(line.slice(from) + '\n')
+    }
+    return pre
+}
+
+/** Why the lane's gate on this commit failed: each failing step, and its last lines. */
+const failureOf = (repo, lane) => {
+    const gate = lane.gate
+    if (!gate || gate.result !== 'failed' || !gate.current || !gate.failures?.length) return null
+    return el('div', { class: 'failure' }, gate.failures.map((failure) => [
+        el('div', { class: 'files-head', text: `${failure.what} failed${failure.status !== null && failure.status !== undefined ? ` (exit ${failure.status})` : ''}` }),
+        failure.tail ? tailOf(repo, lane, failure.tail) : null
+    ]))
+}
 
 const commitRow = (repo, commit, className, label) => opens(
     el('li', { class: `commit ${className}` },
@@ -594,7 +653,9 @@ const laneCard = (repo, lane) => {
             el('span', { class: 'grow' }),
             el('div', { class: 'actions' }, buttons)),
         facts,
+        liveOf(repo, lane),
         detail ? el('p', { class: 'why', text: detail }) : null,
+        failureOf(repo, lane),
         lane.operation && lane.conflicts?.length
             ? el('div', { class: 'files conflicts' }, el('div', { class: 'files-head', text: `Conflicts in ${plural(lane.conflicts.length, 'file')}` }),
                 lane.conflicts.map((file) => opens(el('div', { text: file }), `Open ${file} to resolve it`,

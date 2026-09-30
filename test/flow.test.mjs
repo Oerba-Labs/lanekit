@@ -216,3 +216,36 @@ test('the page\'s presses refuse what the commands would, before anything runs',
     await new Promise((resolve) => service.events.once('done', resolve))
     service.dispose()
 })
+
+test('a failed gate keeps the failing step and its last lines, and the page reads them', async () => {
+    const broken = path.join(scratch, 'work2', 'broken')
+    fs.mkdirSync(broken, { recursive: true })
+    fs.writeFileSync(path.join(broken, 'lane.config.json'), JSON.stringify({
+        name: 'Broken', slug: 'broken', integrationBranch: 'main', roots: {},
+        gate: { sides: {}, seam: [], generated: [], tiers: { 1: { label: 'the tests', steps: [{ what: 'running the tests', command: 'sh', args: ['-c', "echo 'all fine so far'; echo 'src/app.js:12:3: expected 2, got 3' >&2; exit 3"] }] } } },
+        lane: { portBase: 19401, portCeiling: 19499, copyOnCreate: [], linkOnCreate: [], env: { file: '.env', portKey: 'PORT', perLane: {} }, makeDirs: [], seed: [], provision: [] }
+    }))
+    fs.writeFileSync(path.join(broken, '.gitignore'), '.env\n.lanekit/\n')
+    git(path.dirname(broken), 'init', '-q', '-b', 'main', broken)
+    git(broken, 'add', '-A')
+    git(broken, 'commit', '-qm', 'Begin')
+    assert.equal(lane(broken, 'new', 'bug').code, 0)
+    const bug = path.join(scratch, 'work2', 'broken-bug')
+    commit(bug, 'app.js', 'let x = 3\n', 'Break it')
+
+    const service = createService({ dirs: [path.join(scratch, 'work2')] })
+    await service.state()
+    const pressed = await service.press({ repo: 'broken', verb: 'gate', lane: 'bug' })
+    assert.equal(pressed.status, 202)
+    const done = await new Promise((resolve) => service.events.on('done', (job) => { if (job.id === pressed.body.id) resolve(job) }))
+    assert.notEqual(done.code, 0)
+    assert.ok(done.step, 'the job knows the step the gate was on')
+    const read = (await service.state()).repos[0].lanes.find((candidate) => candidate.name === 'bug')
+    assert.equal(read.gate.result, 'failed')
+    assert.equal(read.gate.current, true)
+    assert.equal(read.gate.failures[0].what, 'running the tests')
+    assert.equal(read.gate.failures[0].status, 3)
+    assert.match(read.gate.failures[0].tail, /src\/app\.js:12:3: expected 2, got 3/)
+    assert.match(read.gate.failures[0].tail, /all fine so far/)
+    service.dispose()
+})

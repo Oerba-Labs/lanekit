@@ -41,6 +41,7 @@ const standIn = (folders) => {
         static from (parts) { return new Uri(parts) }
         toString () { return `${this.scheme}:${this.path}${this.query ? `?${this.query}` : ''}` }
     }
+    const config = {}
     const seen = { commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], views: new Map() }
     let receive = null
     let sideReceive = null
@@ -71,8 +72,10 @@ const standIn = (folders) => {
         onDidDispose: event()
     }
     let sideMade = false
+    class Range { constructor (startLine, startCharacter, endLine, endCharacter) { Object.assign(this, { startLine, startCharacter, endLine, endCharacter }) } }
     const vscode = {
         Uri,
+        Range,
         ViewColumn: { Active: -1 },
         StatusBarAlignment: { Left: 1 },
         window: {
@@ -93,7 +96,7 @@ const standIn = (folders) => {
         },
         workspace: {
             workspaceFolders: folders.map((folder) => ({ uri: Uri.file(folder) })),
-            getConfiguration: () => ({ get: () => undefined }),
+            getConfiguration: () => ({ get: (key) => config[key] }),
             onDidSaveTextDocument: event(),
             onDidChangeWorkspaceFolders: event(),
             onDidChangeConfiguration: event(),
@@ -132,7 +135,7 @@ const standIn = (folders) => {
         throw new Error(`no reply to ${method} in the side bar`)
     }
     const sideSays = (message) => sideReceive(message)
-    return { vscode, seen, bar, panel, sideView, ask, askSide, sideSays, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
+    return { vscode, seen, bar, panel, sideView, ask, askSide, sideSays, config, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
 }
 
 let scratch
@@ -362,4 +365,45 @@ test('the .vsix holds the loader, the manifest, its icons, a README and the lice
     assert.equal(manifest.license, 'Apache-2.0')
     assert.equal(manifest.displayName, 'LaneKit')
     assert.equal(manifest.icon, 'lanekit.png')
+})
+
+test('a file a failure names opens at its line, and only inside the lane', async () => {
+    editor.seen.executed.length = 0
+    const opened = await editor.ask('open', { what: 'file-at', repo, lane: 'working', path: 'feature.txt', line: 3, column: 2 })
+    assert.equal(opened.ok, true, opened.error)
+    const [command, uri, options] = editor.seen.executed.at(-1)
+    assert.equal(command, 'vscode.open')
+    assert.equal(uri.path, path.join(working, 'feature.txt'))
+    assert.deepEqual([options.selection.startLine, options.selection.startCharacter], [2, 1])
+    const outside = await editor.ask('open', { what: 'file-at', repo, lane: 'working', path: '../demo/app.txt', line: 1 })
+    assert.equal(outside.ok, false, 'a path climbing out of the lane is not opened')
+    const missing = await editor.ask('open', { what: 'file-at', repo, lane: 'working', path: 'nowhere.txt', line: 1 })
+    assert.equal(missing.ok, false)
+})
+
+test('a press that ends while no page is in sight says how it ended', async () => {
+    editor.panel.visible = false
+    editor.sideView.visible = false
+    editor.seen.said.length = 0
+    const reply = await editor.ask('press', { repo: 'demo', verb: 'land', lane: 'working', dryRun: false })
+    assert.equal(reply.value.status, 202)
+    for (let i = 0; i < 300 && !editor.seen.said.some((line) => /^LaneKit: working/.test(line)); i++) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.ok(editor.seen.said.some((line) => /^LaneKit: working did not land/.test(line)), editor.seen.said.join(' | '))
+    editor.panel.visible = true
+    editor.sideView.visible = true
+})
+
+test('with gateOnCommit, a commit landing in a lane gates it by itself', async () => {
+    editor.config.gateOnCommit = true
+    const gatesBefore = () => host.service.state().then((state) => state.jobs.filter((job) => job.verb === 'gate' && job.lane === 'working').length)
+    const before = await gatesBefore()
+    await editor.seen.commands.get('lanekit.refresh')()
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    git(working, 'add', '-A')
+    git(working, 'commit', '-qm', 'Commit what was uncommitted')
+    await editor.seen.commands.get('lanekit.refresh')()
+    let after = before
+    for (let i = 0; i < 100 && after === before; i++) { await new Promise((resolve) => setTimeout(resolve, 50)); after = await gatesBefore() }
+    assert.equal(after, before + 1, 'one gate, pressed by itself')
+    editor.config.gateOnCommit = false
 })

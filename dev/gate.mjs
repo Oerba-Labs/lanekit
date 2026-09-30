@@ -24,7 +24,7 @@
  * somebody's conflict unattended is worse than stopping.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
@@ -246,13 +246,44 @@ log(`tier ${chosen}: ${plan.label}`)
 // 6. run it
 // ---------------------------------------------------------------------------
 
+/**
+ * A step, run with its output shown as it comes, and the last lines of it kept.
+ *
+ * THE TAIL IS WRITTEN DOWN WITH A FAILURE, so a page can show why a gate failed — the step and
+ * its last lines, with the file names in them — after the output itself is gone. At a terminal
+ * the step writes to it directly, colours and all, and the person reads it there.
+ */
+const TAIL_LINES = 40
+// eslint-disable-next-line no-control-regex
+const plain = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+const runStep = (step) => new Promise((resolve) => {
+    const cwd = step.cwd ? path.join(REPO, step.cwd) : REPO
+    const command = expand(step.command)
+    const args = (step.args ?? []).map(expand)
+    if (process.stdout.isTTY) {
+        const result = spawnSync(command, args, { cwd, stdio: 'inherit' })
+        resolve({ status: result.status ?? -1, tail: '' })
+        return
+    }
+    let tail = ''
+    let settled = false
+    const keep = (chunk, to) => {
+        to.write(chunk)
+        tail = (tail + chunk.toString('utf8')).split('\n').slice(-(TAIL_LINES + 1)).join('\n')
+    }
+    const child = spawn(command, args, { cwd, stdio: ['inherit', 'pipe', 'pipe'] })
+    child.stdout.on('data', (chunk) => keep(chunk, process.stdout))
+    child.stderr.on('data', (chunk) => keep(chunk, process.stderr))
+    const end = (status, note) => { if (settled) return; settled = true; resolve({ status, tail: plain(note ?? tail).trimEnd() }) }
+    child.on('error', (error) => end(-1, `could not start ${command}: ${error.message}`))
+    child.on('close', (code) => end(code ?? -1))
+})
+
 const failures = []
 for (const step of plan.steps ?? []) {
     log(`${step.what}…`)
-    const cwd = step.cwd ? path.join(REPO, step.cwd) : REPO
-    const result = spawnSync(expand(step.command), (step.args ?? []).map(expand),
-        { cwd, stdio: 'inherit' })
-    if (result.status !== 0) failures.push({ what: step.what, status: result.status })
+    const { status, tail } = await runStep(step)
+    if (status !== 0) failures.push({ what: step.what, status, tail })
 }
 
 // ---------------------------------------------------------------------------

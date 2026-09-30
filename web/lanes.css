@@ -287,6 +287,19 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 .files { margin: 6px 0 0; padding: 8px 12px; background: var(--soft); border-radius: 6px; font-size: var(--s12); max-height: 240px; overflow: auto; }
 .files div { font-family: var(--mono); white-space: nowrap; }
 .files.conflicts { background: var(--warn-wash); }
+/* A press running in a lane: its verb, the gate's step, a clock. */
+.live { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 6px 0 0; font-size: var(--s12); color: var(--muted); }
+.live .live-step { font-family: var(--mono); color: var(--ink); }
+.live .live-clock { font-variant-numeric: tabular-nums; }
+.live .state::before { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .live .state::before { animation: none; } }
+/* Why a gate failed: the step, and its last lines. */
+.failure { margin: 6px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--risk-wash); font-size: var(--s12); }
+.failure .files-head { color: var(--risk); }
+.failure .tail { margin: 4px 0 8px; max-height: 180px; overflow: auto; font-size: var(--s11); line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.failure .tail:last-child { margin-bottom: 0; }
+.tail .ref.opens { text-decoration: underline; text-underline-offset: 2px; color: var(--accent); }
 .files .files-head { font-family: var(--sans); font-weight: 600; color: var(--warn); margin-bottom: 4px; white-space: normal; }
 
 .confirm {

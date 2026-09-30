@@ -142,6 +142,11 @@
           },
           "default": [],
           "description": "Folders to find repositories with lanes in, besides the folders open in this window."
+        },
+        "lanekit.gateOnCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Gate a lane by itself when a commit lands in it and nothing is uncommitted. The gate rebases the lane onto the integration branch first, as it always does."
         }
       }
     }
