@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 240" width="860" height="240" role="img" aria-label="main as a line of commits; two lanes start from it; midi-export passes its gate and lands with a merge commit; dark-mode is still in progress">
+<text x="20" y="129" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#e6e8ec">main</text>
+<text x="20" y="59" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#56c27a">midi-export</text>
+<text x="20" y="199" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#f0b04a">dark-mode</text>
+<line x1="120" y1="55" x2="330" y2="55" stroke="#3b414c" stroke-width="1" stroke-dasharray="2 5" fill="none"/>
+<line x1="120" y1="195" x2="330" y2="195" stroke="#3b414c" stroke-width="1" stroke-dasharray="2 5" fill="none"/>
+<line x1="130" y1="125" x2="840" y2="125" stroke="#e6e8ec" stroke-width="3" stroke-linecap="round" fill="none"/>
+<path d="M 290 125 C 315 125, 315 55, 340 55 L 555 55 C 580 55, 580 125, 600 125" stroke="#56c27a" stroke-width="3" fill="none" stroke-linecap="round"/>
+<path d="M 290 125 C 315 125, 315 195, 340 195 L 560 195" stroke="#f0b04a" stroke-width="3" fill="none" stroke-linecap="round"/>
+<line x1="560" y1="195" x2="690" y2="195" stroke="#f0b04a" stroke-width="3" stroke-dasharray="1 7" stroke-linecap="round" fill="none"/>
+<text x="702" y="199" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#9aa1ad">still in progress</text>
+<circle cx="170" cy="125" r="7" fill="#e6e8ec" stroke="#17191e" stroke-width="2"/>
+<text x="170" y="107" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">Read a score</text>
+<circle cx="290" cy="125" r="7" fill="#e6e8ec" stroke="#17191e" stroke-width="2"/>
+<text x="282" y="151" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">Split into pages</text>
+<text x="326" y="109" text-anchor="start" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#e6e8ec">lane new</text>
+<circle cx="390" cy="55" r="7" fill="#56c27a" stroke="#17191e" stroke-width="2"/>
+<text x="390" y="79" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">Write MIDI</text>
+<circle cx="470" cy="55" r="7" fill="#56c27a" stroke="#17191e" stroke-width="2"/>
+<text x="470" y="79" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">Keep velocity</text>
+<circle cx="420" cy="195" r="7" fill="#f0b04a" stroke="#17191e" stroke-width="2"/>
+<text x="420" y="220" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">Dark score</text>
+<circle cx="530" cy="195" r="7" fill="#f0b04a" stroke="#17191e" stroke-width="2"/>
+<text x="530" y="220" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">Dark pages</text>
+<rect x="440" y="16" width="118" height="22" rx="11" fill="#15261c" stroke="#56c27a" stroke-width="1.5"/>
+<text x="499" y="31" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#56c27a">gate: READY ✓</text>
+<circle cx="600" cy="125" r="10" fill="#17191e" stroke="#e6e8ec" stroke-width="3"/>
+<circle cx="600" cy="125" r="4" fill="#e6e8ec"/>
+<text x="600" y="155" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#e6e8ec">lane land</text>
+<text x="600" y="171" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9aa1ad">a merge commit of its own</text>
+</svg>

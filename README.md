@@ -29,21 +29,10 @@ can open it in an editor, run its server and its tests, while another lane does 
 
 Every lane starts from `main`, and comes back to it with a merge commit of its own:
 
-```mermaid
-gitGraph
-   commit id: "Read a score"
-   commit id: "Split into pages"
-   branch midi-export
-   branch dark-mode
-   checkout midi-export
-   commit id: "Write MIDI"
-   checkout dark-mode
-   commit id: "Dark score"
-   checkout main
-   merge midi-export id: "land midi-export"
-   checkout dark-mode
-   commit id: "Dark pages"
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-graph-dark.svg">
+  <img alt="main as a line of commits. Two lanes start from it with lane new: midi-export, whose gate says READY and which lane land brings back as a merge commit of its own, and dark-mode, still in progress." src="docs/images/lanes-graph-light.svg">
+</picture>
 
 ## The loop
 
