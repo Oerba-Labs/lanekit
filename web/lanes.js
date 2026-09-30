@@ -2,7 +2,7 @@
 // step, and this file is served as it is written.
 //
 // TWO PLACES, ONE PAGE. In a browser it asks `lane web` over HTTP. Inside VS Code it is a
-// tab of the Lanes extension (vscode/host.mjs) and asks it by message: the extension runs
+// tab of LaneKit's editor extension (vscode/host.mjs) and asks it by message: the extension runs
 // the same service in the editor, tells the page when anything changed, and opens what the
 // page points at — a commit's changes, a lane's, a file's diff, a folder, a terminal — in
 // the editor itself. The drawing is the same in both; only `host` differs.
@@ -198,7 +198,7 @@ const refresh = async () => {
         // ask again, never take the silence for an answer.
         const updated = $('updated')
         updated.classList.add('lost')
-        updated.textContent = host.inEditor ? 'The Lanes extension did not answer; asking again' : 'Cannot reach the lanes server; asking again'
+        updated.textContent = host.inEditor ? 'LaneKit did not answer; asking again' : 'Cannot reach the lanes server; asking again'
     }
 }
 
@@ -218,7 +218,7 @@ const press = async (body) => {
     try {
         pressed = await host.press(body)
     } catch {
-        notice(host.inEditor ? 'The Lanes extension did not answer; nothing was run.' : 'The lanes server did not answer; nothing was run.')
+        notice(host.inEditor ? 'LaneKit did not answer; nothing was run.' : 'The lanes server did not answer; nothing was run.')
         return null
     }
     const answer = pressed.body
@@ -610,16 +610,30 @@ const headOf = (repo) => {
     return parts
 }
 
+// The editor's side bar is narrow and short: there, main's log runs down to the oldest commit a lane
+// forked from, and at least four; the tab and a browser show it whole.
+const IN_SIDEBAR = document.documentElement.dataset.surface === 'sidebar'
+const SIDEBAR_SPINE = 4
+const spineOf = (repo, live) => {
+    if (!IN_SIDEBAR) return repo.spine
+    const deepest = Math.max(-1, ...live.map((lane) => repo.spine.findIndex((commit) => commit.sha === lane.base)))
+    return repo.spine.slice(0, Math.max(SIDEBAR_SPINE, deepest + 1))
+}
+
 const logOf = (repo) => {
     if (repo.error) return []
     const onSpine = new Set(repo.spine.map((commit) => commit.sha))
     const live = repo.lanes.filter((lane) => lane.kind === 'working' || lane.kind === 'fresh')
     const newestFirst = (a, b) => (b.head?.at ?? 0) - (a.head?.at ?? 0)
     const rows = []
-    repo.spine.forEach((commit, index) => {
+    const spine = spineOf(repo, live)
+    spine.forEach((commit, index) => {
         for (const lane of live.filter((candidate) => candidate.base === commit.sha).sort(newestFirst)) rows.push(laneCard(repo, lane))
         rows.push(commitRow(repo, commit, index === 0 ? 'tip' : '', index === 0 ? repo.integrationBranch : null))
     })
+    if (spine.length < repo.spine.length) {
+        rows.push(el('li', { class: 'older', text: `${plural(repo.spine.length - spine.length, 'older commit')} of ${repo.integrationBranch}: Show in an Editor Tab has them` }))
+    }
     const older = live.filter((lane) => !onSpine.has(lane.base)).sort(newestFirst)
     if (older.length) {
         rows.push(el('li', { class: 'older', text: `Forked from further back in ${repo.integrationBranch}` }))

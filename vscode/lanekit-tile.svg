@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="LaneKit">
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#24304d"/>
+      <stop offset="1" stop-color="#121826"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#ground)"/>
+  <g transform="translate(-1 0)" fill="none" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 110V18" stroke="#cfd4dc"/>
+    <path d="M32 74c0-16 30-10 30-26V32" stroke="#f0b04a"/>
+    <path d="M32 100c0-18 62-10 62-30V28" stroke="#56c27a"/>
+    <circle cx="62" cy="26" r="9" fill="#f0b04a" stroke="none"/>
+    <circle cx="94" cy="22" r="9" fill="#56c27a" stroke="none"/>
+  </g>
+</svg>

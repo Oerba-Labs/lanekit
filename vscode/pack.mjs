@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The Lanes extension as a .vsix, the file `code --install-extension` and
+ * LaneKit's editor extension as a .vsix, the file `code --install-extension` and
  * `code-server --install-extension` take.
  *
  *     node vscode/pack.mjs                      writes vscode/lanekit-<version>.vsix
@@ -14,8 +14,8 @@
  * so the same files make the same .vsix, and whoever installs it can tell from its hash
  * alone whether there is anything new to install.
  *
- * WHAT IS IN IT. Only vscode/extension.js and vscode/package.json, a README, and lanekit's
- * LICENSE: the extension finds lanekit's checkout on the machine and runs the rest from
+ * WHAT IS IN IT. Only vscode/extension.js and vscode/package.json, LaneKit's two icons, a README,
+ * and lanekit's LICENSE: the extension finds lanekit's checkout on the machine and runs the rest from
  * there (extension.js says why).
  */
 
@@ -121,6 +121,7 @@ export const build = () => {
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE.txt" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/lanekit.png" Addressable="true" />
   </Assets>
 </PackageManifest>
 `
@@ -130,14 +131,16 @@ export const build = () => {
   <Default Extension=".js" ContentType="application/javascript" />
   <Default Extension=".md" ContentType="text/markdown" />
   <Default Extension=".txt" ContentType="text/plain" />
+  <Default Extension=".svg" ContentType="image/svg+xml" />
+  <Default Extension=".png" ContentType="image/png" />
   <Default Extension=".vsixmanifest" ContentType="text/xml" />
 </Types>
 `
-    const readme = `# Lanes
+    const readme = `# LaneKit
 
 Every lane of every repository in the folders open in this window, as a smartlog you act
 on: open a commit's or a lane's changes as diffs, a lane in its own window or a terminal
-in it, and gate, land and sweep it. **Lanes: Show** opens it; the status bar says which lane
+in it, and gate, land and sweep it. The LaneKit icon in the side bar shows it, and **LaneKit: Show in an Editor Tab** gives it a tab; the status bar says which lane
 the file in front of you is in, and what it needs.
 
 It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LANEKIT\`, else
@@ -149,7 +152,10 @@ It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LAN
         ['extension/package.json', manifestText],
         ['extension/extension.js', fs.readFileSync(path.join(HERE, 'extension.js'))],
         ['extension/README.md', readme],
-        ['extension/LICENSE.txt', fs.readFileSync(path.join(HERE, '..', 'LICENSE'))]
+        ['extension/LICENSE.txt', fs.readFileSync(path.join(HERE, '..', 'LICENSE'))],
+        // The side bar's icon, which VS Code draws in the theme's own colour, and the Extensions list's.
+        ['extension/lanekit.svg', fs.readFileSync(path.join(HERE, 'lanekit.svg'))],
+        ['extension/lanekit.png', fs.readFileSync(path.join(HERE, 'lanekit.png'))]
     ])
     return { bytes, name: `${manifest.publisher}.${manifest.name}`, version: manifest.version, sha256: crypto.createHash('sha256').update(bytes).digest('hex') }
 }

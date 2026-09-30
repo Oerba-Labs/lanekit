@@ -41,8 +41,9 @@ const standIn = (folders) => {
         static from (parts) { return new Uri(parts) }
         toString () { return `${this.scheme}:${this.path}${this.query ? `?${this.query}` : ''}` }
     }
-    const seen = { commands: new Map(), executed: [], posted: [], said: [], providers: new Map(), terminals: [] }
+    const seen = { commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], views: new Map() }
     let receive = null
+    let sideReceive = null
     let active = null
     const bar = { text: '', tooltip: '', command: null, shown: false, show () { this.shown = true }, hide () { this.shown = false }, dispose () {} }
     const panel = {
@@ -57,6 +58,19 @@ const standIn = (folders) => {
         onDidChangeViewState: event(),
         onDidDispose: event()
     }
+    // The side bar's view, made by the provider when VS Code first shows it (here: when asked to focus it).
+    const sideView = {
+        visible: true,
+        webview: {
+            options: null, html: '', cspSource: 'vscode-webview:',
+            asWebviewUri: (uri) => ({ toString: () => `vscode-webview://side${uri.path}` }),
+            postMessage: (message) => { seen.sidePosted.push(message); return Promise.resolve(true) },
+            onDidReceiveMessage: (listener) => { sideReceive = listener; return disposable }
+        },
+        onDidChangeVisibility: event(),
+        onDidDispose: event()
+    }
+    let sideMade = false
     const vscode = {
         Uri,
         ViewColumn: { Active: -1 },
@@ -67,6 +81,7 @@ const standIn = (folders) => {
             registerWebviewPanelSerializer: () => disposable,
             createStatusBarItem: () => bar,
             createTerminal: (options) => { seen.terminals.push(options); return { show () {} } },
+            registerWebviewViewProvider: (id, provider, options) => { seen.views.set(id, { provider, options }); return disposable },
             showInformationMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
             showErrorMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
             showWarningMessage: () => Promise.resolve(undefined),
@@ -86,7 +101,11 @@ const standIn = (folders) => {
         },
         commands: {
             registerCommand: (id, run) => { seen.commands.set(id, run); return disposable },
-            executeCommand: async (...args) => { seen.executed.push(args) }
+            executeCommand: async (...args) => {
+                seen.executed.push(args)
+                const view = /^(.*)\.focus$/.exec(args[0])
+                if (view && seen.views.has(view[1]) && !sideMade) { sideMade = true; seen.views.get(view[1]).provider.resolveWebviewView(sideView) }
+            }
         }
     }
     let sequence = 0
@@ -101,7 +120,19 @@ const standIn = (folders) => {
         }
         throw new Error(`no reply to ${method}`)
     }
-    return { vscode, seen, bar, panel, ask, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
+    /** What the side bar's page would ask, and the reply posted back to it alone. */
+    const askSide = async (method, params) => {
+        const id = `s${++sequence}`
+        await sideReceive({ type: 'request', id, method, params })
+        for (let i = 0; i < 400; i++) {
+            const reply = seen.sidePosted.find((message) => message.type === 'reply' && message.id === id)
+            if (reply) return reply
+            await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        throw new Error(`no reply to ${method} in the side bar`)
+    }
+    const sideSays = (message) => sideReceive(message)
+    return { vscode, seen, bar, panel, sideView, ask, askSide, sideSays, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
 }
 
 let scratch
@@ -238,6 +269,7 @@ test('the status bar names the lane the file in front is in, and what it needs',
     assert.equal(editor.bar.shown, true)
     assert.match(editor.bar.text, /working/)
     assert.deepEqual(editor.bar.command.arguments, [{ repo: 'demo', lane: 'working' }])
+    assert.equal(editor.bar.command.command, 'lanekit.reveal', 'the status bar sends you to the side bar')
     // The Lanes tab in front, or a diff: no file editor, so the bar keeps the lane it was naming.
     editor.setActive(null)
     await editor.ask('state')
@@ -264,23 +296,64 @@ test('a press from the page runs, and the page is told of its output and its end
     assert.match(job.value.output, /gate\.mjs/)
 })
 
+test('the side bar has a view of its own, which keeps its page while hidden', () => {
+    const view = editor.seen.views.get('lanekit.sidebar')
+    assert.ok(view, 'a provider for lanekit.sidebar')
+    assert.equal(view.options.webviewOptions.retainContextWhenHidden, true)
+    const manifest = JSON.parse(fs.readFileSync(path.join(KIT, 'vscode', 'package.json'), 'utf8'))
+    const container = manifest.contributes.viewsContainers.activitybar[0]
+    assert.deepEqual(manifest.contributes.views[container.id].map((v) => [v.type, v.id]), [['webview', 'lanekit.sidebar']])
+    assert.ok(fs.existsSync(path.join(KIT, 'vscode', container.icon)), 'the icon the manifest names is there')
+})
+
+test('the status bar reveals the side bar, and its page marks the lane once it is ready', async () => {
+    await editor.seen.commands.get('lanekit.reveal')({ repo: 'demo', lane: 'working' })
+    assert.ok(editor.seen.executed.some((args) => args[0] === 'lanekit.sidebar.focus'))
+    assert.match(editor.sideView.webview.html, /<html data-surface="sidebar"/)
+    assert.match(editor.sideView.webview.html, /script-src 'nonce-/)
+    assert.equal(editor.seen.sidePosted.filter((m) => m.type === 'focus').length, 0, 'not before the page listens')
+    await editor.sideSays({ type: 'ready' })
+    assert.deepEqual(editor.seen.sidePosted.filter((m) => m.type === 'focus'), [{ type: 'focus', repo: 'demo', lane: 'working' }])
+})
+
+test('each page is answered alone, though both hear what changed', async () => {
+    const before = editor.seen.posted.length
+    const reply = await editor.askSide('state')
+    assert.equal(reply.ok, true)
+    assert.equal(editor.seen.posted.slice(before).filter((m) => m.type === 'reply' && m.id === reply.id).length, 0, 'the tab is not sent the side bar\'s reply')
+    const tabReply = await editor.ask('state')
+    assert.equal(editor.seen.sidePosted.filter((m) => m.type === 'reply' && m.id === tabReply.id).length, 0, 'nor the side bar the tab\'s')
+    fs.writeFileSync(path.join(working, 'more.txt'), 'more\n')
+    for (let i = 0; i < 300 && !(editor.seen.posted.some((m) => m.type === 'state' && m.state.repos[0].lanes[0].dirty === 2) && editor.seen.sidePosted.some((m) => m.type === 'state' && m.state.repos[0].lanes[0].dirty === 2)); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    assert.ok(editor.seen.sidePosted.some((m) => m.type === 'state' && m.state.repos[0].lanes[0].dirty === 2), 'the side bar is told')
+    assert.ok(editor.seen.posted.some((m) => m.type === 'state' && m.state.repos[0].lanes[0].dirty === 2), 'and the tab')
+    fs.rmSync(path.join(working, 'more.txt'))
+})
+
 test('the status bar\'s words follow the page\'s verdicts', () => {
     assert.equal(wordOf({ kind: 'working', queue: { verdict: 'land now' } }), 'ready to land')
     assert.equal(wordOf({ kind: 'fresh', dirty: 0 }), 'nothing committed')
     assert.equal(wordOf({ kind: 'working', operation: 'rebase' }), 'mid-rebase')
 })
 
-test('the .vsix holds the loader, the manifest, a README and the licence, the same bytes every time', () => {
+test('the .vsix holds the loader, the manifest, its icons, a README and the licence, the same bytes every time', () => {
     const one = build()
     const two = build()
     assert.equal(one.sha256, two.sha256)
     const file = path.join(scratch, 'lanes.vsix')
     fs.writeFileSync(file, one.bytes)
     const listed = execFileSync('unzip', ['-Z1', file], { encoding: 'utf8' }).trim().split('\n').sort()
-    assert.deepEqual(listed, ['[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt', 'extension/README.md', 'extension/extension.js', 'extension/package.json'])
+    assert.deepEqual(listed, ['[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt', 'extension/README.md', 'extension/extension.js', 'extension/lanekit.png', 'extension/lanekit.svg', 'extension/package.json'])
+    const png = execFileSync('unzip', ['-p', file, 'extension/lanekit.png'])
+    assert.equal(png.subarray(1, 4).toString(), 'PNG', 'the Extensions list icon is a PNG')
+    assert.equal(png.readUInt32BE(16), 128, 'and 128 pixels wide')
     assert.match(execFileSync('unzip', ['-p', file, 'extension/LICENSE.txt'], { encoding: 'utf8' }), /Apache License\s+Version 2\.0/)
     execFileSync('unzip', ['-tq', file])
     const manifest = JSON.parse(execFileSync('unzip', ['-p', file, 'extension/package.json'], { encoding: 'utf8' }))
     assert.equal(manifest.main, './extension.js')
     assert.equal(manifest.license, 'Apache-2.0')
+    assert.equal(manifest.displayName, 'LaneKit')
+    assert.equal(manifest.icon, 'lanekit.png')
 })

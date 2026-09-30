@@ -82,7 +82,7 @@ body.in-editor .new-lane input {
   color: var(--vscode-input-foreground, var(--ink));
   border-color: var(--vscode-input-border, var(--line));
 }
-/* The tab says "Lanes" already: the bar keeps where and when, and gives its height back. */
+/* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
 body.in-editor .product { display: none; }
 body.in-editor .bar { padding-top: 8px; padding-bottom: 8px; }
 
@@ -236,6 +236,43 @@ a.btn { display: inline-block; text-decoration: none; }
 .stack .sha { color: var(--muted); flex: none; }
 .stack .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack .when { color: var(--muted); font-size: var(--s12); flex: none; }
+
+/*
+ * The side bar's page (the LaneKit icon): narrow, so the same page with less of each thing. The side bar's
+ * own ground, no paths or times, each lane's buttons on a line of their own, and the terminal crib left
+ * to the tab.
+ */
+html[data-surface="sidebar"] body.vscode-light, html[data-surface="sidebar"] body.vscode-dark,
+html[data-surface="sidebar"] body.vscode-high-contrast, html[data-surface="sidebar"] body.vscode-high-contrast-light {
+  --bg: var(--vscode-sideBar-background, var(--vscode-editor-background, #ffffff));
+  --soft: var(--vscode-editor-background, #f7f8fa);
+}
+html[data-surface="sidebar"] .bar { padding: 6px 12px; }
+html[data-surface="sidebar"] .where { display: none; }
+html[data-surface="sidebar"] .notice { margin: 8px 12px 0; }
+html[data-surface="sidebar"] .pane { padding: 6px 12px 140px; }
+html[data-surface="sidebar"] .repo { margin: 0 0 24px; }
+html[data-surface="sidebar"] .repo-head { flex-wrap: wrap; gap: 4px 8px; }
+html[data-surface="sidebar"] .repo-head h2 { font-size: var(--s14); }
+html[data-surface="sidebar"] .repo-sub, html[data-surface="sidebar"] .terminal { display: none; }
+html[data-surface="sidebar"] .facts { gap: 2px 10px; font-size: var(--s12); }
+html[data-surface="sidebar"] .new-lane { margin: 10px 0 6px; gap: 6px; }
+html[data-surface="sidebar"] .new-lane input[name="name"] { flex: 1 1 100%; width: auto; }
+html[data-surface="sidebar"] .new-lane input[name="base"] { flex: 1 1 60%; width: auto; }
+html[data-surface="sidebar"] .btn { padding: 2px 8px; font-size: var(--s12); }
+html[data-surface="sidebar"] .log::before { left: 7px; }
+html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px 24px; font-size: var(--s12); }
+html[data-surface="sidebar"] .commit::before { left: 4px; top: 8px; width: 8px; height: 8px; }
+html[data-surface="sidebar"] .commit .when, html[data-surface="sidebar"] .stack .when { display: none; }
+html[data-surface="sidebar"] .older { padding-left: 24px; }
+html[data-surface="sidebar"] .lane { margin: 6px 0 6px 22px; padding: 8px 10px; }
+html[data-surface="sidebar"] .lane::before { left: -15px; top: 16px; width: 12px; }
+html[data-surface="sidebar"] .lane-head { gap: 4px 8px; }
+html[data-surface="sidebar"] .lane-head .grow { display: none; }
+html[data-surface="sidebar"] .lane-head .actions { flex-basis: 100%; }
+html[data-surface="sidebar"] .stack li { font-size: var(--s12); }
+html[data-surface="sidebar"] .landed li { gap: 4px 8px; }
+html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { padding-left: 12px; padding-right: 12px; }
 
 /* What the editor opens (a commit, a file, what is uncommitted): a pointer, and a wash under it. */
 .opens { cursor: pointer; border-radius: 4px; }

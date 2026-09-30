@@ -1,5 +1,5 @@
 /**
- * The Lanes extension's work, inside VS Code: the lanes page as a tab of the editor, the
+ * LaneKit's editor extension at work, inside VS Code: the lanes page as a tab of the editor, the
  * service it asks (lib/service.mjs) running here in the editor, and everything the page
  * points at opened where a developer already is — a commit's changes, a lane's, a file's
  * diff, what is uncommitted, a lane's folder, a terminal in it. The shape of Sapling's
@@ -28,6 +28,7 @@ import path from 'node:path'
 import { createService } from '../lib/service.mjs'
 
 export const VIEW = 'lanekit.lanes'
+export const SIDEBAR = 'lanekit.sidebar'
 export const SCHEME = 'lanekit'
 const EVERY_VISIBLE_MS = 4000
 const EVERY_HIDDEN_MS = 20000
@@ -52,7 +53,7 @@ export const wordOf = (lane) => {
 }
 
 /** The page's HTML for a webview: its own files by the webview's addresses, and nothing else allowed. */
-export const pageHtml = (webDir, webview, fileUri, nonce = crypto.randomBytes(18).toString('base64')) => {
+export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(18).toString('base64'), surface = 'tab' } = {}) => {
     const uri = (file) => webview.asWebviewUri(fileUri(path.join(webDir, file))).toString()
     const csp = [
         "default-src 'none'",
@@ -67,13 +68,15 @@ export const pageHtml = (webDir, webview, fileUri, nonce = crypto.randomBytes(18
     if (!html.includes(style) || !html.includes(script)) throw new Error('web/index.html no longer names lanes.css and lanes.js as the extension expects')
     html = html.replace(style, `<meta http-equiv="Content-Security-Policy" content="${csp}">\n<link rel="stylesheet" href="${uri('lanes.css')}">`)
     html = html.replace(script, `<script nonce="${nonce}" src="${uri('lanes.js')}" defer></script>`)
-    return html
+    // Where the page is drawn, for its stylesheet and its log: the side bar's is narrow.
+    if (!/<html\b/.test(html)) throw new Error('web/index.html has no <html> element to say where it is drawn')
+    return html.replace(/<html\b/, `<html data-surface="${surface === 'sidebar' ? 'sidebar' : 'tab'}"`)
 }
 
 export const activate = async (context, vscode, { root }) => {
     const webDir = path.join(root, 'web')
     const subscriptions = context.subscriptions
-    const output = vscode.window.createOutputChannel('Lanes')
+    const output = vscode.window.createOutputChannel('LaneKit')
     subscriptions.push(output)
 
     const foldersNow = () => [
@@ -83,40 +86,55 @@ export const activate = async (context, vscode, { root }) => {
     const service = createService({ dirs: foldersNow(), reader: 'worker', packageRoot: root })
 
     // -----------------------------------------------------------------------
-    // the tab
+    // the pages: the side bar's, there by default, and a tab, for room
     // -----------------------------------------------------------------------
 
+    // Every page open, each its own webview. What changed and a job's news go to all of them; a reply goes
+    // only to the page that asked, since each page numbers its own questions from one.
+    const pages = new Set()
     let panel = null
-    let pendingFocus = null
+    let sidebar = null
+    let pendingFocus = null   // { surface, repo, lane }: asked for before that page could hear it
     let lastSent = null
-    const post = (message) => { if (panel) panel.webview.postMessage(message) }
+    const post = (message) => { for (const page of pages) page.webview.postMessage(message) }
+    const anyVisible = () => [...pages].some((page) => page.visible())
 
-    const adopt = (made) => {
-        panel = made
-        made.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(webDir)] }
-        made.webview.html = pageHtml(webDir, made.webview, (file) => vscode.Uri.file(file))
+    const wire = (page) => {
+        page.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(webDir)] }
+        page.webview.html = pageHtml(webDir, page.webview, (file) => vscode.Uri.file(file), { surface: page.surface })
+        pages.add(page)
         lastSent = null
-        made.webview.onDidReceiveMessage((message) => onMessage(message), null, subscriptions)
-        made.onDidChangeViewState(() => schedule(true), null, subscriptions)
-        made.onDidDispose(() => { if (panel === made) panel = null; schedule() }, null, subscriptions)
+        page.webview.onDidReceiveMessage((message) => onMessage(message, page), null, subscriptions)
+    }
+    /** A lane to mark on a page: at once on a page that is listening, when it says it is ready on one just made. */
+    const focusIn = (surface, focus, fresh) => {
+        if (!focus?.repo || !focus?.lane) return
+        const page = surface === 'tab' ? panel : sidebar
+        if (fresh || !page) pendingFocus = { surface, repo: focus.repo, lane: focus.lane }
+        else page.webview.postMessage({ type: 'focus', repo: focus.repo, lane: focus.lane })
     }
 
+    const adopt = (made) => {
+        const page = { surface: 'tab', webview: made.webview, visible: () => made.visible, reveal: () => made.reveal() }
+        panel = page
+        wire(page)
+        made.onDidChangeViewState(() => schedule(true), null, subscriptions)
+        made.onDidDispose(() => { pages.delete(page); if (panel === page) panel = null; schedule() }, null, subscriptions)
+    }
+
+    /** The full page in a tab of its own: room for a long log, or a second look beside the side bar's. */
     const show = (focus) => {
         const fresh = !panel
         if (panel) panel.reveal()
         else {
-            adopt(vscode.window.createWebviewPanel(VIEW, 'Lanes', vscode.ViewColumn.Active, {
+            adopt(vscode.window.createWebviewPanel(VIEW, 'LaneKit', vscode.ViewColumn.Active, {
                 enableScripts: true,
                 // Its drawer, its open confirmations and where it was scrolled survive a switch of tabs.
                 retainContextWhenHidden: true,
                 localResourceRoots: [vscode.Uri.file(webDir)]
             }))
         }
-        if (focus?.repo && focus?.lane) {
-            // An open page hears it now; a page just made hears it when it says it is ready.
-            if (fresh) pendingFocus = { repo: focus.repo, lane: focus.lane }
-            else post({ type: 'focus', repo: focus.repo, lane: focus.lane })
-        }
+        focusIn('tab', focus, fresh)
         schedule(true)
     }
 
@@ -124,8 +142,29 @@ export const activate = async (context, vscode, { root }) => {
         deserializeWebviewPanel: async (restored) => { adopt(restored); schedule(true) }
     }))
 
+    // The side bar's page, behind the LaneKit icon, which is there whenever the extension is. VS Code makes it
+    // the first time it is shown and keeps what it holds while another view is in front.
+    subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR, {
+        resolveWebviewView: (view) => {
+            const page = { surface: 'sidebar', webview: view.webview, visible: () => view.visible }
+            sidebar = page
+            wire(page)
+            view.onDidChangeVisibility(() => schedule(true), null, subscriptions)
+            view.onDidDispose(() => { pages.delete(page); if (sidebar === page) sidebar = null; schedule() }, null, subscriptions)
+            schedule(true)
+        }
+    }, { webviewOptions: { retainContextWhenHidden: true } }))
+
+    /** The side bar's page brought forward, with a lane marked on it: where the status bar sends you. */
+    const reveal = async (focus) => {
+        const fresh = !sidebar
+        await vscode.commands.executeCommand(`${SIDEBAR}.focus`)
+        focusIn('sidebar', focus, fresh)
+        schedule(true)
+    }
+
     // -----------------------------------------------------------------------
-    // reading: when the tab is looked at, when a file is saved, after a press
+    // reading: while a page is looked at, when a file is saved, after a press
     // -----------------------------------------------------------------------
 
     let timer = null
@@ -154,8 +193,8 @@ export const activate = async (context, vscode, { root }) => {
     const schedule = (soon = false, state = null) => {
         if (disposed) return
         clearTimeout(timer)
-        const idle = !panel && state && !state.repos.length
-        timer = setTimeout(tick, soon ? 250 : panel?.visible ? EVERY_VISIBLE_MS : idle ? EVERY_IDLE_MS : EVERY_HIDDEN_MS)
+        const idle = !pages.size && state && !state.repos.length
+        timer = setTimeout(tick, soon ? 250 : anyVisible() ? EVERY_VISIBLE_MS : idle ? EVERY_IDLE_MS : EVERY_HIDDEN_MS)
     }
 
     subscriptions.push(vscode.workspace.onDidSaveTextDocument(() => schedule(true)))
@@ -180,10 +219,10 @@ export const activate = async (context, vscode, { root }) => {
     service.events.on('done', (job) => {
         post({ type: 'job', id: job.id })
         schedule(true)
-        if (fromPalette.delete(job.id) && !panel?.visible) {
+        if (fromPalette.delete(job.id) && !anyVisible()) {
             const what = `${job.verb}${job.lane ? ` ${job.lane}` : ''}`
-            const said = job.code === 0 ? vscode.window.showInformationMessage(`Lanes: ${what} finished.`, 'Show output')
-                : vscode.window.showErrorMessage(`Lanes: ${what} failed (exit ${job.code}).`, 'Show output')
+            const said = job.code === 0 ? vscode.window.showInformationMessage(`LaneKit: ${what} finished.`, 'Show output')
+                : vscode.window.showErrorMessage(`LaneKit: ${what} failed (exit ${job.code}).`, 'Show output')
             Promise.resolve(said).then((choice) => { if (choice === 'Show output') output.show(true) })
         }
     })
@@ -323,20 +362,23 @@ export const activate = async (context, vscode, { root }) => {
         }
     }
 
-    const onMessage = async (message) => {
+    const onMessage = async (message, page) => {
         if (!message || typeof message !== 'object') return
         if (message.type === 'ready') {
             lastSent = null
-            // A lane asked for before the page could hear it: said now, and then forgotten.
-            if (pendingFocus) { post({ type: 'focus', ...pendingFocus }); pendingFocus = null }
+            // A lane asked for before this page could hear it: said now, and then forgotten.
+            if (pendingFocus?.surface === page.surface) {
+                page.webview.postMessage({ type: 'focus', repo: pendingFocus.repo, lane: pendingFocus.lane })
+                pendingFocus = null
+            }
             schedule(true)
             return
         }
         if (message.type !== 'request') return
         try {
-            post({ type: 'reply', id: message.id, ok: true, value: await answer(message.method, message.params ?? {}) })
+            page.webview.postMessage({ type: 'reply', id: message.id, ok: true, value: await answer(message.method, message.params ?? {}) })
         } catch (error) {
-            post({ type: 'reply', id: message.id, ok: false, error: error.message })
+            page.webview.postMessage({ type: 'reply', id: message.id, ok: false, error: error.message })
         }
     }
 
@@ -346,7 +388,7 @@ export const activate = async (context, vscode, { root }) => {
 
     const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40)
     subscriptions.push(bar)
-    // The file in front; with none (the Lanes tab itself, a diff, a terminal), the last one that was, so the
+    // The file in front; with none (the LaneKit tab itself, a diff, a terminal), the last one that was, so the
     // bar keeps naming the lane you were in while you look at its page; before any, the first folder open.
     let lastFile = null
     const whereNow = () => {
@@ -362,13 +404,13 @@ export const activate = async (context, vscode, { root }) => {
         if (!at) { bar.hide(); return }
         if (at.lane) {
             bar.text = `$(git-branch) ${at.lane.name} · ${wordOf(at.lane)}`
-            bar.tooltip = `Lane ${at.lane.name} of ${at.repo.id}, on branch ${at.lane.branch}. Show it in Lanes.`
-            bar.command = { command: 'lanekit.show', title: 'Show in Lanes', arguments: [{ repo: at.repo.id, lane: at.lane.name }] }
+            bar.tooltip = `Lane ${at.lane.name} of ${at.repo.id}, on branch ${at.lane.branch}. Show it in LaneKit.`
+            bar.command = { command: 'lanekit.reveal', title: 'Show in LaneKit', arguments: [{ repo: at.repo.id, lane: at.lane.name }] }
         } else {
             const live = at.repo.lanes.filter((lane) => lane.kind === 'working' || lane.kind === 'fresh').length
             bar.text = `$(list-tree) ${live} ${live === 1 ? 'lane' : 'lanes'}`
-            bar.tooltip = `${at.repo.id}'s main checkout. Show every lane in Lanes.`
-            bar.command = { command: 'lanekit.show', title: 'Show in Lanes', arguments: [] }
+            bar.tooltip = `${at.repo.id}'s main checkout. Show every lane in LaneKit.`
+            bar.command = { command: 'lanekit.reveal', title: 'Show in LaneKit', arguments: [] }
         }
         bar.show()
     }
@@ -392,7 +434,7 @@ export const activate = async (context, vscode, { root }) => {
         const here = file ? service.laneAt(file) : null
         if (here?.lane && which(here.lane)) return { repo: here.repo, lane: here.lane }
         const choices = allLanes().filter((x) => which(x.lane))
-        if (!choices.length) { vscode.window.showInformationMessage('Lanes: no lane to choose from here.'); return null }
+        if (!choices.length) { vscode.window.showInformationMessage('LaneKit: no lane to choose from here.'); return null }
         const picked = await vscode.window.showQuickPick(choices.map((x) => ({
             label: x.lane.name, description: x.repo.id, detail: wordOf(x.lane), x
         })), { title, matchOnDescription: true })
@@ -401,7 +443,7 @@ export const activate = async (context, vscode, { root }) => {
 
     const refused = (pressed) => {
         if (pressed.status < 400) return false
-        vscode.window.showErrorMessage(`Lanes: ${pressed.body?.error ?? `refused (${pressed.status})`}`)
+        vscode.window.showErrorMessage(`LaneKit: ${pressed.body?.error ?? `refused (${pressed.status})`}`)
         return true
     }
     const pressFromPalette = async (request) => {
@@ -415,11 +457,12 @@ export const activate = async (context, vscode, { root }) => {
 
     const commands = {
         'lanekit.show': (focus) => show(focus),
+        'lanekit.reveal': (focus) => reveal(focus),
         'lanekit.refresh': () => schedule(true),
         'lanekit.newLane': async () => {
             await readIfNever()
             const repos = service.known().repos.filter((repo) => !repo.error)
-            if (!repos.length) { vscode.window.showInformationMessage('Lanes: no repository with a lane.config.json is open here.'); return }
+            if (!repos.length) { vscode.window.showInformationMessage('LaneKit: no repository with a lane.config.json is open here.'); return }
             const repo = repos.length === 1 ? repos[0]
                 : (await vscode.window.showQuickPick(repos.map((candidate) => ({ label: candidate.id, description: candidate.path, repo: candidate })), { title: 'New lane in' }))?.repo
             if (!repo) return
@@ -448,7 +491,7 @@ export const activate = async (context, vscode, { root }) => {
             if (refused(check)) return
             const checked = await finished(check.body.id)
             if (checked.code !== 0) {
-                const choice = await vscode.window.showErrorMessage(`Lanes: ${x.lane.name} cannot land yet.`, 'Show why')
+                const choice = await vscode.window.showErrorMessage(`LaneKit: ${x.lane.name} cannot land yet.`, 'Show why')
                 if (choice === 'Show why') output.show(true)
                 return
             }
@@ -477,7 +520,7 @@ export const activate = async (context, vscode, { root }) => {
             try {
                 return await run(...args)
             } catch (error) {
-                vscode.window.showErrorMessage(`Lanes: ${error.message}`)
+                vscode.window.showErrorMessage(`LaneKit: ${error.message}`)
                 return undefined
             }
         }))
@@ -489,6 +532,7 @@ export const activate = async (context, vscode, { root }) => {
         commands: Object.keys(commands),
         service,
         panel: () => panel,
+        sidebar: () => sidebar,
         dispose: () => { disposed = true; clearTimeout(timer); clearTimeout(jobPing); service.dispose() }
     }
 }

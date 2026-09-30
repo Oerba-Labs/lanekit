@@ -1,35 +1,134 @@
 {
   "name": "lanekit",
-  "displayName": "Lanes",
+  "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: open a commit's or a lane's changes, gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/Oerba-Labs/lanekit.git" },
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["SCM Providers", "Other"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Oerba-Labs/lanekit.git"
+  },
+  "icon": "lanekit.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
   "main": "./extension.js",
-  "extensionKind": ["workspace"],
-  "capabilities": { "untrustedWorkspaces": { "supported": false, "description": "Lanes runs the repository's own lane and gate commands." } },
-  "activationEvents": ["onStartupFinished", "onWebviewPanel:lanekit.lanes"],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "LaneKit runs the repository's own lane and gate commands."
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:lanekit.lanes",
+    "onView:lanekit.sidebar"
+  ],
   "contributes": {
     "commands": [
-      { "command": "lanekit.show", "title": "Show", "category": "Lanes", "icon": "$(list-tree)" },
-      { "command": "lanekit.newLane", "title": "New Lane…", "category": "Lanes" },
-      { "command": "lanekit.gate", "title": "Gate This Lane…", "category": "Lanes" },
-      { "command": "lanekit.land", "title": "Land This Lane…", "category": "Lanes" },
-      { "command": "lanekit.changes", "title": "Show This Lane's Changes", "category": "Lanes" },
-      { "command": "lanekit.terminal", "title": "Open a Terminal in This Lane", "category": "Lanes" },
-      { "command": "lanekit.openLane", "title": "Open a Lane…", "category": "Lanes" },
-      { "command": "lanekit.refresh", "title": "Refresh", "category": "Lanes" }
+      {
+        "command": "lanekit.reveal",
+        "title": "Show in the Side Bar",
+        "category": "LaneKit",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "lanekit.show",
+        "title": "Show in an Editor Tab",
+        "category": "LaneKit",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "lanekit.newLane",
+        "title": "New Lane\u2026",
+        "category": "LaneKit",
+        "icon": "$(add)"
+      },
+      {
+        "command": "lanekit.gate",
+        "title": "Gate This Lane\u2026",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.land",
+        "title": "Land This Lane\u2026",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.changes",
+        "title": "Show This Lane's Changes",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.terminal",
+        "title": "Open a Terminal in This Lane",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.openLane",
+        "title": "Open a Lane\u2026",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.refresh",
+        "title": "Refresh",
+        "category": "LaneKit",
+        "icon": "$(refresh)"
+      }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lanekit",
+          "title": "LaneKit",
+          "icon": "lanekit.svg"
+        }
+      ]
+    },
+    "views": {
+      "lanekit": [
+        {
+          "type": "webview",
+          "id": "lanekit.sidebar",
+          "name": "LaneKit"
+        }
+      ]
+    },
     "menus": {
       "scm/title": [
-        { "command": "lanekit.show", "group": "navigation" }
+        {
+          "command": "lanekit.reveal",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "lanekit.newLane",
+          "when": "view == lanekit.sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lanekit.refresh",
+          "when": "view == lanekit.sidebar",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lanekit.show",
+          "when": "view == lanekit.sidebar",
+          "group": "navigation@3"
+        }
       ]
     },
     "configuration": {
-      "title": "Lanes",
+      "title": "LaneKit",
       "properties": {
         "lanekit.path": {
           "type": "string",
@@ -38,7 +137,9 @@
         },
         "lanekit.folders": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Folders to find repositories with lanes in, besides the folders open in this window."
         }

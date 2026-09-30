@@ -1,4 +1,4 @@
-// The Lanes extension's front half: find the lanekit checkout on this machine and hand over
+// LaneKit's editor extension, its front half: find the lanekit checkout on this machine and hand over
 // to its vscode/host.mjs, which does the work.
 //
 // WHY A LOADER. The page, the service and the commands the page runs are lanekit's, and the
@@ -30,7 +30,7 @@ exports.activate = async (context) => {
     const root = lanekitRoot()
     if (!root) {
         // Every command still answers, with what is missing, rather than "command not found".
-        const said = 'Lanes needs lanekit on this machine: git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit, or set lanekit.path to a checkout of it.'
+        const said = 'LaneKit needs a checkout of lanekit on this machine: git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit, or set lanekit.path to one.'
         const manifest = require('./package.json')
         for (const { command } of manifest.contributes.commands) {
             context.subscriptions.push(vscode.commands.registerCommand(command, () => vscode.window.showErrorMessage(said)))

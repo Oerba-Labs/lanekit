@@ -115,7 +115,7 @@ test('the routes answer under a proxy prefix too', async () => {
     const response = await fetch(`${base}@owner/demo/apps/lanes/api/state`)
     assert.equal(response.status, 200)
     const page = await fetch(`${base}@owner/demo/apps/lanes/`)
-    assert.match(await page.text(), /<title>Lanes<\/title>/)
+    assert.match(await page.text(), /<title>LaneKit<\/title>/)
 })
 
 test('each lane is read as what it is: working, empty with work in it, or landed', async () => {
