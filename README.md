@@ -11,11 +11,12 @@ process, a file or a database row, and each lands back on `main` only once its t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-dark.png">
-  <img alt="The LaneKit page: two lanes drawn above the commit of main they started from. dark-mode has one commit and uncommitted changes; midi-export has passed its gate and is ready to land." src="docs/images/lanes-light.png">
+  <img alt="The LaneKit page: the landing order at the top, then two lanes drawn above the commit of main they started from. dark-mode lists its two uncommitted files with Commit… and Amend beside them; midi-export has passed its gate, and the pointer on it shows its buttons: Gate, Land…, Push." src="docs/images/lanes-light.png">
 </picture>
 
 <sub>`lane web`: every lane of every repository on one page, drawn above the commit it started
-from, with what each needs next and the buttons that do it.</sub>
+from, with what each needs next. A lane's buttons show when the pointer is on it, as here on
+midi-export.</sub>
 
 ## The idea, in one picture
 
@@ -198,16 +199,25 @@ The page in the picture above, for every repository in a folder:
   signed in. While a press runs in it, it says so live: *Gating · running the tests… · 12 s*. A
   failed gate shows the failing step and its last lines, kept with the run, so it is still there
   tomorrow.
-- **Its buttons** are lane's own commands, run as a terminal would run them, with their output
-  underneath: **New lane**, **Gate**, **Land**, **Sweep**, **Rebase** (a lane that is behind),
-  **Push** (one with commits origin lacks), **Pull request** (one pushed without one), **Pull**
-  (main behind origin) and **Fetch**. Land and Sweep check first with `--dry-run` and ask; a push
-  that would replace origin's copy of a rebased branch asks too. A rebase that conflicts stops with
-  the files named, and waits for **Continue** or **Abort**.
+- **Its buttons show when the pointer or the keyboard is on it**, the way Sapling's Interactive
+  Smartlog does, so a page of lanes reads calmly until you reach for one. They are lane's own
+  commands, run as a terminal would run them, with their output underneath: **Gate**, **Land**,
+  **Sweep**, **Rebase** (a lane that is behind), **Push** (one with commits origin lacks), **Pull
+  request** (one pushed without one), **Pull** (main behind origin) and **Fetch**. Land and Sweep
+  check first with `--dry-run` and ask; a push that would replace origin's copy of a rebased branch
+  asks too. A rebase that conflicts stops with the files named, and waits for **Continue** or
+  **Abort**.
+- **A new lane starts from a commit.** Point at any commit, of main or of a lane, choose **New lane
+  here**, and type its name in that row: the lane starts from that commit, on top of it.
+- **A lane can be dragged onto a commit of main** to rebase it there, after it says what will
+  happen. A lane with uncommitted work, or in the middle of something, stays where it is.
+- **What is uncommitted is listed under the lane**, each file with what happened to it (M, A, D,
+  U), and **Commit…** and **Amend** beside them: every file, with a message.
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
-  rebases, `p` pushes, `f` fetches, `n` starts a new lane, `?` lists them.
+  rebases, `p` pushes, `c` commits, `f` fetches, `n` names a new lane from the lane's newest commit
+  (or main's), `?` lists them.
 
 It listens on the loopback only. `--ssh-host <host>` adds a link that opens a lane in VS Code over
 Remote-SSH, and `--browser-editor <prefix>` one to a browser editor.
@@ -221,12 +231,15 @@ Smartlog sits in the editor. There its clicks drive the editor:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanekit-sidebar-dark.png">
-  <img alt="LaneKit in the editor's side bar: each lane with its state, its buttons on a line of their own, and main's recent commits below." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
+  <img alt="LaneKit in the editor's side bar: the landing order, then dark-mode marked You are here with its uncommitted files, midi-export ready to land, and main's newest commit under the pointer offering New lane here." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
 </picture>
 
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
   holds that the integration branch does not, committed or not, against its files as they are,
-  so you can edit them in the diff; "N uncommitted" opens what is uncommitted;
+  so you can edit them in the diff; an uncommitted file opens its own difference;
+- the lane the file in front of you is in says **You are here**;
+- in the side bar, where there is no room for a toolbar, the pointer on a lane shows the next
+  thing to do and a **⋯** that opens the rest;
 - **Open** opens a lane in a window of its own, and **Terminal** a terminal in it;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
@@ -247,7 +260,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.3.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.4.0.vsix
 ```
 
 <br clear="right">
