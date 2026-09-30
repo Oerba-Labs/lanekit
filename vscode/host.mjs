@@ -346,9 +346,13 @@ export const activate = async (context, vscode, { root }) => {
 
     const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40)
     subscriptions.push(bar)
+    // The file in front; with none (the Lanes tab itself, a diff, a terminal), the last one that was, so the
+    // bar keeps naming the lane you were in while you look at its page; before any, the first folder open.
+    let lastFile = null
     const whereNow = () => {
-        const document = vscode.window.activeTextEditor?.document
-        if (document?.uri?.scheme === 'file') return document.uri.fsPath
+        const editor = vscode.window.activeTextEditor
+        if (editor?.document?.uri?.scheme === 'file') return (lastFile = editor.document.uri.fsPath)
+        if (!editor && lastFile) return lastFile
         const first = (vscode.workspace.workspaceFolders ?? []).find((folder) => folder.uri.scheme === 'file')
         return first?.uri.fsPath ?? null
     }

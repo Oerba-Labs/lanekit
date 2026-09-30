@@ -238,6 +238,10 @@ test('the status bar names the lane the file in front is in, and what it needs',
     assert.equal(editor.bar.shown, true)
     assert.match(editor.bar.text, /working/)
     assert.deepEqual(editor.bar.command.arguments, [{ repo: 'demo', lane: 'working' }])
+    // The Lanes tab in front, or a diff: no file editor, so the bar keeps the lane it was naming.
+    editor.setActive(null)
+    await editor.ask('state')
+    assert.match(editor.bar.text, /working/, 'with no file in front, the last lane stays named')
     editor.setActive(path.join(repo, 'app.txt'))
     await editor.ask('state')
     assert.match(editor.bar.text, /1 lane/)
