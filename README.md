@@ -115,3 +115,10 @@ removed by hand leaves its server running; a new lane handed that port writes it
 into its own environment and spends the afternoon talking to a server running
 out of a directory that no longer exists. It answers, which is what makes it
 expensive.
+
+## Getting it, and its licence
+
+    git clone https://github.com/Oerba-Labs/lanekit.git
+
+lanekit is released under the Apache License, Version 2.0 (`LICENSE`). Copyright 2026 Andrei
+Villasana.
