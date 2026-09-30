@@ -188,14 +188,29 @@ database, and the queue says which should land first.
 node ~/.lanekit/dev/lane.mjs web --scan ~/code
 ```
 
-The page in the picture above, for every repository in a folder: each lane drawn above the
-commit it started from, with its commits, what is uncommitted, its port and whether anything
-serves on it, its last gate, the queue's verdict and what it collides with, and its pull
-request when `gh` is signed in. Its buttons are the commands in the loop, run as a terminal
-would run them, with their output underneath; Land and Sweep check first with `--dry-run` and
-ask. It listens on the loopback only and never pushes. `--ssh-host <host>` adds a link that
-opens a lane in VS Code over Remote-SSH, and `--browser-editor <prefix>` one to a browser
-editor.
+The page in the picture above, for every repository in a folder:
+
+- **Each repository** opens with its **landing order**: the lanes in the order to land them (of any
+  that collide, the costlier first), what each needs, and **Land next** for the first when its gate
+  names its commit. Two lanes that change the same files are joined by a bracket in the margin.
+- **Each lane** is drawn above the commit it started from, with its commits, what is uncommitted,
+  its port and whether anything serves on it, its last gate, and its pull request when `gh` is
+  signed in. While a press runs in it, it says so live: *Gating · running the tests… · 12 s*. A
+  failed gate shows the failing step and its last lines, kept with the run, so it is still there
+  tomorrow.
+- **Its buttons** are lane's own commands, run as a terminal would run them, with their output
+  underneath: **New lane**, **Gate**, **Land**, **Sweep**, **Rebase** (a lane that is behind),
+  **Push** (one with commits origin lacks), **Pull request** (one pushed without one), **Pull**
+  (main behind origin) and **Fetch**. Land and Sweep check first with `--dry-run` and ask; a push
+  that would replace origin's copy of a rebased branch asks too. A rebase that conflicts stops with
+  the files named, and waits for **Continue** or **Abort**.
+- **It stays current by itself:** while it is open, each repository is fetched every five minutes,
+  so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
+- **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
+  rebases, `p` pushes, `f` fetches, `n` starts a new lane, `?` lists them.
+
+It listens on the loopback only. `--ssh-host <host>` adds a link that opens a lane in VS Code over
+Remote-SSH, and `--browser-editor <prefix>` one to a browser editor.
 
 ## In your editor
 
@@ -213,10 +228,14 @@ Smartlog sits in the editor. There its clicks drive the editor:
   holds that the integration branch does not, committed or not, against its files as they are,
   so you can edit them in the diff; "N uncommitted" opens what is uncommitted;
 - **Open** opens a lane in a window of its own, and **Terminal** a terminal in it;
+- a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
+  accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
-  land"); a click brings it into view in the side bar;
-- **LaneKit: New Lane…**, **Gate This Lane…**, **Land This Lane…** and **Open a Lane…** in the
-  command palette act on the lane in front of you, with the page's own checks.
+  land"); a click opens that lane's menu: Changes, Terminal, Gate, Land, Rebase, Push, **New lane
+  from here** (on top of this one), or a window of its own;
+- the palette's **LaneKit: …** commands act on the lane in front of you, with the page's own
+  checks, and a press that ends while LaneKit is out of sight says how it ended;
+- `lanekit.gateOnCommit`, off by default, gates a lane by itself when a commit lands in it.
 
 No server and no port: the extension runs the page's service itself, reads git in a worker
 thread so the editor never waits, tells every page open when anything changed, and finds
@@ -228,7 +247,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.2.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.3.0.vsix
 ```
 
 <br clear="right">
@@ -241,6 +260,10 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.2.0.vsix
 ./<project> lane queue [name]    which lane should land next, and which would collide
 ./<project> gate                 in a lane: is this branch ready to merge?
 ./<project> lane land <name>     in main: merge a lane whose gate is green, then sweep it
+./<project> lane rebase <name>   replay a lane onto main as it is now; --continue or --abort after a conflict
+./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased
+./<project> lane pr <name>       open a pull request for a pushed lane, through gh
+./<project> lane pull            fast-forward main to origin, as of the last fetch
 ./<project> lane sweep [name]    remove lanes whose branch has landed
 ./<project> lane web             a page of every lane (in your editor: LaneKit's side bar)
 ./<project> check                what the gate runs

@@ -308,4 +308,9 @@ Report in this shape, briefly:
   `UNDER-GATED` when it earns more. The full `./<slug> gate` is what certifies a commit.
 - When the work is done, `/land` commits, gates and reports, then asks before merging. Land only
   when the person says so: `./<slug> lane land <name>`, from the main checkout.
+- A lane behind the integration branch: `./<slug> lane rebase <name>`. On a conflict it stops with the files
+  named; resolve them, then `--continue` (or `--abort` to put the lane back). Never resolve somebody's
+  conflict without saying so.
+- To share a lane: `./<slug> lane push <name>`, then `./<slug> lane pr <name>` for a pull request. A lane
+  rebased after it was pushed needs `--force-with-lease`; ask the person first.
 - `./<slug> lane queue` says which lane should land first, and which lanes would collide.
