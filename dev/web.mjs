@@ -101,6 +101,8 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
                 return send(response, 200, fs.readFileSync(path.join(WEB, file)), type)
             }
             if (request.method === 'GET' && route.name === 'state') {
+                // Somebody is looking: fetch each repository now and then, by itself, in the background.
+                service.fetchQuietly().catch(() => {})
                 return send(response, 200, { ...await service.state(), scan, open: { sshHost, browserEditor } })
             }
             if (request.method === 'GET' && route.name === 'job') {

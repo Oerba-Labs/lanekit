@@ -286,6 +286,8 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 
 .files { margin: 6px 0 0; padding: 8px 12px; background: var(--soft); border-radius: 6px; font-size: var(--s12); max-height: 240px; overflow: auto; }
 .files div { font-family: var(--mono); white-space: nowrap; }
+.files.conflicts { background: var(--warn-wash); }
+.files .files-head { font-family: var(--sans); font-weight: 600; color: var(--warn); margin-bottom: 4px; white-space: normal; }
 
 .confirm {
   display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap;

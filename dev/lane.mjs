@@ -461,8 +461,174 @@ const sweep = (config, only, options) => {
 }
 
 // ---------------------------------------------------------------------------
+// rebase, push, pr, pull: what a lane needs between being made and landing
+// ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land }
+const laneNamed = (config, name, verb) => {
+    if (!name) fail(`lane ${verb} needs a name.`)
+    const lane = lanes(process.cwd(), config.integrationBranch).find((candidate) => candidate.name === name)
+    if (!lane) fail(`there is no lane called "${name}".`)
+    if (!lane.exists) fail(`${name}'s folder is gone: git worktree prune, in the main checkout, clears it away.`)
+    return lane
+}
+
+const inRebase = (dir) => {
+    const gitDir = gitQuiet(['rev-parse', '--git-dir'], dir)
+    if (!gitDir.ok) return false
+    const at = path.resolve(dir, gitDir.out)
+    return fs.existsSync(path.join(at, 'rebase-merge')) || fs.existsSync(path.join(at, 'rebase-apply'))
+}
+
+const conflictsIn = (dir) => gitQuiet(['diff', '--name-only', '--diff-filter=U'], dir).out.split('\n').filter(Boolean)
+
+/** Uncommitted paths, less the links to main's rebuildable directories, which nothing counts. */
+const dirtIn = (dir, config) => gitQuiet(['status', '--porcelain'], dir).out.split('\n').filter(Boolean)
+    .filter((line) => !(config.lane.linkOnCreate ?? []).some((rel) => line.includes(rel)))
+
+const stoppedMidRebase = (name, dir) => {
+    const files = conflictsIn(dir)
+    fail(`${name} stopped part-way through the rebase: ${files.length} ${files.length === 1 ? 'file conflicts' : 'files conflict'}.\n\n` +
+        files.map((file) => `  ${file}`).join('\n') +
+        `\n\n  Resolve them (LaneKit opens them in the editor), then carry on:\n    lane rebase ${name} --continue\n` +
+        `  or put the lane back as it was before the rebase:\n    lane rebase ${name} --abort`)
+}
+
+/**
+ * Replay a lane's commits on the integration branch as it is now.
+ *
+ * STOPS ON A CONFLICT, IT DOES NOT ABORT. The gate aborts a rebase that conflicts, because
+ * nobody is there to resolve it; this is asked for by a person, who can. The lane is left
+ * part-way through the rebase with the conflicting files named, and `--continue` stages the
+ * ones whose conflicts are resolved and carries on, while `--abort` puts the lane back.
+ */
+const rebase = (config, name, options) => {
+    const lane = laneNamed(config, name, 'rebase')
+    const dir = lane.path
+    const env = { ...process.env, GIT_EDITOR: 'true' }
+    const base = config.integrationBranch
+
+    if (options.abort) {
+        if (!inRebase(dir)) fail(`${name} is not part-way through a rebase.`)
+        const aborted = spawnSync('git', ['rebase', '--abort'], { cwd: dir, stdio: 'inherit' })
+        if (aborted.status !== 0) fail('git rebase --abort did not finish (above).')
+        log(`${name} is back as it was before the rebase, at ${git(['rev-parse', '--short', 'HEAD'], dir)}`)
+        return
+    }
+
+    if (options.continue) {
+        if (!inRebase(dir)) fail(`${name} is not part-way through a rebase.`)
+        const files = conflictsIn(dir)
+        const marked = files.filter((file) => {
+            try { return /^(<{7}|>{7})( |$)/m.test(fs.readFileSync(path.join(dir, file), 'utf8')) } catch { return false }
+        })
+        if (marked.length) {
+            fail(`${marked.length} ${marked.length === 1 ? 'file still has' : 'files still have'} conflict markers:\n\n` +
+                marked.map((file) => `  ${file}`).join('\n') + '\n\n  Resolve them, then carry on again.')
+        }
+        if (files.length) {
+            git(['add', '--', ...files], dir)
+            log(`staged ${files.length} resolved ${files.length === 1 ? 'file' : 'files'}`)
+        }
+        const carried = spawnSync('git', ['rebase', '--continue'], { cwd: dir, stdio: 'inherit', env })
+        if (carried.status !== 0) {
+            if (inRebase(dir) && conflictsIn(dir).length) stoppedMidRebase(name, dir)
+            fail('git rebase --continue did not finish (above).')
+        }
+    } else {
+        if (inRebase(dir)) fail(`${name} is already part-way through a rebase: lane rebase ${name} --continue, or --abort.`)
+        const dirt = dirtIn(dir, config)
+        if (dirt.length) {
+            fail(`${name} has uncommitted changes.\n\n${dirt.map((line) => `  ${line}`).join('\n')}\n\n` +
+                '  A rebase replays commits, and these are in none: commit or stash them first.')
+        }
+        const behind = gitQuiet(['rev-list', '--count', `HEAD..${base}`], dir).out
+        if (behind === '0') { log(`${name} is on top of ${base} already`); return }
+        const wasAt = git(['rev-parse', '--short', 'HEAD'], dir)
+        log(`rebasing ${name} onto ${base}, ${behind} ${behind === '1' ? 'commit' : 'commits'} behind ${DIM}(was ${wasAt}: git reset --hard ${wasAt} puts it back)${OFF}`)
+        const replayed = spawnSync('git', ['rebase', base], { cwd: dir, stdio: 'inherit', env })
+        if (replayed.status !== 0) {
+            if (inRebase(dir)) stoppedMidRebase(name, dir)
+            fail('git rebase did not finish (above).')
+        }
+    }
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}REBASED${OFF}  ·  ${name}  ·  on ${base} at ${git(['rev-parse', '--short', base], dir)}\n${rule}\n`)
+}
+
+/**
+ * Push a lane's branch to origin.
+ *
+ * A BRANCH REBASED AFTER IT WAS PUSHED is refused until asked again with
+ * `--force-with-lease`, which replaces origin's copy only if nobody pushed to it since this
+ * lane last fetched: the question is the person's, and the lease keeps anybody else's work.
+ */
+const push = (config, name, options) => {
+    const lane = laneNamed(config, name, 'push')
+    const dir = lane.path
+    const branch = lane.branch ?? name
+    if (!gitQuiet(['remote'], dir).out.split('\n').includes('origin')) fail('there is no remote called origin to push to.')
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir)
+    if (upstream.ok) {
+        const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${upstream.out}...${branch}`], dir).out.split(/\s+/).map(Number)
+        if (!ahead && !behind) { log(`${branch} is pushed already: origin has what this lane has`); return }
+        if (behind && !options.forceWithLease) {
+            fail(`${upstream.out} has ${behind} ${behind === 1 ? 'commit' : 'commits'} this lane does not: it was rebased since it was pushed.\n\n` +
+                `  lane push ${name} --force-with-lease replaces them, unless somebody pushed to it since this lane last fetched.`)
+        }
+    }
+    const args = ['push', ...(options.forceWithLease ? ['--force-with-lease'] : []), ...(upstream.ok ? [] : ['-u']), 'origin', branch]
+    log(`git ${args.join(' ')}`)
+    const pushed = spawnSync('git', args, { cwd: dir, stdio: 'inherit' })
+    if (pushed.status !== 0) fail('origin refused the push (above).')
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}PUSHED${OFF}  ·  ${name}  ·  origin/${branch} at ${git(['rev-parse', '--short', 'HEAD'], dir)}\n${rule}\n`)
+}
+
+/** Open a pull request for a lane's pushed branch, through `gh`, from its commits' own words. */
+const pr = (config, name) => {
+    const lane = laneNamed(config, name, 'pr')
+    const dir = lane.path
+    const branch = lane.branch ?? name
+    const gh = (args, stdio = 'pipe') => spawnSync('gh', args, { cwd: dir, encoding: 'utf8', stdio: stdio === 'pipe' ? ['ignore', 'pipe', 'pipe'] : 'inherit', env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } })
+    const version = gh(['--version'])
+    if (version.error) fail('gh is not installed here, and a pull request is made through it.')
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir)
+    if (!upstream.ok) fail(`${branch} is not pushed yet: lane push ${name} first.`)
+    const ahead = gitQuiet(['rev-list', '--count', `${upstream.out}..${branch}`], dir).out
+    if (ahead !== '0') fail(`${branch} has ${ahead} ${ahead === '1' ? 'commit' : 'commits'} origin does not: lane push ${name} first.`)
+    const existing = gh(['pr', 'view', branch, '--json', 'url,state', '--jq', 'select(.state == "OPEN") | .url'])
+    if (existing.status === 0 && existing.stdout.trim()) { log(`${branch} has an open pull request already: ${existing.stdout.trim()}`); return }
+    log(`gh pr create --base ${config.integrationBranch} --head ${branch} --fill`)
+    const made = gh(['pr', 'create', '--base', config.integrationBranch, '--head', branch, '--fill'], 'inherit')
+    if (made.status !== 0) fail('gh did not make the pull request (above). gh auth status says whether it is signed in.')
+}
+
+/**
+ * Fast-forward the integration branch in the main checkout to what origin has, as of the
+ * last fetch. Only a fast-forward: a main that has diverged from origin needs a person.
+ */
+const pull = (config) => {
+    const mainRepo = mainRepoFrom(process.cwd())
+    const base = config.integrationBranch
+    const current = gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], mainRepo).out
+    if (current !== base) fail(`${mainRepo} is on "${current}", not ${base}: a pull brings ${base}.`)
+    const dirt = dirtIn(mainRepo, config)
+    if (dirt.length) fail(`${base} has uncommitted changes.\n\n${dirt.map((line) => `  ${line}`).join('\n')}\n\n  Commit or stash them first.`)
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${base}@{upstream}`], mainRepo)
+    if (!upstream.ok) fail(`${base} has no upstream to pull from.`)
+    const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${upstream.out}...${base}`], mainRepo).out.split(/\s+/).map(Number)
+    if (!behind) { log(`${base} has everything ${upstream.out} has, as of the last fetch`); return }
+    if (ahead) fail(`${base} and ${upstream.out} have diverged: ${ahead} here, ${behind} there. That needs a person, not a fast-forward.`)
+    const was = git(['rev-parse', '--short', 'HEAD'], mainRepo)
+    const merged = spawnSync('git', ['merge', '--ff-only', upstream.out], { cwd: mainRepo, stdio: 'inherit' })
+    if (merged.status !== 0) fail('git merge --ff-only did not finish (above).')
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}PULLED${OFF}  ·  ${base}  ·  ${was} -> ${git(['rev-parse', '--short', 'HEAD'], mainRepo)}, ${behind} ${behind === 1 ? 'commit' : 'commits'}\n${rule}\n`)
+}
+
+// ---------------------------------------------------------------------------
+
+const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -471,7 +637,7 @@ const main = () => {
     // is started before this one's is looked for: /work above the checkouts has none.
     if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--force-with-lease]\n`)
         process.exit(2)
     }
 
@@ -482,7 +648,10 @@ const main = () => {
         seed: !argv.includes('--no-seed'),
         dryRun: argv.includes('--dry-run'),
         sweep: !argv.includes('--no-sweep'),
-        force: argv.includes('--force')
+        force: argv.includes('--force'),
+        continue: argv.includes('--continue'),
+        abort: argv.includes('--abort'),
+        forceWithLease: argv.includes('--force-with-lease')
     }
     const positional = argv.slice(1).filter((arg) => !arg.startsWith('--'))
     const name = positional[0] !== options.base ? positional[0] : positional[1]
@@ -499,6 +668,10 @@ const main = () => {
     if (command === 'list') return list(config)
     if (command === 'queue') return process.exit(queue(config, name))
     if (command === 'land') return land(config, name, options)
+    if (command === 'rebase') return rebase(config, name, options)
+    if (command === 'push') return push(config, name, options)
+    if (command === 'pr') return pr(config, name, options)
+    if (command === 'pull') return pull(config, options)
     return sweep(config, name, options)
 }
 

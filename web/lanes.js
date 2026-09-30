@@ -445,6 +445,21 @@ const confirmOf = (repo, lane, key) => {
             el('p', { text: `The check passed. Land ${lane.name}? It merges into ${base} with --no-ff, then removes the lane's folder and stops its server; the branch is kept. Nothing is pushed.` }),
             go('Land it', { repo: repo.id, verb: 'land', lane: lane.name }), cancel)
     }
+    if (waiting.verb === 'rebase') {
+        return el('div', { class: 'confirm' },
+            el('p', { text: `Rebase ${lane.name} onto ${base}? It replays its ${plural(lane.ahead || 0, 'commit')} on ${base} as it is now (${lane.behind} behind). If they conflict it stops, names the files, and waits for you to resolve them.` }),
+            go('Rebase it', { repo: repo.id, verb: 'rebase', lane: lane.name }), cancel)
+    }
+    if (waiting.verb === 'abort') {
+        return el('div', { class: 'confirm' },
+            el('p', { text: `Abort ${lane.name}'s rebase? It puts the lane back exactly as it was before the rebase began; what you resolved so far is dropped.` }),
+            go('Abort it', { repo: repo.id, verb: 'rebase', lane: lane.name, abort: true }), cancel)
+    }
+    if (waiting.verb === 'push-force') {
+        return el('div', { class: 'confirm' },
+            el('p', { text: `Replace origin's ${lane.branch}? It was rebased since it was pushed, so origin has ${plural(lane.upstream?.behind || 0, 'commit')} this lane no longer does. --force-with-lease replaces them only if nobody pushed there since this lane last fetched.` }),
+            go('Replace it', { repo: repo.id, verb: 'push', lane: lane.name, force: true }), cancel)
+    }
     if (waiting.verb === 'sweep') {
         return el('div', { class: 'confirm' },
             el('p', { text: `Sweep ${lane.name}? It removes the lane's folder and stops whatever serves on its port. The branch is kept, and it is already in ${base}.` }),
@@ -469,7 +484,24 @@ const laneCard = (repo, lane) => {
     const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
 
     const buttons = []
-    if (working) {
+    const ask = (verb) => () => { pending.set(key, { verb, stage: 'confirm' }); draw(true) }
+    if (lane.operation === 'rebase') {
+        // Stopped mid-rebase: the files, and the three ways on.
+        if (host.inEditor && lane.conflicts?.length) {
+            buttons.push(el('button', {
+                type: 'button', class: 'btn primary', text: `Conflicts (${lane.conflicts.length})`,
+                title: 'Open the conflicting files in the editor, where each conflict can be accepted one way, the other, or both',
+                onclick: () => openIn('conflicts', { repo: repo.path, lane: lane.name })
+            }))
+        }
+        buttons.push(el('button', {
+            type: 'button', class: `btn${!host.inEditor || !lane.conflicts?.length ? ' primary' : ''}`, text: 'Continue', disabled: busy,
+            title: 'Stage the files whose conflicts are resolved, and carry on with the rebase',
+            onclick: () => press({ repo: repo.id, verb: 'rebase', lane: lane.name, continue: true })
+        }))
+        buttons.push(el('button', { type: 'button', class: 'btn quiet', text: 'Abort…', disabled: busy, title: 'Put the lane back as it was before the rebase', onclick: ask('abort') }))
+    }
+    if (working && !lane.operation) {
         buttons.push(el('button', {
             type: 'button', class: 'btn', text: 'Gate', disabled: busy || lane.dirty > 0 || Boolean(lane.operation),
             title: lane.dirty ? 'Commit first: a gate result names a commit, and uncommitted changes are in none' : 'Rebase onto the integration branch and run the tier this lane earns',
@@ -480,6 +512,30 @@ const laneCard = (repo, lane) => {
             title: 'Check whether it can land, then ask',
             onclick: () => check(repo, lane, 'land')
         }))
+    }
+    if ((working || lane.kind === 'fresh') && !lane.operation && lane.behind > 0) {
+        buttons.push(el('button', {
+            type: 'button', class: 'btn', text: 'Rebase', disabled: busy || lane.dirty > 0,
+            title: lane.dirty ? 'Commit first: a rebase replays commits, and uncommitted changes are in none' : `Replay it on ${repo.integrationBranch} as it is now: ${lane.behind} behind`,
+            onclick: ask('rebase')
+        }))
+    }
+    if (lane.kind === 'working' && !lane.operation) {
+        const up = lane.upstream
+        if (!up || up.ahead > 0) {
+            const rewrite = Boolean(up && up.behind > 0)
+            buttons.push(el('button', {
+                type: 'button', class: 'btn', text: rewrite ? 'Push…' : 'Push', disabled: busy,
+                title: rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time',
+                onclick: rewrite ? ask('push-force') : () => press({ repo: repo.id, verb: 'push', lane: lane.name })
+            }))
+        } else if (!lane.pull && repo.github?.state === 'ok') {
+            buttons.push(el('button', {
+                type: 'button', class: 'btn', text: 'Pull request', disabled: busy,
+                title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}, from its commits' own words`,
+                onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name })
+            }))
+        }
     }
     buttons.push(...openLinks(repo, lane))
 
@@ -539,6 +595,11 @@ const laneCard = (repo, lane) => {
             el('div', { class: 'actions' }, buttons)),
         facts,
         detail ? el('p', { class: 'why', text: detail }) : null,
+        lane.operation && lane.conflicts?.length
+            ? el('div', { class: 'files conflicts' }, el('div', { class: 'files-head', text: `Conflicts in ${plural(lane.conflicts.length, 'file')}` }),
+                lane.conflicts.map((file) => opens(el('div', { text: file }), `Open ${file} to resolve it`,
+                    () => openIn('conflicts', { repo: repo.path, lane: lane.name, path: file }))))
+            : null,
         stackList,
         collisions,
         filesToggle ? el('p', { class: 'why' }, filesToggle) : null,
@@ -567,6 +628,18 @@ const landedRow = (repo, lane) => {
         el('div', { class: 'full' }, confirmOf(repo, lane, key)))
 }
 
+/** Pull: main fast-forwarded to origin, when it is behind, on main, clean, and has nothing origin lacks. */
+const pullButton = (repo) => {
+    const main = repo.main
+    const up = main?.upstream
+    if (!up?.behind || up.ahead || !main.onIntegration || main.dirty || main.operation) return null
+    return el('button', {
+        type: 'button', class: 'btn', text: `Pull ${up.behind}`, disabled: busyIn(repo.id),
+        title: `Fast-forward ${repo.integrationBranch} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed`,
+        onclick: () => press({ repo: repo.id, verb: 'pull' })
+    })
+}
+
 const headOf = (repo) => {
     const parts = []
     parts.push(el('div', { class: 'repo-head' },
@@ -574,6 +647,7 @@ const headOf = (repo) => {
         el('span', { class: 'repo-sub mono', text: repo.path }),
         el('span', { class: 'grow' }),
         repo.error ? null : el('div', { class: 'actions' },
+            pullButton(repo),
             host.inEditor ? el('button', {
                 type: 'button', class: 'btn', text: 'Terminal', title: `A terminal in ${repo.path}`,
                 onclick: () => openIn('terminal', { repo: repo.path })
@@ -595,8 +669,11 @@ const headOf = (repo) => {
     if (!up) facts.push(state('quiet', `${base} has no upstream`, 'small'))
     else if (up.ahead && up.behind) facts.push(state('warn', `${base} and ${up.name} have diverged: ${up.ahead} here, ${up.behind} there`, 'small'))
     else if (up.ahead) facts.push(state('warn', `${plural(up.ahead, 'commit')} on ${base} not pushed`, 'small'))
-    else if (up.behind) facts.push(state('info', `${up.behind} behind ${up.name}, as of the last fetch`, 'small'))
-    else facts.push(state('done', `Up to date with ${up.name}, as of the last fetch`, 'small'))
+    else if (up.behind) facts.push(state('info', `${up.behind} behind ${up.name}`, 'small'))
+    else facts.push(state('done', `Up to date with ${up.name}`, 'small'))
+    // When it last heard from origin: fetched by itself every few minutes while a page is open.
+    if (repo.fetchError) facts.push(state('warn', `Could not fetch: ${repo.fetchError}`, 'small'))
+    else if (main.fetchedAt) facts.push(el('span', { text: `fetched ${ago(main.fetchedAt)}`, title: exactly(main.fetchedAt) }))
     if (!main.onIntegration) facts.push(state('warn', `The main checkout is on ${main.branch}, not ${base}: landing needs ${base}`, 'small'))
     if (main.operation) facts.push(state('risk', `The main checkout is part-way through a ${main.operation}`, 'small'))
     if (main.dirty) facts.push(uncommittedOf(repo, main.path, `the main checkout of ${repo.id}`, main.dirty, `${main.dirty} uncommitted in the main checkout`))

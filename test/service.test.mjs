@@ -96,7 +96,8 @@ test('the worker reads what the inline reader reads', async () => {
 
 test('asks that arrive together share one reading', async () => {
     const [a, b] = await Promise.all([threaded.state(), threaded.state()])
-    assert.equal(a.repos, b.repos)
+    // Each answer carries the fetch's news in a copy of its own; what was read underneath is one reading.
+    assert.equal(a.repos[0].lanes, b.repos[0].lanes)
 })
 
 test('a commit\'s files, against its parent, and every file of a first commit', async () => {

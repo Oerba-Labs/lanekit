@@ -182,6 +182,8 @@ export const activate = async (context, vscode, { root }) => {
             const key = JSON.stringify({ ...state, at: 0 })
             if (key !== lastSent) { lastSent = key; post({ type: 'state', state }) }
             updateBar()
+            // Somebody is looking: each repository fetched now and then, by itself (the service keeps to five minutes).
+            if (anyVisible()) service.fetchQuietly().catch(() => {})
         } catch (error) {
             output.appendLine(`Reading the lanes failed: ${error.message}`)
         } finally {
@@ -216,6 +218,7 @@ export const activate = async (context, vscode, { root }) => {
         // The page asks for the new output when told there is some: told at most every tenth of a second.
         if (!jobPing) jobPing = setTimeout(() => { jobPing = null; post({ type: 'job', id: job.id }) }, 100)
     })
+    service.events.on('fetched', () => schedule(true))
     service.events.on('done', (job) => {
         post({ type: 'job', id: job.id })
         schedule(true)
@@ -317,6 +320,18 @@ export const activate = async (context, vscode, { root }) => {
                 const [label, before, after] = rowsOf(repo, [file], { beforeSha: changes.base, checkout: changes.checkout })[0]
                 await vscode.commands.executeCommand('vscode.diff', before ?? atEmpty(label), after ?? atEmpty(label),
                     `${path.basename(file.path)} · ${lane.name} against ${repo.integrationBranch}`)
+                return true
+            }
+            case 'conflicts': {
+                // The files a rebase stopped on, opened where each conflict can be accepted one way, the other or both:
+                // only files git says are unmerged, whatever the page asked for.
+                if (!lane) throw new Error('Which lane?')
+                const unmerged = lane.conflicts ?? []
+                const files = asked.path ? unmerged.filter((file) => file === asked.path) : unmerged
+                if (!files.length) throw new Error(`${lane.name} has no conflicts left to open: Continue carries on.`)
+                for (const file of files) {
+                    await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path.join(lane.path, file)), { preview: false })
+                }
                 return true
             }
             case 'uncommitted': {

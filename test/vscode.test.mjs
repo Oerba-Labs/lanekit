@@ -242,6 +242,12 @@ test('a lane\'s changes open against where it forked, its files as they are now'
     assert.equal(await editor.seen.providers.get(SCHEME).provideTextDocumentContent(byFile['app.txt'].before), 'one\n')
 })
 
+test('conflicts are opened only where git says there are some', async () => {
+    const reply = await editor.ask('open', { what: 'conflicts', repo, lane: 'working' })
+    assert.equal(reply.ok, false)
+    assert.match(reply.error, /no conflicts left/)
+})
+
 test('a terminal opens in the lane', async () => {
     const reply = await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
     assert.equal(reply.ok, true)
