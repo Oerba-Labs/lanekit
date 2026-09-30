@@ -53,6 +53,26 @@
         "icon": "$(add)"
       },
       {
+        "command": "lanekit.laneMenu",
+        "title": "This Lane\u2026",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.newLaneHere",
+        "title": "New Lane from Here\u2026",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.rebase",
+        "title": "Rebase This Lane\u2026",
+        "category": "LaneKit"
+      },
+      {
+        "command": "lanekit.push",
+        "title": "Push This Lane",
+        "category": "LaneKit"
+      },
+      {
         "command": "lanekit.gate",
         "title": "Gate This Lane\u2026",
         "category": "LaneKit"

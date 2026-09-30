@@ -42,7 +42,8 @@ const standIn = (folders) => {
         toString () { return `${this.scheme}:${this.path}${this.query ? `?${this.query}` : ''}` }
     }
     const config = {}
-    const seen = { commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], views: new Map() }
+    const answers = {}   // what the stand-in person picks and types, when a test says
+    const seen = { picks: [], commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], views: new Map() }
     let receive = null
     let sideReceive = null
     let active = null
@@ -88,8 +89,8 @@ const standIn = (folders) => {
             showInformationMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
             showErrorMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
             showWarningMessage: () => Promise.resolve(undefined),
-            showQuickPick: () => Promise.resolve(undefined),
-            showInputBox: () => Promise.resolve(undefined),
+            showQuickPick: (items) => { seen.picks.push(items); return Promise.resolve(answers.pick ? items.find((item) => item.label.includes(answers.pick)) : undefined) },
+            showInputBox: () => Promise.resolve(answers.input),
             onDidChangeWindowState: event(),
             onDidChangeActiveTextEditor: event(),
             get activeTextEditor () { return active }
@@ -135,7 +136,7 @@ const standIn = (folders) => {
         throw new Error(`no reply to ${method} in the side bar`)
     }
     const sideSays = (message) => sideReceive(message)
-    return { vscode, seen, bar, panel, sideView, ask, askSide, sideSays, config, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
+    return { vscode, seen, bar, panel, sideView, ask, askSide, sideSays, config, answers, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
 }
 
 let scratch
@@ -278,7 +279,7 @@ test('the status bar names the lane the file in front is in, and what it needs',
     assert.equal(editor.bar.shown, true)
     assert.match(editor.bar.text, /working/)
     assert.deepEqual(editor.bar.command.arguments, [{ repo: 'demo', lane: 'working' }])
-    assert.equal(editor.bar.command.command, 'lanekit.reveal', 'the status bar sends you to the side bar')
+    assert.equal(editor.bar.command.command, 'lanekit.laneMenu', 'the status bar opens the lane\'s menu')
     // The Lanes tab in front, or a diff: no file editor, so the bar keeps the lane it was naming.
     editor.setActive(null)
     await editor.ask('state')
@@ -406,4 +407,32 @@ test('with gateOnCommit, a commit landing in a lane gates it by itself', async (
     for (let i = 0; i < 100 && after === before; i++) { await new Promise((resolve) => setTimeout(resolve, 50)); after = await gatesBefore() }
     assert.equal(after, before + 1, 'one gate, pressed by itself')
     editor.config.gateOnCommit = false
+})
+
+test('the status bar\'s menu offers what can be done with the lane in front, and does the one picked', async () => {
+    editor.seen.picks.length = 0
+    editor.answers.pick = 'Terminal'
+    const terminals = editor.seen.terminals.length
+    await editor.seen.commands.get('lanekit.laneMenu')({ repo: 'demo', lane: 'working' })
+    const labels = editor.seen.picks.at(-1).map((item) => item.label)
+    for (const want of ['Show in LaneKit', 'Terminal', 'New lane from here', 'Open in a new window']) {
+        assert.ok(labels.some((label) => label.includes(want)), `${want} in ${labels.join(', ')}`)
+    }
+    assert.equal(editor.seen.terminals.length, terminals + 1)
+    assert.equal(editor.seen.terminals.at(-1).cwd, working)
+    editor.answers.pick = undefined
+    await editor.seen.commands.get('lanekit.laneMenu')({ repo: 'demo' })
+    const mainLabels = editor.seen.picks.at(-1).map((item) => item.label)
+    assert.ok(mainLabels.some((label) => label.includes('New lane…')) && mainLabels.some((label) => label.includes('Fetch now')), mainLabels.join(', '))
+})
+
+test('New lane from here starts on top of the lane in front', async () => {
+    editor.answers.input = 'stacked'
+    await editor.seen.commands.get('lanekit.newLaneHere')({ repo: 'demo', lane: 'working' })
+    const job = (await host.service.state()).jobs.find((candidate) => candidate.verb === 'new' && candidate.lane === 'stacked')
+    assert.ok(job, 'a new lane pressed')
+    assert.match(job.command, /lane\.mjs new stacked --base working/)
+    for (let i = 0; i < 300 && host.service.job(job.id)?.state !== 'done'; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(host.service.job(job.id).code, 0, host.service.job(job.id).output)
+    editor.answers.input = undefined
 })

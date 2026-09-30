@@ -452,7 +452,7 @@ const tailOf = (repo, lane, text) => {
 const failureOf = (repo, lane) => {
     const gate = lane.gate
     if (!gate || gate.result !== 'failed' || !gate.current || !gate.failures?.length) return null
-    return el('div', { class: 'failure' }, gate.failures.map((failure) => [
+    return el('div', { class: 'failure' }, gate.failures.flatMap((failure) => [
         el('div', { class: 'files-head', text: `${failure.what} failed${failure.status !== null && failure.status !== undefined ? ` (exit ${failure.status})` : ''}` }),
         failure.tail ? tailOf(repo, lane, failure.tail) : null
     ]))
@@ -646,7 +646,7 @@ const laneCard = (repo, lane) => {
             `Show what ${lane.name} changed in ${file}`, () => openIn('file', { repo: repo.path, lane: lane.name, path: file }))))
         : null
 
-    return el('li', { class: `lane tone-${tone}`, 'data-key': key },
+    return el('li', { class: `lane tone-${tone}`, 'data-key': key, tabindex: '0' },
         el('div', { class: 'lane-head' },
             el('span', { class: 'lane-name', text: lane.name }),
             state(tone, word),
@@ -673,7 +673,7 @@ const landedRow = (repo, lane) => {
     const [tone, word, detail] = statusOf(lane)
     const busy = busyIn(repo.id)
     const sweepable = lane.kind === 'landed' && !lane.dirty
-    return el('li', { 'data-key': key },
+    return el('li', { 'data-key': key, tabindex: '0' },
         el('span', { class: 'lane-name', text: lane.name }),
         state(tone, word),
         detail ? el('span', { class: 'muted', text: detail }) : null,
@@ -764,6 +764,9 @@ const logOf = (repo) => {
     const live = repo.lanes.filter((lane) => lane.kind === 'working' || lane.kind === 'fresh')
     const newestFirst = (a, b) => (b.head?.at ?? 0) - (a.head?.at ?? 0)
     const rows = []
+    if (!live.length) {
+        rows.push(el('li', { class: 'empty-lanes', text: 'No lanes yet. A lane is a folder of its own, on its own branch and port: name one above and press New lane.' }))
+    }
     const spine = spineOf(repo, live)
     spine.forEach((commit, index) => {
         for (const lane of live.filter((candidate) => candidate.base === commit.sha).sort(newestFirst)) rows.push(laneCard(repo, lane))
@@ -944,6 +947,7 @@ const draw = (force = false) => {
     if (!force && said === lastDrawn && Date.now() - lastDrawnAt < REDRAW_ANYWAY_MS) return
     lastDrawn = said
     lastDrawnAt = Date.now()
+    const focusedKey = document.activeElement?.closest?.('[data-key]') === document.activeElement ? document.activeElement.dataset.key : null
 
     const where = (current.roots?.length ? current.roots : [current.scan]).join(', ')
     $('where').textContent = where + (current.kit ? ` · lanekit ${current.kit}` : '')
@@ -953,7 +957,11 @@ const draw = (force = false) => {
         if (!ids.has(id)) { kept.root.remove(); sections.delete(id) }
     }
     if (!current.repos.length) {
-        pane.replaceChildren(el('p', { class: 'muted', text: `No repository with lanes in ${where}. A checkout with a lane.config.json appears here by itself.` }))
+        pane.replaceChildren(el('div', { class: 'empty' },
+            el('p', { class: 'empty-title', text: 'No repository here has lanes yet.' }),
+            el('p', { class: 'muted', text: `LaneKit looks in ${where}: a checkout with a lane.config.json, one directly inside, or the one a lane belongs to. It appears here by itself.` }),
+            el('p', {}, 'To give a repository lanes, run ', el('code', { text: 'node ~/.lanekit/bin/adopt.mjs' }), ' in it, or ask your agent to follow ',
+                el('a', { href: 'https://github.com/Oerba-Labs/lanekit/blob/main/INSTALL.md', target: '_blank', rel: 'noopener noreferrer', text: 'INSTALL.md' }), '.')))
         return
     }
     const empty = $('empty')
@@ -974,8 +982,69 @@ const draw = (force = false) => {
         if (![...sections.values()].some((kept) => kept.root === node)) node.remove()
     }
     if (wantFocus) focusLane(wantFocus.repo, wantFocus.lane)
+    if (focusedKey) [...document.querySelectorAll('[data-key]')].find((node) => node.dataset.key === focusedKey)?.focus({ preventScroll: true })
     drawCollisions()
 }
+
+// ---------------------------------------------------------------------------
+// the keyboard: move between lanes, and press the one in focus's buttons
+// ---------------------------------------------------------------------------
+
+const KEYS = [
+    ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
+    ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
+    ...(host.inEditor ? [['t', 'a terminal in it'], ['o', 'open it in a window']] : []),
+    ['f', 'fetch'], ['n', 'a new lane'], ['?', 'these keys'], ['Esc', 'close this, or the output']
+]
+const keysPanel = el('div', { class: 'keys', hidden: true, role: 'dialog', 'aria-label': 'Keys' },
+    el('p', { class: 'keys-title', text: 'Keys' }),
+    el('dl', {}, KEYS.map(([key, what]) => [el('dt', { text: key }), el('dd', { text: what })])))
+document.body.append(keysPanel)
+const toggleKeys = (show = keysPanel.hidden) => { keysPanel.hidden = !show }
+$('updated').before(el('button', { type: 'button', class: 'btn link keys-toggle', text: 'Keys', title: 'What the keyboard does here (?)', onclick: () => toggleKeys() }))
+
+const laneCards = () => [...document.querySelectorAll('li[data-key][tabindex]')]
+const laneInFocus = () => {
+    const node = document.activeElement?.closest?.('li[data-key]')
+    if (!node) return null
+    const [repoId, ...rest] = node.dataset.key.split('/')
+    const repo = current?.repos.find((candidate) => candidate.id === repoId)
+    const lane = repo?.lanes.find((candidate) => candidate.name === rest.join('/'))
+    return repo && lane ? { repo, lane, key: node.dataset.key } : null
+}
+document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+    if (event.target.closest?.('input, textarea, select, button, a, summary, [contenteditable]')) return
+    const key = event.key
+    const done = () => event.preventDefault()
+    if (key === '?') { toggleKeys(); return done() }
+    if (key === 'Escape' && !keysPanel.hidden) { toggleKeys(false); return done() }
+    const cards = laneCards()
+    if (['j', 'k', 'ArrowDown', 'ArrowUp'].includes(key) && cards.length) {
+        const at = cards.indexOf(document.activeElement)
+        const next = key === 'j' || key === 'ArrowDown' ? Math.min(cards.length - 1, at + 1) : Math.max(0, at - 1)
+        cards[next].focus()
+        cards[next].scrollIntoView({ block: 'nearest' })
+        return done()
+    }
+    const here = laneInFocus()
+    const repo = here?.repo ?? current?.repos.find((candidate) => !candidate.error)
+    if (key === 'n' && repo) { sections.get(repo.id)?.form.querySelector('input[name="name"]')?.focus(); return done() }
+    if (key === 'f' && repo) { press({ repo: repo.id, verb: 'fetch' }); return done() }
+    if (!here) return
+    const { lane } = here
+    const confirm = (verb) => { pending.set(here.key, { verb, stage: 'confirm' }); draw(true) }
+    const act = {
+        Enter: () => host.inEditor && (lane.kind === 'working' || lane.dirty) ? openIn('changes', { repo: repo.path, lane: lane.name }) : toggle(`${here.key}:files`),
+        g: () => confirm('gate'),
+        l: () => check(repo, lane, 'land'),
+        r: () => lane.behind > 0 && confirm('rebase'),
+        p: () => lane.upstream?.behind > 0 ? confirm('push-force') : press({ repo: repo.id, verb: 'push', lane: lane.name }),
+        t: () => host.inEditor && openIn('terminal', { repo: repo.path, lane: lane.name }),
+        o: () => host.inEditor && openIn('lane', { repo: repo.path, lane: lane.name })
+    }[key]
+    if (act) { act(); done() }
+})
 
 /** Bring a lane into view and mark it for a moment: the editor's status bar asked for it. */
 let wantFocus = null

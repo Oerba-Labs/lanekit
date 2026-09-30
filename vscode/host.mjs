@@ -477,13 +477,13 @@ export const activate = async (context, vscode, { root }) => {
         if (!at) { bar.hide(); return }
         if (at.lane) {
             bar.text = `$(git-branch) ${at.lane.name} · ${wordOf(at.lane)}`
-            bar.tooltip = `Lane ${at.lane.name} of ${at.repo.id}, on branch ${at.lane.branch}. Show it in LaneKit.`
-            bar.command = { command: 'lanekit.reveal', title: 'Show in LaneKit', arguments: [{ repo: at.repo.id, lane: at.lane.name }] }
+            bar.tooltip = `Lane ${at.lane.name} of ${at.repo.id}, on branch ${at.lane.branch}: what to do with it.`
+            bar.command = { command: 'lanekit.laneMenu', title: 'LaneKit: this lane', arguments: [{ repo: at.repo.id, lane: at.lane.name }] }
         } else {
             const live = at.repo.lanes.filter((lane) => lane.kind === 'working' || lane.kind === 'fresh').length
             bar.text = `$(list-tree) ${live} ${live === 1 ? 'lane' : 'lanes'}`
-            bar.tooltip = `${at.repo.id}'s main checkout. Show every lane in LaneKit.`
-            bar.command = { command: 'lanekit.reveal', title: 'Show in LaneKit', arguments: [] }
+            bar.tooltip = `${at.repo.id}'s main checkout: its lanes, and a new one.`
+            bar.command = { command: 'lanekit.laneMenu', title: 'LaneKit: this repository', arguments: [{ repo: at.repo.id }] }
         }
         bar.show()
     }
@@ -528,7 +528,78 @@ export const activate = async (context, vscode, { root }) => {
     }
     const isWorking = (lane) => lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
 
+    /** A lane's own menu, from the status bar: what can be done with the lane (or the main checkout) in front. */
+    const laneMenu = async (argument) => {
+        await readIfNever()
+        const file = whereNow()
+        const here = file ? service.laneAt(file) : null
+        const repo = service.known().repos.find((candidate) => candidate.id === (argument?.repo ?? here?.repo?.id) && !candidate.error)
+        if (!repo) { vscode.window.showInformationMessage('LaneKit: no repository with lanes is in front.'); return }
+        const lane = argument?.lane ? repo.lanes.find((candidate) => candidate.name === argument.lane && candidate.exists) : argument ? null : here?.lane ?? null
+        const at = { repo: repo.id, lane: lane?.name }
+        const items = []
+        const item = (label, detail, run) => items.push({ label, detail, run })
+        item('$(list-tree) Show in LaneKit', 'the side bar, with this lane marked', () => reveal(lane ? at : null))
+        if (lane) {
+            const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
+            if (working || lane.dirty) item('$(diff) Changes', `everything ${lane.name} holds that ${repo.integrationBranch} does not`, () => open({ what: 'changes', repo: repo.path, lane: lane.name }))
+            item('$(terminal) Terminal', `a terminal in ${lane.name}`, () => open({ what: 'terminal', repo: repo.path, lane: lane.name }))
+            if (working) item('$(check) Gate…', wordOf(lane), () => commands['lanekit.gate'](at))
+            if (working) item('$(git-merge) Land…', `into ${repo.integrationBranch}, after a check`, () => commands['lanekit.land'](at))
+            if (lane.behind > 0 && !lane.operation) item('$(sync) Rebase…', `${lane.behind} behind ${repo.integrationBranch}`, () => commands['lanekit.rebase'](at))
+            if (lane.kind === 'working' && (!lane.upstream || lane.upstream.ahead > 0)) item('$(cloud-upload) Push', lane.upstream ? `${lane.upstream.ahead} not pushed` : 'not pushed yet', () => commands['lanekit.push'](at))
+            item('$(add) New lane from here…', `on top of ${lane.branch}`, () => commands['lanekit.newLaneHere'](at))
+            item('$(multiple-windows) Open in a new window', lane.path, () => open({ what: 'lane', repo: repo.path, lane: lane.name }))
+        } else {
+            item('$(add) New lane…', `from ${repo.integrationBranch}`, () => commands['lanekit.newLaneHere']({ repo: repo.id }))
+            const up = repo.main?.upstream
+            if (up?.behind && !up.ahead) item(`$(repo-pull) Pull ${up.behind}`, `fast-forward ${repo.integrationBranch} to ${up.name}`, () => pressFromPalette({ repo: repo.id, verb: 'pull' }).then((job) => job && output.show(true)))
+            item('$(cloud-download) Fetch now', `what origin has, for ${repo.id}`, () => pressFromPalette({ repo: repo.id, verb: 'fetch' }))
+        }
+        const picked = await vscode.window.showQuickPick(items, { title: lane ? `Lane ${lane.name}` : `${repo.id}'s main checkout`, matchOnDetail: true })
+        if (picked) await picked.run()
+    }
+
     const commands = {
+        'lanekit.laneMenu': (argument) => laneMenu(argument),
+        'lanekit.newLaneHere': async (argument) => {
+            await readIfNever()
+            const file = whereNow()
+            const here = file ? service.laneAt(file) : null
+            const repo = service.known().repos.find((candidate) => candidate.id === (argument?.repo ?? here?.repo?.id) && !candidate.error)
+            if (!repo) { vscode.window.showInformationMessage('LaneKit: no repository with lanes is in front.'); return }
+            const from = argument ? repo.lanes.find((candidate) => candidate.name === argument.lane && candidate.exists) : here?.lane
+            const base = from?.branch ?? repo.integrationBranch
+            const name = await vscode.window.showInputBox({
+                title: `New lane in ${repo.id}, from ${base}`,
+                prompt: from ? `It starts on top of ${from.name}'s work, and lands after it.` : `It starts from ${base} as it is now.`,
+                placeHolder: 'new-lane-name',
+                validateInput: (value) => NAME.test(value) ? null : 'Lowercase letters, digits and dashes, starting with a letter or a digit.'
+            })
+            if (!name) return
+            if (await pressFromPalette({ repo: repo.id, verb: 'new', name, ...(from ? { base } : {}) })) output.show(true)
+        },
+        'lanekit.rebase': async (argument) => {
+            const x = await laneFor(argument, 'Rebase which lane?', (lane) => lane.behind > 0 && !lane.operation)
+            if (!x) return
+            const go = await vscode.window.showWarningMessage(`Rebase ${x.lane.name} onto ${x.repo.integrationBranch}?`, {
+                modal: true, detail: `It replays its commits on ${x.repo.integrationBranch} as it is now (${x.lane.behind} behind). If they conflict it stops, names the files, and LaneKit opens them.`
+            }, 'Rebase it')
+            if (go === 'Rebase it' && await pressFromPalette({ repo: x.repo.id, verb: 'rebase', lane: x.lane.name })) output.show(true)
+        },
+        'lanekit.push': async (argument) => {
+            const x = await laneFor(argument, 'Push which lane?', (lane) => lane.kind === 'working')
+            if (!x) return
+            let force = false
+            if (x.lane.upstream?.behind > 0) {
+                const go = await vscode.window.showWarningMessage(`Replace origin's ${x.lane.branch}?`, {
+                    modal: true, detail: `It was rebased since it was pushed. --force-with-lease replaces origin's copy only if nobody pushed there since this lane last fetched.`
+                }, 'Replace it')
+                if (go !== 'Replace it') return
+                force = true
+            }
+            if (await pressFromPalette({ repo: x.repo.id, verb: 'push', lane: x.lane.name, force })) output.show(true)
+        },
         'lanekit.show': (focus) => show(focus),
         'lanekit.reveal': (focus) => reveal(focus),
         'lanekit.refresh': () => schedule(true),
