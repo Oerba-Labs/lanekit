@@ -38,7 +38,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { CONFIG_NAME } from '../lib/config.mjs'
-import { writeClaudeCommands } from './claude-commands.mjs'
+import { writeAgentCommands } from './claude-commands.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -51,7 +51,7 @@ const fail = (message) => {
     process.exit(1)
 }
 
-const WINDOW = 100
+export const WINDOW = 100
 const FIRST_BASE = 8200
 
 /** "Piano Sheets" → piano-sheets: what is safe as a directory, a branch prefix and a command. */
@@ -74,7 +74,7 @@ export const freeWindowBeside = (dir) => {
     return Math.ceil((highest + 1) / WINDOW) * WINDOW
 }
 
-const configFor = (name, slug, portBase) => ({
+export const configFor = (name, slug, portBase, { integrationBranch = 'main', envFile = '.env' } = {}) => ({
     note: [
         `What ${name} is, for the lane tooling. Everything the tooling would otherwise have`,
         'to guess about this project is here. Written by `lanekit init`; every value is a',
@@ -86,7 +86,7 @@ const configFor = (name, slug, portBase) => ({
     ],
     name,
     slug,
-    integrationBranch: 'main',
+    integrationBranch,
     roots: {},
     gate: {
         sides: {},
@@ -103,16 +103,16 @@ const configFor = (name, slug, portBase) => ({
         // Main keeps the first port of the hundred; lanes are handed the rest.
         portBase: portBase + 1,
         portCeiling: portBase + WINDOW - 1,
-        copyOnCreate: ['.env'],
+        copyOnCreate: [envFile],
         linkOnCreate: [],
-        env: { file: '.env', portKey: 'PORT', perLane: {} },
+        env: { file: envFile, portKey: 'PORT', perLane: {} },
         makeDirs: [],
         seed: [],
         provision: []
     }
 })
 
-const shimFor = (name, slug) => `#!/bin/sh
+export const shimFor = (name, slug) => `#!/bin/sh
 # ${name}'s one entrypoint: \`./${slug} lane new <name>\`, \`./${slug} gate\`, \`./${slug} check\`.
 #
 # WHICH COPY YOU RUN DECIDES WHICH CHECKOUT IS ACTED ON. This finds its own directory and
@@ -124,7 +124,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$here" || exit 1
 
 kit=
-for candidate in "$LANEKIT" "$here/../lanekit" /opt/lanekit "$HOME/Documents/Programming/lanekit"; do
+for candidate in "$LANEKIT" "$here/../lanekit" /opt/lanekit "$HOME/.lanekit" "$HOME/Documents/Programming/lanekit"; do
     if [ -n "$candidate" ] && [ -d "$candidate/dev" ]; then kit=$candidate; break; fi
 done
 
@@ -135,7 +135,7 @@ case "$command" in
     lane|gate)
         if [ -z "$kit" ]; then
             echo "  the lane tooling is not on this machine." >&2
-            echo "  Point at it with LANEKIT=/path/to/lanekit, or clone it beside this repository." >&2
+            echo "  git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit, or point at a copy with LANEKIT=/path/to/lanekit." >&2
             exit 1
         fi
         exec node "$kit/dev/$command.mjs" "$@" ;;
@@ -153,7 +153,7 @@ case "$command" in
 esac
 `
 
-const CHECK = `#!/bin/sh
+export const CHECK = `#!/bin/sh
 # What the gate runs. Tier 1 of lane.config.json is this script and nothing else, so the
 # project's tests go here and the config does not change when they arrive.
 #
@@ -164,7 +164,7 @@ echo "  check: nothing is checked yet. Put this project's tests in ./check."
 exit 0
 `
 
-const GITIGNORE = `# A lane's port and paths live in its environment file, and secrets end up there too.
+export const GITIGNORE = `# A lane's port and paths live in its environment file, and secrets end up there too.
 .env
 
 # What the gate records about its runs. It names absolute paths on one machine.
@@ -202,8 +202,8 @@ const main = () => {
     const dir = path.resolve(flag('--dir') ?? slug)
     if (fs.existsSync(dir) && fs.readdirSync(dir).length) {
         fail(`${dir} already has something in it.\n` +
-            '  This starts a project from nothing. To give an existing repository lanes, write\n' +
-            '  its lane.config.json and shim by hand: the README of lanekit says what each key decides.')
+            '  This starts a project from nothing. To give an existing repository lanes, run\n' +
+            `  node ${path.join(path.dirname(new URL(import.meta.url).pathname), 'adopt.mjs')} in it (INSTALL.md says what to decide).`)
     }
 
     const rawBase = flag('--port-base')
@@ -225,9 +225,9 @@ const main = () => {
     // the first port of the window, so main and its first lane never serve on one.
     write('.env', `PORT=${portBase}\n`)
     log(`wrote ${CONFIG_NAME}, ./${slug}, ./check, .gitignore and README.md`)
-    // /lane and /land for Claude Code, in the repository so they are wherever a checkout is.
-    writeClaudeCommands(dir, name, slug)
-    log('wrote .claude/commands/lane.md and land.md')
+    // /lane and /land for Claude Code and OpenCode, in the repository so they are wherever a checkout is.
+    writeAgentCommands(dir, name, slug)
+    log('wrote /lane and /land for Claude Code (.claude/commands) and OpenCode (.opencode/commands)')
 
     const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
     try {
