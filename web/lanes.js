@@ -780,6 +780,89 @@ const logOf = (repo) => {
     return rows
 }
 
+// ---------------------------------------------------------------------------
+// the queue: the order to land in, what each needs, and who collides with whom
+// ---------------------------------------------------------------------------
+
+const VERDICT_RANK = { 'land now': 0, 'gate now': 1, 'commit first': 2, 'hold the gate': 3, 'rebase first': 4, parked: 5 }
+const VERDICT_WORDS = {
+    'land now': ['done', 'ready to land'], 'gate now': ['info', 'needs a gate'], 'commit first': ['warn', 'commit first'],
+    'hold the gate': ['warn', 'waits for another lane'], 'rebase first': ['risk', 'rebase first'], parked: ['quiet', 'parked']
+}
+/** The lanes with something to land, in the order to land them: a group's costlier first, then readiness. */
+const queueOrder = (repo) => repo.lanes
+    .filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && lane.queue)
+    .sort((a, b) => (a.queue.position ?? 99) - (b.queue.position ?? 99) ||
+        (VERDICT_RANK[a.queue.verdict] ?? 9) - (VERDICT_RANK[b.queue.verdict] ?? 9) || a.name.localeCompare(b.name))
+
+/** The landing order at the head of a repository, with Land next when the first is ready. */
+const queueOf = (repo) => {
+    if (repo.error) return []
+    const order = queueOrder(repo)
+    if (!order.length) return []
+    const next = order.find((lane) => lane.queue.verdict === 'land now')
+    const busy = busyIn(repo.id)
+    return [el('div', { class: 'queue' },
+        el('div', { class: 'queue-head' },
+            el('span', { class: 'queue-title', text: order.length === 1 ? 'Next to land' : 'Landing order' }),
+            el('span', { class: 'grow' }),
+            next ? el('button', {
+                type: 'button', class: 'btn primary', text: `Land ${next.name}…`, disabled: busy,
+                title: `Check that ${next.name} can land, then ask: it is first in the order and its gate names its commit`,
+                onclick: () => check(repo, next, 'land')
+            }) : null),
+        el('ol', { class: 'queue-list' }, order.map((lane) => {
+            const [tone, words] = VERDICT_WORDS[lane.queue.verdict] ?? ['quiet', lane.queue.verdict]
+            const collides = (lane.queue.collisions ?? []).map((collision) => collision.lane)
+            return opens(el('li', {},
+                el('span', { class: 'lane-name', text: lane.name }),
+                state(tone, words, 'small'),
+                collides.length ? el('span', { class: 'muted', text: `collides with ${collides.join(', ')}` }) : null),
+            `Show ${lane.name}`, () => focusLane(repo.id, lane.name))
+        })))]
+}
+
+// A collision drawn: a bracket in the log's right margin from one lane's card to the other's.
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const svgEl = (tag, attrs = {}) => {
+    const node = document.createElementNS(SVG_NS, tag)
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value))
+    return node
+}
+const drawCollisions = () => {
+    for (const [id, kept] of sections) {
+        const repo = current?.repos.find((candidate) => candidate.id === id)
+        const log = kept.log
+        log.querySelector(':scope > svg.collisions')?.remove()
+        const pairs = []
+        for (const lane of repo?.error ? [] : repo?.lanes ?? []) {
+            for (const collision of lane.queue?.collisions ?? []) {
+                if (lane.name < collision.lane) pairs.push([lane.name, collision.lane, collision.paths])
+            }
+        }
+        log.classList.toggle('has-collisions', pairs.length > 0)
+        if (!pairs.length) continue
+        const box = log.getBoundingClientRect()
+        const card = (name) => [...log.querySelectorAll(':scope > li[data-key]')].find((node) => node.dataset.key === `${id}/${name}`)
+        const svg = svgEl('svg', { class: 'collisions', width: 16, height: Math.ceil(box.height) })
+        pairs.forEach(([a, b, paths], index) => {
+            const one = card(a)?.getBoundingClientRect()
+            const two = card(b)?.getBoundingClientRect()
+            if (!one || !two) return
+            const y1 = Math.round(one.top - box.top + 22)
+            const y2 = Math.round(two.top - box.top + 22)
+            const x = 12 - (index % 3) * 4
+            const path = svgEl('path', { d: `M 0 ${y1} H ${x} V ${y2} H 0`, fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round' })
+            const title = svgEl('title')
+            title.textContent = `${a} and ${b} both change ${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` and ${paths.length - 3} more` : ''}`
+            path.append(title)
+            svg.append(path)
+        })
+        log.append(svg)
+    }
+}
+window.addEventListener('resize', () => drawCollisions())
+
 const settledOf = (repo) => {
     const settled = repo.error ? [] : repo.lanes.filter((lane) => lane.kind === 'landed' || lane.kind === 'missing')
     if (!settled.length) return []
@@ -841,11 +924,12 @@ const sectionFor = (repo) => {
         root: el('section', { class: 'repo' }),
         head: el('div', {}),
         form: newLaneForm(repo.id),
+        queue: el('div', {}),
         log: el('ol', { class: 'log' }),
         settled: el('div', {}),
         terminal: terminalOf(repo)
     }
-    kept.root.append(kept.head, kept.form, kept.log, kept.settled, kept.terminal)
+    kept.root.append(kept.head, kept.form, kept.queue, kept.log, kept.settled, kept.terminal)
     sections.set(repo.id, kept)
     return kept
 }
@@ -879,6 +963,7 @@ const draw = (force = false) => {
         kept.head.replaceChildren(...headOf(repo))
         kept.form.hidden = Boolean(repo.error)
         kept.form.button.disabled = busyIn(repo.id)
+        kept.queue.replaceChildren(...queueOf(repo))
         kept.log.replaceChildren(...logOf(repo))
         kept.settled.replaceChildren(...settledOf(repo))
         // Moved only when out of place: moving a section takes the focus out of its form.
@@ -889,6 +974,7 @@ const draw = (force = false) => {
         if (![...sections.values()].some((kept) => kept.root === node)) node.remove()
     }
     if (wantFocus) focusLane(wantFocus.repo, wantFocus.lane)
+    drawCollisions()
 }
 
 /** Bring a lane into view and mark it for a moment: the editor's status bar asked for it. */

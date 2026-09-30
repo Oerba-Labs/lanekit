@@ -287,6 +287,19 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 .files { margin: 6px 0 0; padding: 8px 12px; background: var(--soft); border-radius: 6px; font-size: var(--s12); max-height: 240px; overflow: auto; }
 .files div { font-family: var(--mono); white-space: nowrap; }
 .files.conflicts { background: var(--warn-wash); }
+/* The queue: the order to land in, at the head of a repository. */
+.queue { margin: 12px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.queue-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.queue-title { font-size: var(--s12); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.queue-list { margin: 6px 0 0; padding: 0 0 0 20px; display: grid; gap: 2px; font-size: var(--s13); }
+.queue-list li { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; padding: 2px 4px; }
+.queue-list .lane-name { font-size: var(--s13); }
+.queue-list li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* A collision drawn: a bracket in the log's right margin, from one lane to the other. */
+.log.has-collisions { padding-right: 18px; }
+.log > svg.collisions { position: absolute; top: 0; right: 0; overflow: visible; pointer-events: stroke; }
+.log > svg.collisions path { stroke: var(--warn); }
+
 /* A press running in a lane: its verb, the gate's step, a clock. */
 .live { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 6px 0 0; font-size: var(--s12); color: var(--muted); }
 .live .live-step { font-family: var(--mono); color: var(--ink); }
