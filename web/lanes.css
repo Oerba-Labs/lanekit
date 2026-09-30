@@ -331,6 +331,8 @@ html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .
 .changes { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: var(--s12); }
 .changes-head, .conflicts-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .changes .files-head { color: var(--ink); }
+/* Commit… and Amend wrap together, to the right of a line of their own, when the side bar has no room for them. */
+.changes-actions { display: inline-flex; gap: 6px; margin-left: auto; }
 .commit-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .change-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .change-list li { display: flex; gap: 8px; align-items: baseline; padding: 1px 4px; min-width: 0; }
