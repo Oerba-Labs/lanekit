@@ -195,6 +195,31 @@ ask. It listens on the loopback only and never pushes. `--ssh-host <host>` adds 
 opens a lane in VS Code over Remote-SSH, and `--browser-editor <prefix>` one to a browser
 editor.
 
+## In your editor
+
+`vscode/` is an extension, **Lanes**, that puts the same page in a tab of VS Code, or of a
+browser editor such as code-server, the way Sapling's Interactive Smartlog sits in the editor.
+There its clicks drive the editor:
+
+- a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
+  holds that the integration branch does not, committed or not, against its files as they are,
+  so you can edit them in the diff; "N uncommitted" opens what is uncommitted;
+- **Open** opens a lane in a window of its own, and **Terminal** a terminal in it;
+- the status bar names the lane the file in front of you is in, and what it needs ("ready to
+  land"); a click brings it into view on the page;
+- **Lanes: New Lane…**, **Gate This Lane…**, **Land This Lane…** and **Open a Lane…** in the
+  command palette act on the lane in front of you, with the page's own checks.
+
+No server and no port: the extension runs the page's service itself, reads git in a worker
+thread so the editor never waits, and finds repositories in the folders the window has open,
+a lane's own folder included. It runs lanekit from the checkout on the machine (`lanekit.path`,
+else `$LANEKIT`, else `/opt/lanekit`), so it and the `lane` commands are always one version:
+
+```
+node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
+code --install-extension ~/.lanekit/vscode/lanekit-0.1.0.vsix
+```
+
 ## Commands
 
 ```
@@ -204,7 +229,7 @@ editor.
 ./<project> gate                 in a lane: is this branch ready to merge?
 ./<project> lane land <name>     in main: merge a lane whose gate is green, then sweep it
 ./<project> lane sweep [name]    remove lanes whose branch has landed
-./<project> lane web             a page of every lane
+./<project> lane web             a page of every lane (in your editor: the Lanes extension)
 ./<project> check                what the gate runs
 ```
 

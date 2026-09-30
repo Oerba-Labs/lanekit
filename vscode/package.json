@@ -1,0 +1,48 @@
+{
+  "name": "lanekit",
+  "displayName": "Lanes",
+  "description": "Every lane of every repository as a smartlog you act on inside the editor: open a commit's or a lane's changes, gate, land and sweep.",
+  "publisher": "lanekit",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["SCM Providers", "Other"],
+  "main": "./extension.js",
+  "extensionKind": ["workspace"],
+  "capabilities": { "untrustedWorkspaces": { "supported": false, "description": "Lanes runs the repository's own lane and gate commands." } },
+  "activationEvents": ["onStartupFinished", "onWebviewPanel:lanekit.lanes"],
+  "contributes": {
+    "commands": [
+      { "command": "lanekit.show", "title": "Show", "category": "Lanes", "icon": "$(list-tree)" },
+      { "command": "lanekit.newLane", "title": "New Lane…", "category": "Lanes" },
+      { "command": "lanekit.gate", "title": "Gate This Lane…", "category": "Lanes" },
+      { "command": "lanekit.land", "title": "Land This Lane…", "category": "Lanes" },
+      { "command": "lanekit.changes", "title": "Show This Lane's Changes", "category": "Lanes" },
+      { "command": "lanekit.terminal", "title": "Open a Terminal in This Lane", "category": "Lanes" },
+      { "command": "lanekit.openLane", "title": "Open a Lane…", "category": "Lanes" },
+      { "command": "lanekit.refresh", "title": "Refresh", "category": "Lanes" }
+    ],
+    "menus": {
+      "scm/title": [
+        { "command": "lanekit.show", "group": "navigation" }
+      ]
+    },
+    "configuration": {
+      "title": "Lanes",
+      "properties": {
+        "lanekit.path": {
+          "type": "string",
+          "default": "",
+          "description": "Where lanekit is checked out. Empty: $LANEKIT_HOME, then /opt/lanekit."
+        },
+        "lanekit.folders": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Folders to find repositories with lanes in, besides the folders open in this window."
+        }
+      }
+    }
+  }
+}

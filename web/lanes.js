@@ -1,6 +1,12 @@
 // The lanes page. Plain JavaScript, no build: lanekit has no dependencies and no build
 // step, and this file is served as it is written.
 //
+// TWO PLACES, ONE PAGE. In a browser it asks `lane web` over HTTP. Inside VS Code it is a
+// tab of the Lanes extension (vscode/host.mjs) and asks it by message: the extension runs
+// the same service in the editor, tells the page when anything changed, and opens what the
+// page points at — a commit's changes, a lane's, a file's diff, a folder, a terminal — in
+// the editor itself. The drawing is the same in both; only `host` differs.
+//
 // Every value a server said is put on the page as text (textContent, or a string handed to
 // append, which makes a text node): a commit subject is somebody's words, never markup.
 // Every address asked for is relative to where the page was served.
@@ -8,6 +14,8 @@
 
 const ASK_EVERY_MS = 4000
 const ASK_HIDDEN_MS = 15000
+// Inside the editor the extension says when something changed; this only covers a lost message.
+const ASK_IN_EDITOR_MS = 30000
 const REDRAW_ANYWAY_MS = 30000
 const STACK_SHOWN = 3
 
@@ -51,13 +59,109 @@ const state = (tone, word, extra = '') => el('span', { class: `state ${tone} ${e
 const safeHref = (url) => (typeof url === 'string' && /^https:\/\//.test(url) ? url : null)
 
 // ---------------------------------------------------------------------------
+// the host: lane web over HTTP, or the editor by message
+// ---------------------------------------------------------------------------
+
+const browserHost = () => ({
+    inEditor: false,
+    state: async () => {
+        const response = await fetch('api/state', { cache: 'no-store' })
+        if (!response.ok) throw new Error(String(response.status))
+        return response.json()
+    },
+    press: async (body) => {
+        const response = await fetch('api/jobs', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-lanes': '1' },
+            body: JSON.stringify(body)
+        })
+        return { status: response.status, body: await response.json() }
+    },
+    job: async (id, from) => {
+        const response = await fetch(`api/jobs/${encodeURIComponent(id)}?from=${from}`, { cache: 'no-store' })
+        if (!response.ok) throw new Error(String(response.status))
+        return response.json()
+    },
+    on: () => {},
+    remember: () => {},
+    recall: () => null
+})
+
+const editorHost = (api) => {
+    let sequence = 0
+    const waiting = new Map()
+    const listeners = new Map()
+    window.addEventListener('message', (event) => {
+        const message = event.data
+        if (!message || typeof message !== 'object') return
+        if (message.type === 'reply') {
+            const asked = waiting.get(message.id)
+            if (!asked) return
+            waiting.delete(message.id)
+            if (message.ok) asked.resolve(message.value); else asked.reject(new Error(message.error || 'the editor refused'))
+            return
+        }
+        for (const listener of listeners.get(message.type) ?? []) listener(message)
+    })
+    const ask = (method, params) => new Promise((resolve, reject) => {
+        const id = ++sequence
+        waiting.set(id, { resolve, reject })
+        api.postMessage({ type: 'request', id, method, params })
+    })
+    return {
+        inEditor: true,
+        state: () => ask('state'),
+        press: (body) => ask('press', body),
+        job: async (id, from) => {
+            const job = await ask('job', { id, from })
+            if (!job) throw new Error('no such job')
+            return job
+        },
+        open: (what, params) => ask('open', { what, ...params }),
+        on: (type, listener) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
+        remember: (value) => api.setState(value),
+        recall: () => api.getState(),
+        ready: () => api.postMessage({ type: 'ready' })
+    }
+}
+
+// eslint-disable-next-line no-undef
+const host = typeof acquireVsCodeApi === 'function' ? editorHost(acquireVsCodeApi()) : browserHost()
+if (host.inEditor) document.body.classList.add('in-editor')
+
+/** Ask the editor to open something; what it refuses is said on the page. */
+const openIn = (what, params) => host.open(what, params).catch((error) => notice(error.message))
+
+/**
+ * Make a drawn node open something in the editor, by a click or by Enter: a commit, a file,
+ * the uncommitted changes. In a browser the node is left as it was drawn.
+ */
+const opens = (node, title, action) => {
+    if (!host.inEditor) return node
+    node.classList.add('opens')
+    node.setAttribute('role', 'button')
+    node.tabIndex = 0
+    node.title = title
+    node.addEventListener('click', (event) => { if (!event.target.closest('a, button')) action() })
+    node.addEventListener('keydown', (event) => {
+        if (event.target === node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); action() }
+    })
+    return node
+}
+
+// ---------------------------------------------------------------------------
 // what the page remembers between answers
 // ---------------------------------------------------------------------------
 
 let current = null
 let lastDrawn = ''
 let lastDrawnAt = 0
-const expanded = new Set()      // `${repo}/${lane}` showing every commit, `…:files` showing files
+const expanded = new Set(host.recall()?.expanded ?? [])   // `${repo}/${lane}` showing every commit, `…:files` showing files
+const toggle = (key) => {
+    if (expanded.has(key)) expanded.delete(key); else expanded.add(key)
+    host.remember({ expanded: [...expanded] })
+    draw(true)
+}
 const pending = new Map()       // `${repo}/${lane}` -> { verb, stage, jobId }
 const sections = new Map()      // repo id -> the parts of its section that are kept
 let shownJob = null
@@ -78,46 +182,48 @@ const notice = (message) => {
     if (message) notice.timer = setTimeout(() => { box.hidden = true }, 10000)
 }
 
+const took = (state) => {
+    current = state
+    const updated = $('updated')
+    updated.classList.remove('lost')
+    updated.textContent = 'Up to date'
+    draw()
+}
+
 const refresh = async () => {
     try {
-        const response = await fetch('api/state', { cache: 'no-store' })
-        if (!response.ok) throw new Error(String(response.status))
-        current = await response.json()
-        const updated = $('updated')
-        updated.classList.remove('lost')
-        updated.textContent = 'Up to date'
-        draw()
+        took(await host.state())
     } catch {
         // A page waiting across a restart of its own server loses it for seconds: say so and
         // ask again, never take the silence for an answer.
         const updated = $('updated')
         updated.classList.add('lost')
-        updated.textContent = 'Cannot reach the lanes server; asking again'
+        updated.textContent = host.inEditor ? 'The Lanes extension did not answer; asking again' : 'Cannot reach the lanes server; asking again'
     }
 }
 
 const loop = async () => {
     await refresh()
-    setTimeout(loop, document.hidden ? ASK_HIDDEN_MS : ASK_EVERY_MS)
+    setTimeout(loop, host.inEditor ? ASK_IN_EDITOR_MS : document.hidden ? ASK_HIDDEN_MS : ASK_EVERY_MS)
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh() })
 
+// The editor tells the page what changed, and which lane to show when asked from outside it.
+host.on('state', (message) => took(message.state))
+host.on('job', (message) => { if (message.id === shownJob) followJob(message.id) })
+host.on('focus', (message) => focusLane(message.repo, message.lane))
+
 const press = async (body) => {
-    let response
-    let answer
+    let pressed
     try {
-        response = await fetch('api/jobs', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', 'x-lanes': '1' },
-            body: JSON.stringify(body)
-        })
-        answer = await response.json()
+        pressed = await host.press(body)
     } catch {
-        notice('The lanes server did not answer; nothing was run.')
+        notice(host.inEditor ? 'The Lanes extension did not answer; nothing was run.' : 'The lanes server did not answer; nothing was run.')
         return null
     }
-    if (!response.ok) {
-        notice(answer?.error ?? `Refused (${response.status}).`)
+    const answer = pressed.body
+    if (pressed.status >= 400) {
+        notice(answer?.error ?? `Refused (${pressed.status}).`)
         return null
     }
     notice('')
@@ -138,17 +244,22 @@ const showJob = (id) => {
     followJob(id)
 }
 
+// One ask at a time: the editor's "more output" arrives while an ask is out, and two asks
+// from the same place would print the same output twice.
+let following = null
+let followAgain = false
 const followJob = async (id) => {
     if (shownJob !== id) return
-    let job
+    if (following === id) { followAgain = true; return }
+    following = id
+    let job = null
     try {
-        const response = await fetch(`api/jobs/${encodeURIComponent(id)}?from=${shownFrom}`, { cache: 'no-store' })
-        if (!response.ok) throw new Error(String(response.status))
-        job = await response.json()
+        job = await host.job(id, shownFrom)
     } catch {
-        setTimeout(() => followJob(id), 2000)
-        return
+        job = null
     }
+    following = null
+    if (!job) { setTimeout(() => followJob(id), 2000); return }
     if (shownJob !== id) return
     const out = $('job-out')
     const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 8
@@ -162,8 +273,9 @@ const followJob = async (id) => {
     if (job.state === 'running') {
         box.className = 'state info'
         box.textContent = `Running ${what}`
-        setTimeout(() => followJob(id), 1000)
+        if (followAgain) { followAgain = false; followJob(id) } else setTimeout(() => followJob(id), host.inEditor ? 3000 : 1000)
     } else {
+        followAgain = false
         box.className = `state ${job.code === 0 ? 'done' : 'risk'}`
         box.textContent = job.code === 0 ? `Finished ${what}` : `Failed ${what} (exit ${job.code})`
         refresh()
@@ -245,7 +357,27 @@ const serverOf = (lane) => {
         : state('quiet', `Port ${lane.port}, not serving`, 'small')
 }
 
-const openLinks = (lane) => {
+const openLinks = (repo, lane) => {
+    if (host.inEditor) {
+        // In the editor: its changes as diffs, a terminal in it, and the lane as a window of its own.
+        if (!lane.exists) return []
+        const holds = lane.kind === 'working' || lane.dirty > 0
+        return [
+            holds ? el('button', {
+                type: 'button', class: 'btn', text: 'Changes',
+                title: `Everything ${lane.name} holds that ${repo.integrationBranch} does not, committed or not, side by side`,
+                onclick: () => openIn('changes', { repo: repo.path, lane: lane.name })
+            }) : null,
+            el('button', {
+                type: 'button', class: 'btn', text: 'Terminal', title: `A terminal in ${lane.path}`,
+                onclick: () => openIn('terminal', { repo: repo.path, lane: lane.name })
+            }),
+            el('button', {
+                type: 'button', class: 'btn', text: 'Open', title: `Open ${lane.path} in a new window`,
+                onclick: () => openIn('lane', { repo: repo.path, lane: lane.name })
+            })
+        ]
+    }
     const links = []
     const open = current?.open ?? {}
     if (open.sshHost) {
@@ -265,12 +397,20 @@ const openLinks = (lane) => {
     return links
 }
 
-const commitRow = (commit, className, label) =>
+const showCommit = (repo, commit) => () => openIn('commit', { repo: repo.path, sha: commit.sha })
+
+const commitRow = (repo, commit, className, label) => opens(
     el('li', { class: `commit ${className}` },
         label ? el('span', { class: 'branch-name', text: label }) : null,
         el('span', { class: 'sha', text: commit.short }),
         el('span', { class: 'subject', text: commit.subject, title: `${commit.subject}\n${commit.author}` }),
-        el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) }))
+        el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) })),
+    `${commit.short} ${commit.subject}: show its changes`, showCommit(repo, commit))
+
+/** "N uncommitted", which in the editor opens them against the checkout's own commit. */
+const uncommittedOf = (repo, checkout, name, count, words = `${count} uncommitted`) =>
+    opens(state('warn', words, 'small'), `Show what is uncommitted in ${name}`,
+        () => openIn('uncommitted', { repo: repo.path, checkout, name }))
 
 const confirmOf = (repo, lane, key) => {
     const waiting = pending.get(key)
@@ -341,13 +481,13 @@ const laneCard = (repo, lane) => {
             onclick: () => check(repo, lane, 'land')
         }))
     }
-    buttons.push(...openLinks(lane))
+    buttons.push(...openLinks(repo, lane))
 
     const facts = el('div', { class: 'facts' },
         lane.branch !== lane.name ? el('span', { text: `branch ${lane.branch}` }) : null,
         lane.ahead ? el('span', { text: plural(lane.ahead, 'commit') }) : null,
         lane.behind ? el('span', { text: `${lane.behind} behind ${repo.integrationBranch}` }) : null,
-        lane.dirty ? state('warn', `${lane.dirty} uncommitted`, 'small') : null,
+        lane.dirty ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         serverOf(lane),
         gateOf(lane),
         pushedOf(lane),
@@ -359,15 +499,16 @@ const laneCard = (repo, lane) => {
     const hidden = stack.length - shown.length
     const stackList = stack.length
         ? el('ul', { class: 'stack' },
-            shown.map((commit) => el('li', {},
+            shown.map((commit) => opens(el('li', {},
                 el('span', { class: 'sha', text: commit.short }),
                 el('span', { class: 'subject', text: commit.subject, title: `${commit.subject}\n${commit.author}` }),
-                el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) }))),
+                el('span', { class: 'when', text: ago(commit.at), title: exactly(commit.at) })),
+            `${commit.short} ${commit.subject}: show its changes`, showCommit(repo, commit))),
             hidden > 0 || (all && stack.length > STACK_SHOWN) || lane.more
                 ? el('li', {}, el('button', {
                     type: 'button', class: 'btn link',
                     text: all ? 'Show fewer' : `Show ${hidden} more ${hidden === 1 ? 'commit' : 'commits'}${lane.more ? ' (the newest twenty)' : ''}`,
-                    onclick: () => { if (all) expanded.delete(key); else expanded.add(key); draw(true) }
+                    onclick: () => toggle(key)
                 }))
                 : null)
         : null
@@ -382,14 +523,15 @@ const laneCard = (repo, lane) => {
     const filesToggle = files.length
         ? el('button', {
             type: 'button', class: 'btn link', text: expanded.has(filesKey) ? 'Hide the files' : `${plural(files.length, 'file')} changed`,
-            onclick: () => { if (expanded.has(filesKey)) expanded.delete(filesKey); else expanded.add(filesKey); draw(true) }
+            onclick: () => toggle(filesKey)
         })
         : null
     const filesList = files.length && expanded.has(filesKey)
-        ? el('div', { class: 'files' }, files.map((file) => el('div', { text: file })))
+        ? el('div', { class: 'files' }, files.map((file) => opens(el('div', { text: file }),
+            `Show what ${lane.name} changed in ${file}`, () => openIn('file', { repo: repo.path, lane: lane.name, path: file }))))
         : null
 
-    return el('li', { class: `lane tone-${tone}` },
+    return el('li', { class: `lane tone-${tone}`, 'data-key': key },
         el('div', { class: 'lane-head' },
             el('span', { class: 'lane-name', text: lane.name }),
             state(tone, word),
@@ -409,7 +551,7 @@ const landedRow = (repo, lane) => {
     const [tone, word, detail] = statusOf(lane)
     const busy = busyIn(repo.id)
     const sweepable = lane.kind === 'landed' && !lane.dirty
-    return el('li', {},
+    return el('li', { 'data-key': key },
         el('span', { class: 'lane-name', text: lane.name }),
         state(tone, word),
         detail ? el('span', { class: 'muted', text: detail }) : null,
@@ -421,7 +563,7 @@ const landedRow = (repo, lane) => {
                 title: 'Check what a sweep would remove, then ask',
                 onclick: () => check(repo, lane, 'sweep')
             }) : null,
-            lane.exists ? openLinks(lane) : null),
+            lane.exists ? openLinks(repo, lane) : null),
         el('div', { class: 'full' }, confirmOf(repo, lane, key)))
 }
 
@@ -432,6 +574,10 @@ const headOf = (repo) => {
         el('span', { class: 'repo-sub mono', text: repo.path }),
         el('span', { class: 'grow' }),
         repo.error ? null : el('div', { class: 'actions' },
+            host.inEditor ? el('button', {
+                type: 'button', class: 'btn', text: 'Terminal', title: `A terminal in ${repo.path}`,
+                onclick: () => openIn('terminal', { repo: repo.path })
+            }) : null,
             el('button', {
                 type: 'button', class: 'btn', text: 'Fetch', disabled: busyIn(repo.id),
                 title: 'git fetch --prune: what is pushed, and what others pushed',
@@ -453,7 +599,7 @@ const headOf = (repo) => {
     else facts.push(state('done', `Up to date with ${up.name}, as of the last fetch`, 'small'))
     if (!main.onIntegration) facts.push(state('warn', `The main checkout is on ${main.branch}, not ${base}: landing needs ${base}`, 'small'))
     if (main.operation) facts.push(state('risk', `The main checkout is part-way through a ${main.operation}`, 'small'))
-    if (main.dirty) facts.push(state('warn', `${main.dirty} uncommitted in the main checkout`, 'small'))
+    if (main.dirty) facts.push(uncommittedOf(repo, main.path, `the main checkout of ${repo.id}`, main.dirty, `${main.dirty} uncommitted in the main checkout`))
     const github = repo.github ?? {}
     if (github.state === 'absent') facts.push(el('span', { text: 'Pull requests: gh is not installed here' }))
     else if (github.state === 'signed-out') facts.push(el('span', { text: 'Pull requests: sign in with gh auth login' }))
@@ -472,7 +618,7 @@ const logOf = (repo) => {
     const rows = []
     repo.spine.forEach((commit, index) => {
         for (const lane of live.filter((candidate) => candidate.base === commit.sha).sort(newestFirst)) rows.push(laneCard(repo, lane))
-        rows.push(commitRow(commit, index === 0 ? 'tip' : '', index === 0 ? repo.integrationBranch : null))
+        rows.push(commitRow(repo, commit, index === 0 ? 'tip' : '', index === 0 ? repo.integrationBranch : null))
     })
     const older = live.filter((lane) => !onSpine.has(lane.base)).sort(newestFirst)
     if (older.length) {
@@ -563,14 +709,15 @@ const draw = (force = false) => {
     lastDrawn = said
     lastDrawnAt = Date.now()
 
-    $('where').textContent = current.scan + (current.kit ? ` · lanekit ${current.kit}` : '')
+    const where = (current.roots?.length ? current.roots : [current.scan]).join(', ')
+    $('where').textContent = where + (current.kit ? ` · lanekit ${current.kit}` : '')
     const pane = $('repos')
     const ids = new Set(current.repos.map((repo) => repo.id))
     for (const [id, kept] of sections) {
         if (!ids.has(id)) { kept.root.remove(); sections.delete(id) }
     }
     if (!current.repos.length) {
-        pane.replaceChildren(el('p', { class: 'muted', text: `No repository with lanes in ${current.scan}. A checkout with a lane.config.json appears here by itself.` }))
+        pane.replaceChildren(el('p', { class: 'muted', text: `No repository with lanes in ${where}. A checkout with a lane.config.json appears here by itself.` }))
         return
     }
     const empty = $('empty')
@@ -589,6 +736,21 @@ const draw = (force = false) => {
     for (const node of [...pane.children]) {
         if (![...sections.values()].some((kept) => kept.root === node)) node.remove()
     }
+    if (wantFocus) focusLane(wantFocus.repo, wantFocus.lane)
 }
 
+/** Bring a lane into view and mark it for a moment: the editor's status bar asked for it. */
+let wantFocus = null
+const focusLane = (repoId, laneName) => {
+    const key = `${repoId}/${laneName}`
+    const node = [...document.querySelectorAll('[data-key]')].find((candidate) => candidate.dataset.key === key)
+    if (!node) { wantFocus = { repo: repoId, lane: laneName }; return }
+    wantFocus = null
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    node.classList.remove('flash')
+    void node.offsetWidth
+    node.classList.add('flash')
+}
+
+host.ready?.()
 loop()
