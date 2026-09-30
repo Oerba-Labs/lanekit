@@ -56,8 +56,11 @@ const FILES = {
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (text) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
 
+// lanekit's own commit, for the page's header. A copy shared between users (one checkout, mounted
+// read-only into every workspace) belongs to somebody else, which git refuses to read without being
+// told this one folder is safe.
 const kitVersion = () => {
-    const result = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: PACKAGE_ROOT, encoding: 'utf8' })
+    const result = spawnSync('git', ['-c', `safe.directory=${PACKAGE_ROOT}`, 'rev-parse', '--short', 'HEAD'], { cwd: PACKAGE_ROOT, encoding: 'utf8' })
     return result.status === 0 ? result.stdout.trim() : null
 }
 
