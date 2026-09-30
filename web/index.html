@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Lanes</title>
+<!-- Every address here is relative: behind Coder the page lives under /@owner/workspace/apps/lanes/. -->
+<link rel="stylesheet" href="lanes.css">
+<script src="lanes.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <span class="product">Lanes</span>
+  <span class="where" id="where"></span>
+  <span class="grow"></span>
+  <span class="updated" id="updated" role="status"></span>
+</header>
+<p class="notice" id="notice" role="alert" hidden></p>
+<main class="pane" id="repos">
+  <p class="muted" id="empty">Reading the lanes…</p>
+</main>
+<section class="job" id="job" hidden aria-label="What the last press ran">
+  <div class="job-head">
+    <span class="state" id="job-state"></span>
+    <code class="job-command" id="job-command"></code>
+    <span class="grow"></span>
+    <button type="button" class="btn quiet" id="job-close">Close</button>
+  </div>
+  <pre class="job-out" id="job-out"></pre>
+</section>
+</body>
+</html>

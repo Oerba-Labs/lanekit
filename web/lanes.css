@@ -1,0 +1,241 @@
+/*
+ * The lanes page. White and air, one blue accent, and a state always shown by a dot AND a
+ * word, never by colour alone. Light and dark follow the viewer's machine.
+ *
+ * lanekit carries no dependency, so these values are its own rather than a copy of any
+ * house's tokens; a copy would go stale the day the house changed its look.
+ */
+:root {
+  --bg: #ffffff;
+  --soft: #f7f8fa;
+  --ink: #1d2433;
+  --muted: #667085;
+  --line: #e4e7ec;
+  --rail: #cfd4dc;
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --accent-wash: #eef4ff;
+  --done: #15803d;
+  --done-wash: #effaf2;
+  --warn: #b45309;
+  --warn-wash: #fff8eb;
+  --risk: #c2261d;
+  --risk-wash: #fef1f0;
+  --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --s11: 11px; --s12: 12px; --s13: 13px; --s14: 14px; --s17: 17px; --s20: 20px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191e;
+    --soft: #1d2026;
+    --ink: #e6e8ec;
+    --muted: #9aa1ad;
+    --line: #2b2f37;
+    --rail: #3b414c;
+    --accent: #6ea2ff;
+    --accent-ink: #0d1422;
+    --accent-wash: #1a2436;
+    --done: #56c27a;
+    --done-wash: #15261c;
+    --warn: #f0b04a;
+    --warn-wash: #2a2213;
+    --risk: #f2766c;
+    --risk-wash: #2e1817;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--s14)/1.45 var(--sans);
+}
+code, pre, .sha, .mono { font-family: var(--mono); font-size: 0.92em; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.muted { color: var(--muted); }
+.grow { flex: 1 1 auto; }
+
+/* ---- the bar ---------------------------------------------------------- */
+.bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 12px 24px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.product { font-weight: 600; font-size: var(--s17); letter-spacing: -0.01em; flex: none; }
+.where, .repo-sub {
+  color: var(--muted); font-family: var(--mono); font-size: var(--s12);
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.updated { color: var(--muted); font-size: var(--s12); flex: none; }
+.updated.lost { color: var(--warn); }
+
+.notice {
+  margin: 12px 24px 0; padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--risk-wash); color: var(--risk);
+  font-size: var(--s13);
+}
+
+.pane { padding: 24px 24px 160px; }
+
+/* ---- a repository ------------------------------------------------------ */
+.repo { margin: 0 0 48px; }
+.repo-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; min-width: 0; }
+.repo-head h2 { margin: 0; font-size: var(--s20); font-weight: 600; letter-spacing: -0.01em; flex: none; }
+.repo-head .actions { flex: none; }
+.facts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 0; font-size: var(--s13); color: var(--muted); }
+.facts > * { white-space: nowrap; max-width: 100%; }
+/* A sentence of a state (a refusal, an error) wraps; a short one keeps its line. */
+.facts > .state { white-space: normal; align-items: baseline; }
+.facts > .state::before { align-self: center; }
+
+.new-lane { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0 8px; }
+.new-lane input {
+  font: inherit; font-size: var(--s13);
+  padding: 5px 8px; min-width: 0;
+  color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.new-lane input[name="name"] { width: 220px; font-family: var(--mono); }
+.new-lane input[name="base"] { width: 140px; font-family: var(--mono); }
+.new-lane input:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- buttons ------------------------------------------------------------ */
+.btn {
+  font: inherit; font-size: var(--s13); font-weight: 500;
+  padding: 4px 10px;
+  color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--soft); }
+.btn:disabled { color: var(--muted); cursor: not-allowed; opacity: 0.7; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.link { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 400; }
+a.btn { display: inline-block; text-decoration: none; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* ---- states: a dot and a word, never a colour alone ---------------------- */
+.state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--s13); font-weight: 500; white-space: nowrap; }
+.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.state.done { color: var(--done); }
+.state.warn { color: var(--warn); }
+.state.risk { color: var(--risk); }
+.state.info { color: var(--accent); }
+.state.quiet { color: var(--muted); }
+.state.quiet::before { background: transparent; border: 1.5px solid currentColor; }
+.state.small { font-size: var(--s12); font-weight: 400; }
+.state.small::before { width: 6px; height: 6px; }
+
+/* ---- the log: main as a spine, each lane above the commit it forked from -- */
+.log { position: relative; list-style: none; margin: 8px 0 0; padding: 0; }
+.log::before {
+  content: ""; position: absolute; left: 11px; top: 8px; bottom: 8px;
+  width: 2px; background: var(--rail);
+}
+.commit {
+  position: relative;
+  display: flex; gap: 10px; align-items: baseline;
+  padding: 5px 0 5px 32px;
+  font-size: var(--s13);
+  min-width: 0;
+}
+.commit::before {
+  content: ""; position: absolute; left: 7px; top: 10px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--rail);
+}
+.commit.tip::before { background: var(--ink); border-color: var(--ink); }
+.commit .sha { color: var(--muted); flex: none; }
+.commit .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit .when { color: var(--muted); font-size: var(--s12); flex: none; }
+.commit .branch-name { font-weight: 600; flex: none; }
+.older { padding: 8px 0 4px 32px; color: var(--muted); font-size: var(--s12); }
+
+.lane {
+  position: relative;
+  margin: 8px 0 8px 32px;
+  padding: 12px 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--rail);
+  border-radius: 8px;
+}
+/* The tick from the spine to the lane: where it forked is the commit drawn just below. */
+.lane::before {
+  content: ""; position: absolute; left: -22px; top: 20px;
+  width: 19px; border-top: 2px solid var(--rail);
+}
+.lane.tone-done { border-left-color: var(--done); }
+.lane.tone-warn { border-left-color: var(--warn); }
+.lane.tone-risk { border-left-color: var(--risk); }
+.lane.tone-info { border-left-color: var(--accent); }
+.lane-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lane-name { font-weight: 600; font-size: var(--s14); font-family: var(--mono); }
+.lane .why { margin: 6px 0 0; font-size: var(--s13); color: var(--muted); }
+.lane .collide { margin: 6px 0 0; font-size: var(--s13); color: var(--warn); }
+
+.stack { list-style: none; margin: 8px 0 0; padding: 0; }
+.stack li {
+  display: flex; gap: 10px; align-items: baseline;
+  padding: 2px 0 2px 16px; position: relative; font-size: var(--s13); min-width: 0;
+}
+.stack li::before {
+  content: ""; position: absolute; left: 2px; top: 8px;
+  width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--muted);
+}
+.stack .sha { color: var(--muted); flex: none; }
+.stack .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack .when { color: var(--muted); font-size: var(--s12); flex: none; }
+
+.files { margin: 6px 0 0; padding: 8px 12px; background: var(--soft); border-radius: 6px; font-size: var(--s12); max-height: 240px; overflow: auto; }
+.files div { font-family: var(--mono); white-space: nowrap; }
+
+.confirm {
+  display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap;
+  margin: 12px 0 0; padding: 10px 12px;
+  border-radius: 8px; background: var(--accent-wash); font-size: var(--s13);
+}
+.confirm.refused { background: var(--warn-wash); }
+.confirm p { margin: 0; flex: 1 1 280px; }
+
+.landed { list-style: none; margin: 16px 0 0; padding: 0; border-top: 1px solid var(--line); }
+.landed-title { margin: 16px 0 4px; font-size: var(--s12); color: var(--muted); font-weight: 500; }
+.landed li { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: var(--s13); }
+.landed li > .full { flex-basis: 100%; }
+.landed li > .full:empty { display: none; }
+.landed .confirm { margin: 0; }
+
+.terminal { margin: 16px 0 0; font-size: var(--s13); }
+.terminal summary { color: var(--muted); cursor: pointer; }
+.terminal pre { margin: 8px 0 0; padding: 10px 12px; background: var(--soft); border-radius: 6px; overflow: auto; font-size: var(--s12); }
+
+/* ---- what a press ran ------------------------------------------------------ */
+.job {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
+  max-height: 45vh; display: flex; flex-direction: column;
+  background: var(--soft); border-top: 1px solid var(--line);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
+}
+.job[hidden] { display: none; }
+.job-head { display: flex; align-items: center; gap: 12px; padding: 8px 24px; border-bottom: 1px solid var(--line); min-width: 0; }
+.job-command { color: var(--muted); font-size: var(--s12); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.job-out { margin: 0; padding: 12px 24px; overflow: auto; font-size: var(--s12); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+@media (max-width: 640px) {
+  .bar, .job-head { padding-left: 16px; padding-right: 16px; }
+  .notice { margin-left: 16px; margin-right: 16px; }
+  .pane { padding: 16px 16px 160px; }
+  .job-out { padding: 12px 16px; }
+  .lane { padding: 10px 12px; }
+  .new-lane input[name="name"] { flex: 1 1 160px; width: auto; }
+  .commit .when { display: none; }
+}

@@ -467,8 +467,11 @@ const COMMANDS = { new: create, list, sweep, queue, land }
 const main = () => {
     const argv = process.argv.slice(2)
     const command = argv[0]
+    // The page reads every repository it is pointed at, each with its own config, so it
+    // is started before this one's is looked for: /work above the checkouts has none.
+    if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run]\n`)
         process.exit(2)
     }
 

@@ -50,10 +50,37 @@ copy, and an existing file is left alone without `--force`.
     <shim> lane new <name>     start a lane: worktree, branch, port, own state
     <shim> lane list           what exists, what each claims, what is serving
     <shim> lane sweep [name]   remove lanes whose branch has landed
+    <shim> lane web            a page of every lane, on 127.0.0.1:13338 (below)
 
 `lane new` takes `--base <ref>` to branch from something other than the
 integration branch, `--install` to provision rather than share linked
 directories, and `--no-provision` to make the worktree and stop.
+
+## A page of every lane
+
+    node <lanekit>/dev/lane.mjs web --scan /work --port 13338 \
+        --ssh-host orpheus.coder --browser-editor '../code/?folder='
+
+`lane web` serves one page for every repository with lanes in the folder it is given (or
+directly under it). Each repository's integration branch is drawn as a line of commits, and
+each lane sits above the commit it forked from, as a smartlog draws a stack: its own
+commits, how far it is ahead of and behind the branch, what is uncommitted, its port and
+whether anything serves on it, its last gate run, the queue's verdict and what it collides
+with, and its pull request when `gh` is signed in on the machine. It asks again every few
+seconds while it is being looked at.
+
+Its buttons are the commands above, run as a terminal would run them, with their output
+shown underneath: **New lane**, **Gate**, **Land** and **Sweep**, and **Fetch**. Land and
+Sweep run their `--dry-run` first and ask. Nothing on it pushes. It listens on the loopback
+only, runs one command at a time in a repository, and refuses to sweep a lane that has not
+landed or has uncommitted changes. `--ssh-host` adds a link that opens a lane in VS Code over
+Remote-SSH; `--browser-editor` one to a browser editor, as an address relative to the page.
+
+A lane that has landed and a lane made a minute ago are both contained in the integration
+branch. The page tells them apart by where the lane's commit sits: a landed lane's is the
+second parent of a `--no-ff` merge, and an empty lane's is on the branch's first-parent line.
+
+`node --test` runs its tests on a scratch repository.
 
 ## What the config says
 
