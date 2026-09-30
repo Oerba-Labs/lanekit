@@ -14,9 +14,9 @@
  * so the same files make the same .vsix, and whoever installs it can tell from its hash
  * alone whether there is anything new to install.
  *
- * WHAT IS IN IT. Only vscode/extension.js and vscode/package.json, and a README: the
- * extension finds lanekit's checkout on the machine and runs the rest from there
- * (extension.js says why).
+ * WHAT IS IN IT. Only vscode/extension.js and vscode/package.json, a README, and lanekit's
+ * LICENSE: the extension finds lanekit's checkout on the machine and runs the rest from
+ * there (extension.js says why).
  */
 
 import crypto from 'node:crypto'
@@ -120,6 +120,7 @@ export const build = () => {
   <Assets>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE.txt" Addressable="true" />
   </Assets>
 </PackageManifest>
 `
@@ -128,6 +129,7 @@ export const build = () => {
   <Default Extension=".json" ContentType="application/json" />
   <Default Extension=".js" ContentType="application/javascript" />
   <Default Extension=".md" ContentType="text/markdown" />
+  <Default Extension=".txt" ContentType="text/plain" />
   <Default Extension=".vsixmanifest" ContentType="text/xml" />
 </Types>
 `
@@ -139,14 +141,15 @@ in it, and gate, land and sweep it. **Lanes: Show** opens it; the status bar say
 the file in front of you is in, and what it needs.
 
 It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LANEKIT_HOME\`,
-else \`/opt/lanekit\`).
+else \`/opt/lanekit\`). Apache License 2.0; the source is https://github.com/Oerba-Labs/lanekit.
 `
     const bytes = zip([
         ['extension.vsixmanifest', vsixManifest],
         ['[Content_Types].xml', contentTypes],
         ['extension/package.json', manifestText],
         ['extension/extension.js', fs.readFileSync(path.join(HERE, 'extension.js'))],
-        ['extension/README.md', readme]
+        ['extension/README.md', readme],
+        ['extension/LICENSE.txt', fs.readFileSync(path.join(HERE, '..', 'LICENSE'))]
     ])
     return { bytes, name: `${manifest.publisher}.${manifest.name}`, version: manifest.version, sha256: crypto.createHash('sha256').update(bytes).digest('hex') }
 }

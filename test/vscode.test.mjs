@@ -266,15 +266,17 @@ test('the status bar\'s words follow the page\'s verdicts', () => {
     assert.equal(wordOf({ kind: 'working', operation: 'rebase' }), 'mid-rebase')
 })
 
-test('the .vsix holds the loader, the manifest and a README, the same bytes every time', () => {
+test('the .vsix holds the loader, the manifest, a README and the licence, the same bytes every time', () => {
     const one = build()
     const two = build()
     assert.equal(one.sha256, two.sha256)
     const file = path.join(scratch, 'lanes.vsix')
     fs.writeFileSync(file, one.bytes)
     const listed = execFileSync('unzip', ['-Z1', file], { encoding: 'utf8' }).trim().split('\n').sort()
-    assert.deepEqual(listed, ['[Content_Types].xml', 'extension.vsixmanifest', 'extension/README.md', 'extension/extension.js', 'extension/package.json'])
+    assert.deepEqual(listed, ['[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt', 'extension/README.md', 'extension/extension.js', 'extension/package.json'])
+    assert.match(execFileSync('unzip', ['-p', file, 'extension/LICENSE.txt'], { encoding: 'utf8' }), /Apache License\s+Version 2\.0/)
     execFileSync('unzip', ['-tq', file])
     const manifest = JSON.parse(execFileSync('unzip', ['-p', file, 'extension/package.json'], { encoding: 'utf8' }))
     assert.equal(manifest.main, './extension.js')
+    assert.equal(manifest.license, 'Apache-2.0')
 })
