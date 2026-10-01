@@ -587,6 +587,21 @@ const rowActions = (repo, commit, from = null, lane = null) => {
  * under the pointer, which a drop asks about. Listened for once, on the log, which a redraw keeps.
  */
 const LANE_DRAG = 'text/x-lanekit-lane'
+/**
+ * Where a lane dropped on a commit of main would move: back (onto a commit older than the one it starts from), forward,
+ * or where it is, and past which of main's commits: those it would no longer have under it, or those it would gain.
+ * Plain data in and out, and nothing else of the page's, so lanekit's tests run it as it is written here
+ * (test/rebase.test.mjs). The log is newest first: a commit further down it is older.
+ */
+const ontoOf = (spine, base, sha) => {
+    const to = spine.findIndex((commit) => commit.sha === sha)
+    const from = spine.findIndex((commit) => commit.sha === base)
+    if (to === -1) return { way: 'unknown', count: 0, commits: [] }
+    if (from === -1) return { way: 'forward', count: null, commits: [] }
+    if (to === from) return { way: 'here', count: 0, commits: [] }
+    if (to > from) return { way: 'back', count: to - from, commits: spine.slice(from, to) }
+    return { way: 'forward', count: from - to, commits: spine.slice(to, from) }
+}
 const clearPreview = (log) => {
     for (const node of (log ?? document).querySelectorAll('li.drag-ghost')) node.remove()
     for (const node of (log ?? document).querySelectorAll('li.drop-here')) node.classList.remove('drop-here')
@@ -599,8 +614,11 @@ const previewAt = (log, row) => {
     const lane = repo?.lanes.find((candidate) => candidate.name === dragging?.lane)
     if (!lane || lane.base === row.dataset.sha) return
     row.classList.add('drop-here')
+    const move = ontoOf(repo.spine, lane.base, row.dataset.sha)
+    const where = move.way === 'back' ? `would move back here, ${plural(move.count, 'commit')} of ${repo.integrationBranch} fewer under it`
+        : move.way === 'forward' && move.count ? `would move forward here, onto ${plural(move.count, 'newer commit')}` : 'would start here'
     const shadow = el('li', { class: 'lane drag-ghost', 'data-sha': row.dataset.sha, 'aria-hidden': 'true' },
-        el('div', { class: 'lane-head' }, el('span', { class: 'tag lane-name', text: lane.name }), el('span', { class: 'muted small', text: 'would start here' })),
+        el('div', { class: 'lane-head' }, el('span', { class: 'tag lane-name', text: lane.name }), el('span', { class: 'muted small', text: where })),
         el('ul', { class: 'stack' }, (lane.stack ?? []).slice(0, STACK_SHOWN).map((commit) => el('li', { class: 'stack-commit' }, el('span', { class: 'subject', text: commit.subject })))),
         forkCurve())
     row.before(shadow)
@@ -1158,9 +1176,23 @@ const confirmOf = (repo, lane, key) => {
             go('Rebase it', { repo: repo.id, verb: 'rebase', lane: lane.name }), cancel)
     }
     if (waiting.verb === 'rebase-onto') {
-        return el('div', { class: 'confirm' },
-            el('p', { text: `Rebase ${lane.name} onto "${waiting.subject}"? Its ${plural(lane.ahead || 0, 'commit')} will start from that commit of ${base} instead of where they start now. If they conflict it stops, names the files, and waits for you.` }),
-            go('Rebase it', { repo: repo.id, verb: 'rebase', lane: lane.name, onto: waiting.sha }), cancel)
+        // Back is a place to work from, never to land from: the gate moves a lane onto main's newest before it tests.
+        const move = ontoOf(repo.spine, lane.base, waiting.sha)
+        const own = plural(lane.ahead || 0, 'commit')
+        const one = (lane.ahead || 0) === 1
+        const them = one ? 'it' : 'them'
+        const named = (list) => list.slice(0, 2).map((commit) => `"${commit.subject}"`).join(' and ') + (list.length > 2 ? `, and ${list.length - 2} more` : '')
+        const pushed = lane.upstream ? ' It was pushed, so the next push asks before replacing origin\'s copy.' : ''
+        const text = move.way === 'back'
+            ? `Move ${lane.name} back onto "${waiting.subject}"? Its ${own} will start ${plural(move.count, 'commit')} further back on ${base}, without ${named(move.commits)} under ${them}. ` +
+              `It is a place to work from, not to land from: the gate moves it onto ${base}'s newest commit before it tests.${pushed} ` +
+              `If ${one ? 'its commit needs' : 'its commits need'} what it leaves behind, the rebase stops on the files that conflict and waits; Abort puts it back as it is now.`
+            : move.way === 'forward' && move.count
+                ? `Move ${lane.name} forward onto "${waiting.subject}"? Its ${own} will have ${named(move.commits)} under ${them} as well.${pushed} If ${one ? 'it conflicts' : 'they conflict'} it stops, names the files, and waits for you.`
+                : `Rebase ${lane.name} onto "${waiting.subject}"? Its ${own} will start from that commit of ${base} instead of where ${one ? 'it starts' : 'they start'} now.${pushed} If ${one ? 'it conflicts' : 'they conflict'} it stops, names the files, and waits for you.`
+        return el('div', { class: `confirm${move.way === 'back' ? ' backwards' : ''}` },
+            el('p', { text }),
+            go(move.way === 'back' ? 'Move it back' : move.way === 'forward' && move.count ? 'Move it forward' : 'Rebase it', { repo: repo.id, verb: 'rebase', lane: lane.name, onto: waiting.sha }), cancel)
     }
     if (waiting.verb === 'abort') {
         return el('div', { class: 'confirm' },

@@ -230,7 +230,13 @@ The page in the picture above, for every repository in a folder:
   here**, and type its name in that row: the lane starts from that commit, on top of it.
 - **A lane can be dragged onto a commit of main** to rebase it there: while it is dragged, a ghost
   of it is drawn where it would start, and the drop asks first. A lane with uncommitted work, or
-  in the middle of something, stays where it is.
+  in the middle of something, stays where it is. **Back onto an older commit** is allowed, and the
+  question says so: the lane keeps its own commits and leaves main's newer ones out from under it,
+  a place to work from (to see whether a newer commit of main broke it, or to keep going while main
+  is broken) but never to land from, since the gate moves a lane onto main's newest before it tests.
+  If its commits need what it leaves behind, the rebase stops on the files that conflict, and
+  **Abort** puts it back exactly; a pushed lane moved back asks before its next push replaces
+  origin's copy.
 - **What is uncommitted is a node of its own on the lane's line**: each file ticked, in the colour
   of what happened to it (M, A, D, U), with **Select all**, **Deselect all** and **Discard…** above
   (Discard asks, and throws away only the ticked files), and **+ Commit…** and **↓ Amend** under
@@ -297,7 +303,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.8.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.8.1.vsix
 ```
 
 <br clear="right">
