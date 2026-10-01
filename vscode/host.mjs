@@ -390,12 +390,58 @@ export const activate = async (context, vscode, { root }) => {
     const commitNamed = (repo, sha) => [...repo.spine, ...repo.lanes.flatMap((lane) => lane.stack ?? [])]
         .find((commit) => commit.sha === sha)
 
+    /**
+     * Goto, ISL's way: where you are moves to a lane, or to the main checkout (`lane` null). Each file open from another
+     * checkout of the repository reopens from this one, where it was, and the old tab closes; a file with unsaved
+     * changes stays as it is, and one this checkout lacks is left open. The Explorer shows the checkout's folder.
+     * Nothing on disk changes and no window opens: the lanes are folders of the workspace already (the owner, 30 Sep:
+     * Open moving the whole window to a lane's folder did not feel right inside a workspace that holds them all).
+     */
+    const inside = (file, dir) => file === dir || file.startsWith(dir.endsWith(path.sep) ? dir : dir + path.sep)
+    const gotoCheckout = async (repo, lane) => {
+        const target = lane?.path ?? repo.main?.path ?? repo.path
+        const checkouts = [repo.main?.path ?? repo.path, ...repo.lanes.filter((candidate) => candidate.exists).map((candidate) => candidate.path)]
+        const ownerOf = (file) => checkouts.filter((dir) => inside(file, dir)).sort((a, b) => b.length - a.length)[0] ?? null
+        const active = vscode.window.activeTextEditor
+        const moved = []
+        const kept = []
+        const missing = []
+        for (const group of vscode.window.tabGroups?.all ?? []) {
+            for (const tab of [...group.tabs]) {
+                const uri = vscode.TabInputText && tab.input instanceof vscode.TabInputText ? tab.input.uri : null
+                if (!uri || uri.scheme !== 'file') continue
+                const from = ownerOf(uri.fsPath)
+                if (!from || from === target) continue
+                const rel = path.relative(from, uri.fsPath)
+                if (tab.isDirty) { kept.push(rel); continue }
+                const there = path.join(target, rel)
+                if (!fs.existsSync(there)) { missing.push(rel); continue }
+                const shown = vscode.window.visibleTextEditors?.find((editor) => editor.document.uri.fsPath === uri.fsPath)
+                const wasActive = active?.document?.uri?.fsPath === uri.fsPath && group.isActive
+                await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(there)), {
+                    viewColumn: group.viewColumn, preview: false, preserveFocus: !wasActive, selection: shown?.selection
+                })
+                await vscode.window.tabGroups.close(tab, true)
+                moved.push(rel)
+            }
+        }
+        const name = lane ? lane.name : `${repo.id}'s main checkout`
+        if (vscode.workspace.getWorkspaceFolder?.(vscode.Uri.file(target))) {
+            await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(target))
+        }
+        const left = missing.length ? `; not in ${lane ? lane.name : 'main'}, so left as they were: ${missing.join(', ')}` : ''
+        vscode.window.setStatusBarMessage?.(`LaneKit: you are in ${name} now${moved.length ? `, with ${moved.length === 1 ? 'its copy of the file you had open' : `its copies of ${moved.length} files you had open`}` : ''}${left}`, 6000)
+        if (kept.length) vscode.window.showInformationMessage(`LaneKit: ${kept.length === 1 ? `${kept[0]} has` : `${kept.length} files have`} unsaved changes, so ${kept.length === 1 ? 'it stays' : 'they stay'} where ${kept.length === 1 ? 'it is' : 'they are'}: save or undo them, then Goto again.`)
+        return { moved, kept, missing, target }
+    }
+
     const open = async (asked) => {
         const repo = service.known().repos.find((candidate) => candidate.path === asked.repo && !candidate.error)
         if (!repo) throw new Error('That repository is not one the page showed: the page asks again.')
         const lane = asked.lane ? repo.lanes.find((candidate) => candidate.name === asked.lane && candidate.exists) : null
         if (asked.lane && !lane) throw new Error(`There is no lane called ${asked.lane} in ${repo.id} now.`)
         switch (asked.what) {
+            case 'goto': return gotoCheckout(repo, lane)
             case 'lane':
                 if (!lane) throw new Error('Which lane?')
                 await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(lane.path), { forceNewWindow: true })
@@ -640,6 +686,8 @@ export const activate = async (context, vscode, { root }) => {
         const items = []
         const item = (label, detail, run) => items.push({ label, detail, run })
         item('$(list-tree) Show in LaneKit', `${inTab() ? 'its tab' : 'the side bar'}, with this lane marked`, () => reveal(lane ? at : null))
+        if (lane && here?.lane?.name !== lane.name) item('$(arrow-right) Goto', `move here: the files you have open reopen from ${lane.name}`, () => gotoCheckout(repo, lane))
+        if (!lane && here?.lane) item('$(arrow-right) Goto main', `the files you have open reopen from ${repo.id}'s main checkout`, () => gotoCheckout(repo, null))
         if (lane) {
             const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
             if (working || lane.dirty) item('$(diff) Changes', `everything ${lane.name} holds that ${repo.integrationBranch} does not`, () => open({ what: 'changes', repo: repo.path, lane: lane.name }))
@@ -755,8 +803,22 @@ export const activate = async (context, vscode, { root }) => {
         },
         'lanekit.openLane': async () => {
             await readIfNever()
-            const x = await laneFor(null, 'Open which lane?', () => true)
+            const x = await laneFor(null, 'Open which lane in a new window?', () => true)
             if (x) await open({ what: 'lane', repo: x.repo.path, lane: x.lane.name })
+        },
+        'lanekit.goto': async () => {
+            await readIfNever()
+            const file = whereNow()
+            const here = file ? service.laneAt(file) : null
+            const choices = allLanes().filter((x) => x.lane.exists && !(here?.lane && here.repo.id === x.repo.id && here.lane.name === x.lane.name))
+            const mains = service.known().repos.filter((repo) => !repo.error && here?.repo?.id === repo.id && here?.lane)
+            const items = [
+                ...mains.map((repo) => ({ label: repo.integrationBranch, description: `${repo.id}'s main checkout`, detail: 'Goto main', go: () => gotoCheckout(repo, null) })),
+                ...choices.map((x) => ({ label: x.lane.name, description: x.repo.id, detail: wordOf(x.lane), go: () => gotoCheckout(x.repo, x.lane) }))
+            ]
+            if (!items.length) { vscode.window.showInformationMessage('LaneKit: no other lane to go to.'); return }
+            const picked = await vscode.window.showQuickPick(items, { title: 'Go to which lane? The files you have open reopen from it', matchOnDescription: true })
+            if (picked) await picked.go()
         }
     }
     for (const [id, run] of Object.entries(commands)) {

@@ -420,6 +420,41 @@ test('the page is answered a commit\'s details, and a cancel of a press that is 
     assert.equal(cancelled.value, false)
 })
 
+test('Goto moves the files you have open to a lane, leaves one with unsaved changes, and opens no window', async () => {
+    const { vscode } = editor
+    class TabInputText { constructor (uri) { this.uri = uri } }
+    vscode.TabInputText = TabInputText
+    fs.writeFileSync(path.join(repo, 'main-only.txt'), 'only on main\n')
+    const tabs = [
+        { input: new TabInputText(vscode.Uri.file(path.join(repo, 'app.txt'))), isDirty: false },
+        { input: new TabInputText(vscode.Uri.file(path.join(repo, '.gitignore'))), isDirty: true },
+        { input: new TabInputText(vscode.Uri.file(path.join(repo, 'main-only.txt'))), isDirty: false }
+    ]
+    const shown = []
+    const closed = []
+    const status = []
+    vscode.window.tabGroups = { all: [{ tabs, viewColumn: 1, isActive: true }], close: async (tab) => { closed.push(tab) } }
+    vscode.window.visibleTextEditors = []
+    vscode.workspace.openTextDocument = async (uri) => ({ uri })
+    vscode.window.showTextDocument = async (doc, options) => { shown.push([doc.uri.fsPath, options]) }
+    vscode.workspace.getWorkspaceFolder = (uri) => ({ uri })
+    vscode.window.setStatusBarMessage = (text) => { status.push(text) }
+    editor.seen.executed.length = 0
+    editor.seen.said.length = 0
+    const reply = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(reply.ok, true, reply.error)
+    assert.deepEqual(reply.value.moved, ['app.txt'])
+    assert.deepEqual(reply.value.kept, ['.gitignore'], 'unsaved changes stay where they are')
+    assert.deepEqual(reply.value.missing, ['main-only.txt'], 'a file the lane lacks is left open')
+    assert.deepEqual(shown.map(([file]) => file), [path.join(working, 'app.txt')])
+    assert.deepEqual(closed, [tabs[0]], 'the old tab closes, the others stay')
+    assert.ok(editor.seen.executed.some(([command, uri]) => command === 'revealInExplorer' && uri.path === working), 'the Explorer shows the lane')
+    assert.ok(!editor.seen.executed.some(([command]) => command === 'vscode.openFolder'), 'no window is opened')
+    assert.match(status.join(' '), /you are in working now/)
+    assert.ok(editor.seen.said.some((line) => /unsaved changes/.test(line)))
+    fs.rmSync(path.join(repo, 'main-only.txt'))
+})
+
 test('a file a failure names opens at its line, and only inside the lane', async () => {
     editor.seen.executed.length = 0
     const opened = await editor.ask('open', { what: 'file-at', repo, lane: 'working', path: 'feature.txt', line: 3, column: 2 })

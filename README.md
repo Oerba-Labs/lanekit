@@ -204,9 +204,13 @@ The page in the picture above, for every repository in a folder:
   lines, kept with the run, so it is still there tomorrow.
 - **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
-  difference in the editor), and what can be done with it: **View changes**, **New lane here**,
-  **Copy hash**, and on a lane's newest commit **Edit message** and **Uncommit**. In the side bar
-  the details open under the row instead. A double click opens a commit's changes straight away.
+  difference in the editor), and what can be done with it: **Goto**, **View changes**, **New lane
+  here**, **Copy hash**, and on a lane's newest commit **Edit message** and **Uncommit**. In the
+  side bar the details open under the row instead. A double click opens a commit's changes.
+- **A commit's commands sit beside it**, after its words and its age, as ISL sets them, when the
+  pointer is on it: **Goto** and **Uncommit** on a lane's newest, and a new lane from it and its
+  hash to the clipboard as icons. Words longer than a line's worth are clipped; the whole of them
+  is in the tooltip and the details. Each command carries an icon of its own.
 - **The command bar along the bottom** says what is running, with its step and a clock, how the
   last command went (✓ or ✗, as you would type it), and what waits its turn: a press made while
   its repository is busy joins a line, is checked again when its turn comes, and can be cancelled
@@ -241,7 +245,7 @@ The page in the picture above, for every repository in a folder:
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
-  rebases, `p` pushes, `c` commits, `u` uncommits, `f` fetches, `n` names a new lane from the lane's
+  rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it, `f` fetches, `n` names a new lane from the lane's
   newest commit (or main's), `Esc` closes the details, `?` lists them; in the message form,
   `⌘ Enter` commits.
 
@@ -267,12 +271,16 @@ in the picture. There its clicks drive the editor:
 - the lane the file in front of you is in says **You are here**;
 - in the side bar, where there is no room for a toolbar, the pointer on a lane shows the next
   thing to do and a **⋯** that opens the rest;
-- **Open** opens a lane in a window of its own, and **Terminal** a terminal in it;
+- **Goto** moves you to a lane, as Interactive Smartlog's Goto moves your working copy: each file you
+  have open from another checkout reopens from that lane, where it was, and the Explorer shows its
+  folder; a file with unsaved changes stays where it is, and nothing on disk changes. It is on the
+  lane's toolbar, on its newest commit (and main's) under the pointer, in the details, and `o`.
+  **Terminal** opens a terminal in it;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
-  land"); a click opens that lane's menu: Changes, Terminal, Gate, Land, Rebase, Push, **New lane
-  from here** (on top of this one), or a window of its own;
+  land"); a click opens that lane's menu: Goto, Changes, Terminal, Gate, Land, Rebase, Push, **New
+  lane from here** (on top of this one), or the lane in a new window of its own;
 - the palette's **LaneKit: …** commands act on the lane in front of you, with the page's own
   checks, and a press that ends while LaneKit is out of sight says how it ended;
 - `lanekit.opensIn`, `tab` by default, says where the icon, the status bar's lane menu and a
@@ -289,7 +297,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.7.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.8.0.vsix
 ```
 
 <br clear="right">

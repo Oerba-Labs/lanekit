@@ -3,7 +3,7 @@
   "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: open a commit's or a lane's changes, gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -93,8 +93,14 @@
         "category": "LaneKit"
       },
       {
+        "command": "lanekit.goto",
+        "title": "Go to a Lane\u2026",
+        "category": "LaneKit",
+        "icon": "$(arrow-right)"
+      },
+      {
         "command": "lanekit.openLane",
-        "title": "Open a Lane\u2026",
+        "title": "Open a Lane in a New Window\u2026",
         "category": "LaneKit"
       },
       {

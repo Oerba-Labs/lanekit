@@ -190,7 +190,10 @@ a.btn { display: inline-block; text-decoration: none; }
   content: ""; position: absolute; left: calc(var(--spine) - 5px); top: 11px;
   width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
 }
-.subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A commit's words, then its age, then (on hover) what can be done with it, side by side as ISL sets them: the words
+   do not stretch across the row, and words longer than a line's worth are clipped, whole in the title and the details. */
+.subject { flex: 0 1 auto; max-width: 56ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-surface="sidebar"] .subject { max-width: none; }
 .when { color: var(--muted); font-size: var(--s12); flex: none; font-variant-numeric: tabular-nums; }
 .older { padding: 8px 0 4px calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12); }
 
@@ -340,11 +343,13 @@ html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .
   html[data-surface="sidebar"] .lane .corner { visibility: visible; opacity: 1; }
   .row-actions { display: inline-flex !important; }
 }
-/* A commit's own actions, New lane here, in place of its time while the pointer is on it. */
-.row-actions { display: none; flex: none; gap: 6px; }
+/* A commit's own actions, after its age while the pointer or the keyboard is on it. */
+.row-actions { display: none; flex: none; gap: 4px; align-items: center; align-self: center; }
 .commit:hover .row-actions, .commit:focus-within .row-actions, .stack-commit:hover .row-actions, .stack-commit:focus-within .row-actions { display: inline-flex; }
-.commit:hover .when, .commit:focus-within .when, .stack-commit:hover .when, .stack-commit:focus-within .when { display: none; }
 .row-actions .btn { padding: 1px 8px; font-size: var(--s12); }
+.row-actions .btn.icon-only { padding: 2px 4px; }
+html[data-surface="sidebar"] .row-actions .btn.solid .label { display: none; }
+html[data-surface="sidebar"] .row-actions .btn.solid { padding: 2px 4px; }
 /* A new lane named in the row of the commit it starts from. */
 .name-lane { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
 .name-lane input, .commit-form input {
@@ -362,10 +367,9 @@ html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .
 .conflicts-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .changes { margin: 6px 0 2px; font-size: var(--s13); }
 .changes-actions { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 2px 0; }
-.btn.link.verb { display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 0; color: var(--ink); }
-.btn.link.verb .glyph { width: 1em; text-align: center; color: var(--muted); }
-.btn.link.verb:hover:not(:disabled) { color: var(--accent); }
-.btn.link.verb:hover:not(:disabled) .glyph { color: var(--accent); }
+.btn.link.verb { display: inline-flex; gap: 6px; align-items: center; padding: 2px 0; color: var(--ink); }
+.btn.link.verb .icon { color: var(--muted); }
+.btn.link.verb:hover:not(:disabled), .btn.link.verb:hover:not(:disabled) .icon { color: var(--accent); }
 .commit-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .change-list { list-style: none; margin: 2px 0; padding: 0; }
 .change-list li { display: flex; gap: 8px; align-items: baseline; padding: 2px 4px; margin-left: -4px; min-width: 0; }
@@ -578,7 +582,7 @@ body:not(.in-editor) .row-actions .btn.solid { background: #5f6b7a; color: #fff;
 .conflict-list li { display: flex; align-items: baseline; gap: 12px; padding: 2px 0; }
 .conflict-path { font-family: var(--mono); font-size: var(--s12); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn.link.verb.resolve { font-size: var(--s12); color: var(--done); }
-.btn.link.verb.resolve .glyph { color: var(--done); }
+.btn.link.verb.resolve .icon { color: var(--done); }
 
 /* A press that throws something away asks in red. */
 .btn.danger { background: var(--risk); border-color: var(--risk); color: #fff; }
@@ -611,3 +615,11 @@ body.has-cmdbar .pane { padding-bottom: 180px; }
 html[data-surface="sidebar"] .cmdbar { padding: 4px 12px; gap: 6px; }
 html[data-surface="sidebar"] .cmdbar .cmd-step, html[data-surface="sidebar"] .cmdbar .queued { display: none; }
 @media (max-width: 640px) { .cmdbar { padding-left: 16px; padding-right: 16px; } }
+
+/* A button with an icon: the icon in the button's own ink, beside its word, or alone with the word as its title. */
+.btn.with-icon { display: inline-flex; align-items: center; gap: 5px; }
+.btn.with-icon .icon { flex: none; }
+.btn.icon-only { padding-left: 5px; padding-right: 5px; }
+.btn.link.with-icon { gap: 5px; }
+.badges .icon { width: 12px; height: 12px; }
+.cmdbar .btn.with-icon .icon { width: 13px; height: 13px; }

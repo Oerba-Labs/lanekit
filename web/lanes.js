@@ -432,25 +432,33 @@ const pullOf = (lane) => {
 const serverOf = (lane) => (lane.port && lane.serving ? state('done', `Serving on ${lane.port}`, 'small') : null)
 const portOf = (lane) => (lane.port ? `${lane.name}: port ${lane.port}${lane.serving ? ', serving' : ', nothing serving on it'}` : `${lane.name}: no port`)
 
+/**
+ * Goto, ISL's way, in the editor: where you are moves to this lane (or, with no lane, to the main checkout). The files
+ * open from elsewhere reopen from it and the Explorer shows its folder; no window opens. Not offered where you are.
+ */
+const gotoButton = (repo, lane, extra = {}) => host.inEditor && !isHere(repo, lane) && (!lane || lane.exists)
+    ? iconButton('goto', 'Goto', {
+        ...extra,
+        title: lane ? `Move here: the files you have open reopen from ${lane.name}, and the Explorer shows its folder` : `Back to ${repo.id}'s main checkout: the files you have open reopen from it`,
+        onclick: (event) => { event.stopPropagation(); openIn('goto', { repo: repo.path, lane: lane?.name }) }
+    })
+    : null
+
 const openLinks = (repo, lane) => {
     if (host.inEditor) {
         // In the editor: its changes as diffs, a terminal in it, and the lane as a window of its own.
         if (!lane.exists) return []
         const holds = lane.kind === 'working' || lane.dirty > 0
         return [
-            holds ? el('button', {
-                type: 'button', class: 'btn', text: 'Changes',
+            holds ? iconButton('diff', 'Changes', {
                 title: `Everything ${lane.name} holds that ${repo.integrationBranch} does not, committed or not, side by side`,
                 onclick: () => openIn('changes', { repo: repo.path, lane: lane.name })
             }) : null,
-            el('button', {
-                type: 'button', class: 'btn', text: 'Terminal', title: `A terminal in ${lane.path}`,
+            iconButton('terminal', 'Terminal', {
+                title: `A terminal in ${lane.path}`,
                 onclick: () => openIn('terminal', { repo: repo.path, lane: lane.name })
             }),
-            el('button', {
-                type: 'button', class: 'btn', text: 'Open', title: `Open ${lane.path} in a new window`,
-                onclick: () => openIn('lane', { repo: repo.path, lane: lane.name })
-            })
+            gotoButton(repo, lane)
         ]
     }
     const links = []
@@ -555,21 +563,23 @@ const startNaming = (repo, commit, from = null) => { naming = { repo: repo.id, s
 const rowActions = (repo, commit, from = null, lane = null) => {
     if (commit.pending) return null
     const newest = Boolean(lane && lane.stack?.[0]?.sha === commit.sha && lane.ahead > 0 && !lane.operation && !lane.pending)
+    const tip = !lane && repo.spine?.[0]?.sha === commit.sha
     return el('span', { class: 'row-actions' },
-        newest ? el('button', {
-            type: 'button', class: 'btn solid', text: 'Uncommit', disabled: busyIn(repo.id),
+        newest || tip ? gotoButton(repo, lane, { class: 'btn solid' }) : null,
+        newest ? iconButton('uncommit', 'Uncommit', {
+            class: 'btn solid', disabled: busyIn(repo.id),
             title: 'Take this commit back out, its changes left uncommitted',
             onclick: (event) => { event.stopPropagation(); uncommitLane(repo, lane) }
         }) : null,
-        el('button', {
-            type: 'button', class: 'btn', text: 'New lane here', disabled: busyIn(repo.id),
-            title: from ? `A lane on top of ${from}, from this commit` : 'A lane of its own, starting from this commit',
+        iconButton('branch', 'New lane here', {
+            class: 'btn quiet', disabled: busyIn(repo.id),
+            title: from ? `New lane here: on top of ${from}, from this commit` : 'New lane here: a lane of its own, starting from this commit',
             onclick: (event) => { event.stopPropagation(); startNaming(repo, commit, from) }
-        }),
-        el('button', {
-            type: 'button', class: 'btn quiet copy', text: 'Copy', title: `Copy ${commit.short}'s hash`,
+        }, true),
+        iconButton('copy', `Copy ${commit.short}'s hash`, {
+            class: 'btn quiet',
             onclick: (event) => { event.stopPropagation(); copyHash(commit.sha) }
-        }))
+        }, true))
 }
 
 /**
@@ -657,8 +667,8 @@ const pathsFor = (key, lane) => {
     return chosen.length === (lane.changes ?? []).length ? undefined : chosen
 }
 /** A word with a mark, ISL's way of offering a thing to do with the files: not a button's box. */
-const verbLink = (glyph, label, title, onclick, disabled = false) => el('button', { type: 'button', class: 'btn link verb', disabled, title, onclick },
-    el('span', { class: 'glyph', 'aria-hidden': 'true', text: glyph }), label)
+const verbLink = (name, label, title, onclick, disabled = false) => el('button', { type: 'button', class: 'btn link verb', disabled, title, onclick },
+    icon(name), el('span', { text: label }))
 
 /**
  * What is uncommitted in a lane, as ISL draws its working copy: a node on the lane's line, a row of things to do
@@ -677,10 +687,10 @@ const changesOf = (repo, lane, key) => {
     const count = some ? ` ${chosen.length} of ${files.length}` : ''
     return el('div', { class: `changes${writing ? ' writing' : ''}` },
         el('div', { class: 'changes-actions tools' },
-            host.inEditor ? verbLink('⧉', 'View changes', `Everything uncommitted in ${lane.name}, side by side`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: lane.name })) : null,
-            verbLink('☑', 'Select all', 'Tick every file', () => setChosen(key, lane, files.map((change) => change.path)), chosen.length === files.length),
-            verbLink('☐', 'Deselect all', 'Untick every file', () => setChosen(key, lane, []), chosen.length === 0),
-            verbLink('⌫', 'Discard…', 'Throw away what is uncommitted in the ticked files, after a look', () => { pending.set(key, { verb: 'discard', stage: 'confirm', paths: chosen }); draw(true) }, busy || !chosen.length)),
+            host.inEditor ? verbLink('diff', 'View changes', `Everything uncommitted in ${lane.name}, side by side`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: lane.name })) : null,
+            verbLink('checkall', 'Select all', 'Tick every file', () => setChosen(key, lane, files.map((change) => change.path)), chosen.length === files.length),
+            verbLink('box', 'Deselect all', 'Untick every file', () => setChosen(key, lane, []), chosen.length === 0),
+            verbLink('trash', 'Discard…', 'Throw away what is uncommitted in the ticked files, after a look', () => { pending.set(key, { verb: 'discard', stage: 'confirm', paths: chosen }); draw(true) }, busy || !chosen.length)),
         el('ul', { class: 'change-list', 'aria-label': `${plural(lane.dirty, 'uncommitted file')} in ${lane.name}` }, shown.map((file) => {
             const status = file.status === '?' ? 'new' : file.status
             const tick = el('input', {
@@ -700,8 +710,8 @@ const changesOf = (repo, lane, key) => {
         })),
         files.length > CHANGES_SHOWN ? el('button', { type: 'button', class: 'btn link', text: all ? 'Show fewer' : `Show ${files.length - CHANGES_SHOWN} more`, onclick: () => toggle(`${key}:changes`) }) : null,
         el('div', { class: 'changes-actions' },
-            verbLink('+', `Commit${count}…`, some ? 'Commit the ticked files, with a message' : 'Commit every file above, with a message', () => select({ repo: repo.id, lane: lane.name, form: 'commit' }), busy || !chosen.length),
-            lane.ahead ? verbLink('↓', `Amend${count}…`, `Fold the ticked files into ${lane.name}'s newest commit`, () => select({ repo: repo.id, lane: lane.name, form: 'amend' }), busy || !chosen.length) : null),
+            verbLink('plus', `Commit${count}…`, some ? 'Commit the ticked files, with a message' : 'Commit every file above, with a message', () => select({ repo: repo.id, lane: lane.name, form: 'commit' }), busy || !chosen.length),
+            lane.ahead ? verbLink('amend', `Amend${count}…`, `Fold the ticked files into ${lane.name}'s newest commit`, () => select({ repo: repo.id, lane: lane.name, form: 'amend' }), busy || !chosen.length) : null),
         IN_SIDEBAR && writing ? messageForm(repo, lane) : null)
 }
 
@@ -840,7 +850,6 @@ const copyHash = async (sha) => {
     try { await host.copy(sha); notice(`Copied ${sha.slice(0, 12)}`, 'ok') } catch { notice(`The clipboard could not be reached; the hash is ${sha}`) }
 }
 const uncommitLane = (repo, lane) => press({ repo: repo.id, verb: 'uncommit', lane: lane.name })
-const smallButton = (text, onclick, extra = {}) => el('button', { type: 'button', class: 'btn', text, onclick, ...extra })
 const closeButton = () => el('button', { type: 'button', class: 'btn quiet close', text: '×', 'aria-label': 'Close the details', title: 'Close (Esc)', onclick: () => select(null) })
 const fileRow = (file, open) => {
     const status = file.status === '?' ? 'new' : file.status
@@ -869,11 +878,12 @@ const commitPane = (repo, commit, laneName) => {
             : !details ? el('p', { class: 'muted', text: 'Reading…' })
                 : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
         el('div', { class: 'details-actions' },
-            host.inEditor ? smallButton('View changes', showCommit(repo, commit), { title: 'Every file it changed, side by side' }) : null,
-            newest ? smallButton('Edit message', () => select({ repo: repo.id, lane: lane.name, form: 'reword' }), { title: 'A new title and description, nothing else' }) : null,
-            newest ? smallButton('Uncommit', () => uncommitLane(repo, lane), { title: 'Take it back out, its changes left uncommitted' }) : null,
-            smallButton('New lane here', () => { select(null); startNaming(repo, commit, lane?.name ?? null) }),
-            smallButton('Copy hash', () => copyHash(commit.sha))),
+            newest || tip ? gotoButton(repo, newest ? lane : null) : null,
+            host.inEditor ? iconButton('diff', 'View changes', { onclick: showCommit(repo, commit), title: 'Every file it changed, side by side' }) : null,
+            newest ? iconButton('pencil', 'Edit message', { onclick: () => select({ repo: repo.id, lane: lane.name, form: 'reword' }), title: 'A new title and description, nothing else' }) : null,
+            newest ? iconButton('uncommit', 'Uncommit', { onclick: () => uncommitLane(repo, lane), title: 'Take it back out, its changes left uncommitted' }) : null,
+            iconButton('branch', 'New lane here', { onclick: () => { select(null); startNaming(repo, commit, lane?.name ?? null) } }),
+            iconButton('copy', 'Copy hash', { onclick: () => copyHash(commit.sha) })),
         details && !details.error ? el('div', { class: 'section-title' }, 'Files changed', el('span', { class: 'count', text: String(files.length) })) : null,
         details && !details.error ? el('ul', { class: 'change-list' }, files.map((file) => fileRow(file, () => openIn('commit', { repo: repo.path, sha: commit.sha, path: file.path })))) : null)
 }
@@ -1039,8 +1049,8 @@ const drawCommandBar = () => {
                 `${job.verb}${job.lane ? ` ${job.lane}` : ''}`,
                 el('button', { type: 'button', class: 'btn link cancel', text: '×', 'aria-label': `Cancel ${job.verb}${job.lane ? ` ${job.lane}` : ''}`, title: 'Take it out of the line', onclick: () => cancelJob(job.id) })))) : null,
         el('span', { class: 'grow' }),
-        last ? el('button', {
-            type: 'button', class: 'btn link', text: shownJob === last.id && !$('job').hidden ? 'Hide output' : 'Output',
+        last ? iconButton('output', shownJob === last.id && !$('job').hidden ? 'Hide output' : 'Output', {
+            class: 'btn link',
             onclick: () => { if (shownJob === last.id && !$('job').hidden) $('job-close').click(); else showJob(last.id); drawCommandBar() }
         }) : null))
 }
@@ -1049,16 +1059,49 @@ const drawCommandBar = () => {
 // a pull request's badges, under its lane's newest commit
 // ---------------------------------------------------------------------------
 
-/** A small icon of our own drawing, at a fixed size: a pull request, or a comment. */
+/**
+ * The page's icons, drawn here at a fixed 16-unit size in the ink around them: lanekit carries no dependency, and a
+ * webview cannot reach the editor's own icon font. Each is a few strokes, legible at 14 pixels.
+ */
+const ICONS = {
+    pr: [['circle', { cx: 4, cy: 3.5, r: 1.8 }], ['circle', { cx: 4, cy: 12.5, r: 1.8 }], ['path', { d: 'M4 5.3v5.4' }], ['circle', { cx: 12, cy: 12.5, r: 1.8 }],
+        ['path', { d: 'M12 10.7V6.5a2 2 0 0 0-2-2H7.5' }], ['path', { d: 'M9 3 7.5 4.5 9 6' }]],
+    comment: [['path', { d: 'M2.5 3.5h11v7.5h-6.5l-3 2.5V11h-1.5z' }]],
+    goto: [['path', { d: 'M2.5 8h7.5' }], ['path', { d: 'M7 4.5 10.5 8 7 11.5' }], ['path', { d: 'M10.5 2.5h3v11h-3' }]],
+    uncommit: [['path', { d: 'M5.5 4 2.5 7l3 3' }], ['path', { d: 'M2.5 7h7a3.5 3.5 0 0 1 0 7h-2' }]],
+    branch: [['circle', { cx: 4.5, cy: 3.5, r: 1.6 }], ['circle', { cx: 4.5, cy: 12.5, r: 1.6 }], ['path', { d: 'M4.5 5.1v5.8' }],
+        ['circle', { cx: 11.5, cy: 4.5, r: 1.6 }], ['path', { d: 'M11.5 6.1c0 3.4-7 2.4-7 4.8' }]],
+    copy: [['rect', { x: 5.5, y: 5.5, width: 8, height: 8, rx: 1.5 }], ['path', { d: 'M3 10.5v-7a1 1 0 0 1 1-1h7' }]],
+    diff: [['path', { d: 'M4 2.5h5.5l2.5 2.5v8.5H4z' }], ['path', { d: 'M6.5 7.5h3M8 6v3M6.5 11h3' }]],
+    checkall: [['rect', { x: 2.5, y: 2.5, width: 11, height: 11, rx: 2 }], ['path', { d: 'M5 8.2 7 10.2l4-4.4' }]],
+    box: [['rect', { x: 2.5, y: 2.5, width: 11, height: 11, rx: 2 }]],
+    trash: [['path', { d: 'M3 4.5h10' }], ['path', { d: 'M6.5 4.5V3h3v1.5' }], ['path', { d: 'M4.5 4.5l.6 9h5.8l.6-9' }]],
+    plus: [['path', { d: 'M8 3.5v9M3.5 8h9' }]],
+    amend: [['path', { d: 'M8 2.5v8' }], ['path', { d: 'M5 7.5l3 3 3-3' }], ['path', { d: 'M4 13.5h8' }]],
+    gate: [['path', { d: 'M8 2l5 2v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z' }], ['path', { d: 'M5.8 8.2 7.4 9.8l3-3.2' }]],
+    land: [['circle', { cx: 4, cy: 3.5, r: 1.6 }], ['circle', { cx: 4, cy: 12.5, r: 1.6 }], ['path', { d: 'M4 5.1v5.8' }],
+        ['circle', { cx: 12, cy: 8.5, r: 1.6 }], ['path', { d: 'M4 5.5c0 2.2 2.4 3 6.4 3' }]],
+    push: [['path', { d: 'M8 13V3.5' }], ['path', { d: 'M4.5 7 8 3.5 11.5 7' }]],
+    pull: [['path', { d: 'M8 3v9.5' }], ['path', { d: 'M4.5 9 8 12.5 11.5 9' }]],
+    fetch: [['path', { d: 'M13 8a5 5 0 1 1-1.5-3.6' }], ['path', { d: 'M13 2.5v3h-3' }]],
+    rebase: [['path', { d: 'M3 6.5a5 5 0 0 1 9-2.5' }], ['path', { d: 'M12.5 1.5V4.5H9.5' }], ['path', { d: 'M13 9.5a5 5 0 0 1-9 2.5' }], ['path', { d: 'M3.5 14.5v-3h3' }]],
+    terminal: [['rect', { x: 1.5, y: 2.5, width: 13, height: 11, rx: 1.5 }], ['path', { d: 'M4.5 6l2 2-2 2' }], ['path', { d: 'M8.5 10.5h3' }]],
+    pencil: [['path', { d: 'M10.5 2.5l3 3L6 13H3v-3z' }]],
+    check: [['path', { d: 'M3 8.5l3 3 7-7' }]],
+    play: [['path', { d: 'M5 3.5l7 4.5-7 4.5z' }]],
+    cross: [['path', { d: 'M4.5 4.5l7 7M11.5 4.5l-7 7' }]],
+    output: [['rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }], ['path', { d: 'M4.5 6h7M4.5 8.5h5M4.5 11h6' }]]
+}
 const icon = (name) => {
-    const svg = svgEl('svg', { class: `icon icon-${name}`, width: 12, height: 12, viewBox: '0 0 16 16', 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
-    const parts = name === 'pr'
-        ? [['circle', { cx: 4, cy: 3.5, r: 1.8 }], ['circle', { cx: 4, cy: 12.5, r: 1.8 }], ['path', { d: 'M4 5.3v5.4' }], ['circle', { cx: 12, cy: 12.5, r: 1.8 }],
-            ['path', { d: 'M12 10.7V6.5a2 2 0 0 0-2-2H7.5' }], ['path', { d: 'M9 3 7.5 4.5 9 6' }]]
-        : [['path', { d: 'M2.5 3.5h11v7.5h-6.5l-3 2.5V11h-1.5z' }]]
-    for (const [tag, attrs] of parts) svg.append(svgEl(tag, attrs))
+    const svg = svgEl('svg', { class: `icon icon-${name}`, width: 14, height: 14, viewBox: '0 0 16 16', 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+    for (const [tag, attrs] of ICONS[name] ?? []) svg.append(svgEl(tag, attrs))
     return svg
 }
+/** A button with an icon and its word; `only` keeps the word for the tooltip and the screen reader. */
+const iconButton = (name, label, props = {}, only = false) => el('button', {
+    type: 'button', ...props, class: `${props.class ?? 'btn'} with-icon${only ? ' icon-only' : ''}`,
+    title: props.title ?? (only ? label : undefined), 'aria-label': only ? label : props['aria-label']
+}, icon(name), only ? null : el('span', { class: 'label', text: label }))
 const PR_WORD = { OPEN: 'Open', MERGED: 'Merged', CLOSED: 'Closed' }
 const badgesOf = (lane) => {
     const pr = lane.pull
@@ -1184,34 +1227,34 @@ const laneCard = (repo, lane, forked = true) => {
     const conflictButtons = []
     if (lane.operation === 'rebase') {
         if (host.inEditor && lane.conflicts?.length) {
-            conflictButtons.push(el('button', {
-                type: 'button', class: 'btn primary', text: `Conflicts (${lane.conflicts.length})`,
+            conflictButtons.push(iconButton('diff', `Conflicts (${lane.conflicts.length})`, {
+                class: 'btn primary',
                 title: 'Open the conflicting files in the editor, where each conflict can be accepted one way, the other, or both',
                 onclick: () => openIn('conflicts', { repo: repo.path, lane: lane.name })
             }))
         }
-        conflictButtons.push(el('button', {
-            type: 'button', class: `btn${!host.inEditor || !lane.conflicts?.length ? ' primary' : ''}`, text: 'Continue', disabled: busy,
+        conflictButtons.push(iconButton('play', 'Continue', {
+            class: `btn${!host.inEditor || !lane.conflicts?.length ? ' primary' : ''}`, disabled: busy,
             title: 'Stage the files whose conflicts are resolved, and carry on with the rebase',
             onclick: () => press({ repo: repo.id, verb: 'rebase', lane: lane.name, continue: true })
         }))
-        conflictButtons.push(el('button', { type: 'button', class: 'btn quiet', text: 'Abort…', disabled: busy, title: 'Put the lane back as it was before the rebase', onclick: ask('abort') }))
+        conflictButtons.push(iconButton('cross', 'Abort…', { class: 'btn quiet', disabled: busy, title: 'Put the lane back as it was before the rebase', onclick: ask('abort') }))
     }
     if (working && !lane.operation) {
-        buttons.push(el('button', {
-            type: 'button', class: 'btn', text: 'Gate', disabled: busy || lane.dirty > 0 || Boolean(lane.operation),
+        buttons.push(iconButton('gate', 'Gate', {
+            disabled: busy || lane.dirty > 0 || Boolean(lane.operation),
             title: lane.dirty ? 'Commit first: a gate result names a commit, and uncommitted changes are in none' : 'Rebase onto the integration branch and run the tier this lane earns',
             onclick: () => { pending.set(key, { verb: 'gate', stage: 'confirm' }); draw(true) }
         }))
-        buttons.push(el('button', {
-            type: 'button', class: `btn${lane.queue?.verdict === 'land now' ? ' primary' : ''}`, text: 'Land…', disabled: busy,
+        buttons.push(iconButton('land', 'Land…', {
+            class: `btn${lane.queue?.verdict === 'land now' ? ' primary' : ''}`, disabled: busy,
             title: 'Check whether it can land, then ask',
             onclick: () => check(repo, lane, 'land')
         }))
     }
     if ((working || lane.kind === 'fresh') && !lane.operation && lane.behind > 0) {
-        buttons.push(el('button', {
-            type: 'button', class: 'btn', text: 'Rebase', disabled: busy || lane.dirty > 0,
+        buttons.push(iconButton('rebase', 'Rebase', {
+            disabled: busy || lane.dirty > 0,
             title: lane.dirty ? 'Commit first: a rebase replays commits, and uncommitted changes are in none' : `Replay it on ${repo.integrationBranch} as it is now: ${lane.behind} behind`,
             onclick: ask('rebase')
         }))
@@ -1220,20 +1263,21 @@ const laneCard = (repo, lane, forked = true) => {
         const up = lane.upstream
         if (!up || up.ahead > 0) {
             const rewrite = Boolean(up && up.behind > 0)
-            buttons.push(el('button', {
-                type: 'button', class: 'btn', text: rewrite ? 'Push…' : 'Push', disabled: busy,
+            buttons.push(iconButton('push', rewrite ? 'Push…' : 'Push', {
+                disabled: busy,
                 title: rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time',
                 onclick: rewrite ? ask('push-force') : () => press({ repo: repo.id, verb: 'push', lane: lane.name })
             }))
         } else if (!lane.pull && repo.github?.state === 'ok') {
-            buttons.push(el('button', {
-                type: 'button', class: 'btn', text: 'Pull request', disabled: busy,
+            buttons.push(iconButton('pr', 'Pull request', {
+                disabled: busy,
                 title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}, from its commits' own words`,
                 onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name })
             }))
         }
     }
-    buttons.push(...openLinks(repo, lane))
+    // What openLinks has nothing for (no Changes for an empty lane, no Goto where you are) is left out, not kept as a gap.
+    buttons.push(...openLinks(repo, lane).filter(Boolean))
     if (lane.pending) buttons.length = 0
 
     const files = lane.queue?.files ?? []
@@ -1348,7 +1392,7 @@ const laneCard = (repo, lane, forked = true) => {
                         type: 'button', class: 'btn link verb resolve', disabled: busy,
                         title: `Mark ${file} resolved: LaneKit refuses while a conflict marker is left in it`,
                         onclick: () => press({ repo: repo.id, verb: 'resolve', lane: lane.name, paths: [file] })
-                    }, el('span', { class: 'glyph', 'aria-hidden': 'true', text: '✓' }), 'Resolved')))))
+                    }, icon('check'), el('span', { text: 'Resolved' }))))))
             : null,
         changesOf(repo, lane, key),
         stackList,
@@ -1392,8 +1436,8 @@ const pullButton = (repo) => {
     const main = repo.main
     const up = main?.upstream
     if (!up?.behind || up.ahead || !main.onIntegration || main.dirty || main.operation) return null
-    return el('button', {
-        type: 'button', class: 'btn', text: `Pull ${up.behind}`, disabled: busyIn(repo.id),
+    return iconButton('pull', `Pull ${up.behind}`, {
+        disabled: busyIn(repo.id),
         title: `Fast-forward ${repo.integrationBranch} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed`,
         onclick: () => press({ repo: repo.id, verb: 'pull' })
     })
@@ -1407,12 +1451,12 @@ const headOf = (repo) => {
         el('span', { class: 'grow' }),
         repo.error ? null : el('div', { class: 'actions' },
             pullButton(repo),
-            host.inEditor ? el('button', {
-                type: 'button', class: 'btn', text: 'Terminal', title: `A terminal in ${repo.path}`,
+            host.inEditor ? iconButton('terminal', 'Terminal', {
+                title: `A terminal in ${repo.path}`,
                 onclick: () => openIn('terminal', { repo: repo.path })
             }) : null,
-            el('button', {
-                type: 'button', class: 'btn', text: 'Fetch', disabled: busyIn(repo.id),
+            iconButton('fetch', 'Fetch', {
+                disabled: busyIn(repo.id),
                 title: 'git fetch --prune: what is pushed, and what others pushed',
                 onclick: () => press({ repo: repo.id, verb: 'fetch' })
             }))))
@@ -1529,8 +1573,8 @@ const queueOf = (repo) => {
             return item
         })),
         el('span', { class: 'grow' }),
-        next ? el('button', {
-            type: 'button', class: 'btn primary', text: `Land ${next.name}…`, disabled: busy,
+        next ? iconButton('land', `Land ${next.name}…`, {
+            class: 'btn primary', disabled: busy,
             title: `Check that ${next.name} can land, then ask: it is first in the order and its gate names its commit`,
             onclick: () => check(repo, next, 'land')
         }) : null)]
@@ -1664,7 +1708,7 @@ const draw = (force = false) => {
 const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
-    ...(host.inEditor ? [['t', 'a terminal in it'], ['o', 'open it in a window']] : []),
+    ...(host.inEditor ? [['t', 'a terminal in it'], ['o', 'go to it: the files you have open reopen from it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
 ]
@@ -1720,7 +1764,7 @@ document.addEventListener('keydown', (event) => {
         r: () => lane.behind > 0 && confirm('rebase'),
         p: () => lane.upstream?.behind > 0 ? confirm('push-force') : press({ repo: repo.id, verb: 'push', lane: lane.name }),
         t: () => host.inEditor && openIn('terminal', { repo: repo.path, lane: lane.name }),
-        o: () => host.inEditor && openIn('lane', { repo: repo.path, lane: lane.name })
+        o: () => host.inEditor && !isHere(repo, lane) && openIn('goto', { repo: repo.path, lane: lane.name })
     }[key]
     if (act) { act(); done() }
 })
