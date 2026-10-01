@@ -435,19 +435,20 @@ const portOf = (lane) => (lane.port ? `${lane.name}: port ${lane.port}${lane.ser
 
 /**
  * Goto, ISL's way, in the editor: where you are moves to this lane (or, with no lane, to the main checkout). The files
- * open from elsewhere reopen from it and the Explorer shows its folder; no window opens. Not offered where you are.
+ * open from elsewhere reopen from it, the terminal in use follows, and the Explorer shows its folder; no window opens.
+ * Not offered where you are.
  */
 const gotoButton = (repo, lane, extra = {}) => host.inEditor && !isHere(repo, lane) && (!lane || lane.exists)
     ? iconButton('goto', 'Goto', {
         ...extra,
-        title: lane ? `Move here: the files you have open reopen from ${lane.name}, and the Explorer shows its folder` : `Back to ${repo.id}'s main checkout: the files you have open reopen from it`,
+        title: lane ? `Move here: the files you have open reopen from ${lane.name}, your terminal follows, and the Explorer shows its folder` : `Back to ${repo.id}'s main checkout: the files you have open reopen from it, and your terminal follows`,
         onclick: (event) => { event.stopPropagation(); openIn('goto', { repo: repo.path, lane: lane?.name }) }
     })
     : null
 
 const openLinks = (repo, lane) => {
     if (host.inEditor) {
-        // In the editor: its changes as diffs, a terminal in it, and the lane as a window of its own.
+        // In the editor: its changes as diffs, a terminal or an agent in it, and Goto.
         if (!lane.exists) return []
         const holds = lane.kind === 'working' || lane.dirty > 0
         return [
@@ -458,6 +459,10 @@ const openLinks = (repo, lane) => {
             iconButton('terminal', 'Terminal', {
                 title: `A terminal in ${lane.path}`,
                 onclick: () => openIn('terminal', { repo: repo.path, lane: lane.name })
+            }),
+            iconButton('agent', 'Agent', {
+                title: `Start Claude Code or OpenCode in ${lane.name}, in a terminal named for it and in its colour`,
+                onclick: () => openIn('agent', { repo: repo.path, lane: lane.name })
             }),
             gotoButton(repo, lane)
         ]
@@ -1105,6 +1110,7 @@ const ICONS = {
     fetch: [['path', { d: 'M13 8a5 5 0 1 1-1.5-3.6' }], ['path', { d: 'M13 2.5v3h-3' }]],
     rebase: [['path', { d: 'M3 6.5a5 5 0 0 1 9-2.5' }], ['path', { d: 'M12.5 1.5V4.5H9.5' }], ['path', { d: 'M13 9.5a5 5 0 0 1-9 2.5' }], ['path', { d: 'M3.5 14.5v-3h3' }]],
     terminal: [['rect', { x: 1.5, y: 2.5, width: 13, height: 11, rx: 1.5 }], ['path', { d: 'M4.5 6l2 2-2 2' }], ['path', { d: 'M8.5 10.5h3' }]],
+    agent: [['path', { d: 'M7 2.5l1.3 3.2 3.2 1.3-3.2 1.3L7 11.5 5.7 8.3 2.5 7l3.2-1.3z' }], ['path', { d: 'M12.5 10v4M10.5 12h4' }]],
     pencil: [['path', { d: 'M10.5 2.5l3 3L6 13H3v-3z' }]],
     check: [['path', { d: 'M3 8.5l3 3 7-7' }]],
     play: [['path', { d: 'M5 3.5l7 4.5-7 4.5z' }]],
@@ -1813,7 +1819,7 @@ const draw = (force = false) => {
 const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
-    ...(host.inEditor ? [['t', 'a terminal in it'], ['o', 'go to it: the files you have open reopen from it']] : []),
+    ...(host.inEditor ? [['t', 'a terminal in it'], ['a', 'start an agent in it'], ['o', 'go to it: the files and the terminal you have open move to it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
 ]
@@ -1869,6 +1875,7 @@ document.addEventListener('keydown', (event) => {
         r: () => lane.behind > 0 && confirm('rebase'),
         p: () => lane.upstream?.behind > 0 ? confirm('push-force') : press({ repo: repo.id, verb: 'push', lane: lane.name }),
         t: () => host.inEditor && openIn('terminal', { repo: repo.path, lane: lane.name }),
+        a: () => host.inEditor && lane.exists && openIn('agent', { repo: repo.path, lane: lane.name }),
         o: () => host.inEditor && !isHere(repo, lane) && openIn('goto', { repo: repo.path, lane: lane.name })
     }[key]
     if (act) { act(); done() }

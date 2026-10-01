@@ -17,7 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
 
-import { activate, pageHtml, SCHEME, wordOf } from '../vscode/host.mjs'
+import { activate, colourOf, pageHtml, SCHEME, wordOf } from '../vscode/host.mjs'
 import { build } from '../vscode/pack.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
@@ -35,6 +35,10 @@ const lane = (cwd, ...args) => sh(cwd, process.execPath, path.join(KIT, 'dev', '
 const standIn = (folders) => {
     const disposable = { dispose () {} }
     const event = () => () => disposable
+    // The terminal events, which a test fires as the editor would.
+    const listeners = new Map()
+    const heard = (name) => (listener) => { listeners.set(name, [...(listeners.get(name) ?? []), listener]); return disposable }
+    const emit = (name, payload) => { for (const listener of listeners.get(name) ?? []) listener(payload) }
     class Uri {
         constructor (parts) { Object.assign(this, { query: '', ...parts }); this.fsPath = this.path }
         static file (file) { return new Uri({ scheme: 'file', path: file }) }
@@ -43,7 +47,16 @@ const standIn = (folders) => {
     }
     const config = {}
     const answers = {}   // what the stand-in person picks and types, when a test says
-    const seen = { picks: [], commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], views: new Map() }
+    const seen = { picks: [], commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], made: [], views: new Map() }
+    /** A terminal as the editor hands one out: where it was opened, what was typed into it, how it was last shown. */
+    const terminal = (options, extra = {}) => ({
+        name: options.name, creationOptions: options, typed: [], shown: null,
+        show (preserveFocus = false) { this.shown = { preserveFocus } },
+        sendText (text) { this.typed.push(text) },
+        ...extra
+    })
+    let activeTerminal
+    const terminals = []
     let receive = null
     let sideReceive = null
     let active = null
@@ -74,9 +87,13 @@ const standIn = (folders) => {
     }
     let sideMade = false
     class Range { constructor (startLine, startCharacter, endLine, endCharacter) { Object.assign(this, { startLine, startCharacter, endLine, endCharacter }) } }
+    class ThemeColor { constructor (id) { this.id = id } }
+    class ThemeIcon { constructor (id) { this.id = id } }
     const vscode = {
         Uri,
         Range,
+        ThemeColor,
+        ThemeIcon,
         ViewColumn: { Active: -1 },
         StatusBarAlignment: { Left: 1 },
         window: {
@@ -84,7 +101,20 @@ const standIn = (folders) => {
             createWebviewPanel: () => panel,
             registerWebviewPanelSerializer: () => disposable,
             createStatusBarItem: () => bar,
-            createTerminal: (options) => { seen.terminals.push(options); return { show () {} } },
+            createTerminal: (options) => {
+                seen.terminals.push(options)
+                const made = terminal(options)
+                seen.made.push(made)
+                terminals.push(made)
+                return made
+            },
+            get activeTerminal () { return activeTerminal },
+            terminals,
+            onDidStartTerminalShellExecution: heard('start'),
+            onDidEndTerminalShellExecution: heard('end'),
+            onDidChangeTerminalShellIntegration: heard('integration'),
+            onDidChangeActiveTerminal: heard('active'),
+            onDidCloseTerminal: heard('close'),
             registerWebviewViewProvider: (id, provider, options) => { seen.views.set(id, { provider, options }); return disposable },
             showInformationMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
             showErrorMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
@@ -136,7 +166,22 @@ const standIn = (folders) => {
         throw new Error(`no reply to ${method} in the side bar`)
     }
     const sideSays = (message) => sideReceive(message)
-    return { vscode, seen, bar, panel, sideView, ask, askSide, sideSays, config, answers, setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null } }
+    /** A terminal the person opened themselves, in `cwd`; `shell` gives it shell integration, which says where it is now. */
+    const openTerminal = (cwd, { shell = null, name = 'zsh' } = {}) => {
+        const commands = []
+        const made = terminal({ name, cwd }, shell ? {
+            shellIntegration: { cwd: Uri.file(shell), executeCommand: async (...args) => { commands.push(args) } }
+        } : {})
+        made.commands = commands
+        terminals.push(made)
+        return made
+    }
+    const useTerminal = (made) => { activeTerminal = made; if (made) emit('active', made) }
+    const closeTerminal = (made) => { terminals.splice(terminals.indexOf(made), 1); if (activeTerminal === made) activeTerminal = undefined; emit('close', made) }
+    return {
+        vscode, seen, bar, panel, sideView, ask, askSide, sideSays, config, answers, emit, openTerminal, useTerminal, closeTerminal,
+        setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null }
+    }
 }
 
 let scratch
@@ -176,7 +221,9 @@ before(async () => {
 
     // The editor opened on the lane itself: its repository is still found.
     editor = standIn([working])
-    host = await activate({ subscriptions: [] }, editor.vscode, { root: KIT })
+    const remembered = new Map()
+    const workspaceState = { get: (key) => remembered.get(key), update: async (key, value) => { remembered.set(key, value) } }
+    host = await activate({ subscriptions: [], workspaceState }, editor.vscode, { root: KIT })
 })
 
 after(() => {
@@ -502,7 +549,7 @@ test('the status bar\'s menu offers what can be done with the lane in front, and
     const terminals = editor.seen.terminals.length
     await editor.seen.commands.get('lanekit.laneMenu')({ repo: 'demo', lane: 'working' })
     const labels = editor.seen.picks.at(-1).map((item) => item.label)
-    for (const want of ['Show in LaneKit', 'Terminal', 'New lane from here', 'Open in a new window']) {
+    for (const want of ['Show in LaneKit', 'Terminal', 'Start agent', 'New lane from here', 'Open in a new window']) {
         assert.ok(labels.some((label) => label.includes(want)), `${want} in ${labels.join(', ')}`)
     }
     assert.equal(editor.seen.terminals.length, terminals + 1)
@@ -542,4 +589,161 @@ test('one uncommitted file opens as its own diff', async () => {
     assert.equal(reply.ok, true, reply.error)
     assert.equal(editor.seen.executed.at(-1)[0], 'vscode.diff')
     fs.rmSync(path.join(working, 'solo.txt'))
+})
+
+/** No terminal open, as at the start of a test that counts them. */
+const closeAllTerminals = () => { for (const made of [...editor.vscode.window.terminals]) editor.closeTerminal(made) }
+
+test('Goto sends a shell waiting at its prompt to the same folder in the lane, or to the lane\'s top where it has none', async () => {
+    closeAllTerminals()
+    fs.mkdirSync(path.join(repo, 'web'), { recursive: true })
+    fs.mkdirSync(path.join(working, 'web'), { recursive: true })
+    const shell = editor.openTerminal(repo, { shell: path.join(repo, 'web') })
+    editor.useTerminal(shell)
+    editor.emit('integration', { terminal: shell, shellIntegration: shell.shellIntegration })
+    const reply = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(reply.ok, true, reply.error)
+    assert.equal(reply.value.terminal, 'moved')
+    assert.deepEqual(shell.commands, [['cd', [path.join(working, 'web')]]], 'the same folder, in the lane')
+    assert.equal(editor.seen.made.length, editor.seen.terminals.length)
+    // A folder the lane does not have: its top.
+    shell.commands.length = 0
+    fs.mkdirSync(path.join(repo, 'only-main'), { recursive: true })
+    shell.shellIntegration.cwd = editor.vscode.Uri.file(path.join(repo, 'only-main'))
+    await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.deepEqual(shell.commands, [['cd', [working]]])
+    // Already in the lane: nothing typed.
+    shell.commands.length = 0
+    shell.shellIntegration.cwd = editor.vscode.Uri.file(working)
+    const there = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(there.value.terminal, 'here')
+    assert.deepEqual(shell.commands, [])
+    // And back to main, from the lane.
+    const back = await editor.ask('open', { what: 'goto', repo })
+    assert.equal(back.value.terminal, 'moved')
+    assert.deepEqual(shell.commands, [['cd', [repo]]])
+    fs.rmSync(path.join(repo, 'web'), { recursive: true })
+    fs.rmSync(path.join(repo, 'only-main'), { recursive: true })
+    fs.rmSync(path.join(working, 'web'), { recursive: true })
+    closeAllTerminals()
+})
+
+test('Goto types nothing into a terminal running something, or one it cannot read, and brings forward the lane\'s instead', async () => {
+    closeAllTerminals()
+    const busy = editor.openTerminal(repo, { shell: repo })
+    editor.useTerminal(busy)
+    editor.emit('integration', { terminal: busy, shellIntegration: busy.shellIntegration })
+    editor.emit('start', { terminal: busy })   // claude, say, started in it
+    const made = editor.seen.terminals.length
+    const opened = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(opened.value.terminal, 'opened', 'no terminal in the lane yet: one opens there')
+    assert.deepEqual(busy.commands, [], 'nothing typed into the busy terminal')
+    assert.equal(editor.seen.terminals.length, made + 1)
+    const lanes = editor.seen.made.at(-1)
+    assert.equal(lanes.creationOptions.cwd, working)
+    assert.equal(lanes.name, 'working')
+    assert.equal(lanes.creationOptions.color.id, colourOf('working'), 'in the lane\'s colour')
+    assert.equal(lanes.creationOptions.iconPath.id, 'git-branch')
+    assert.deepEqual(lanes.shown, { preserveFocus: true }, 'shown without taking the focus')
+    // Once one is there, it comes forward rather than another.
+    editor.useTerminal(busy)
+    const shown = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(shown.value.terminal, 'shown')
+    assert.equal(editor.seen.terminals.length, made + 1)
+    // The one used there last, of two.
+    const second = editor.openTerminal(working)
+    editor.useTerminal(second)
+    editor.useTerminal(busy)
+    lanes.shown = null
+    await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.deepEqual(second.shown, { preserveFocus: true })
+    assert.equal(lanes.shown, null)
+    // Its command ended: at its prompt again, so it is moved.
+    editor.emit('end', { terminal: busy })
+    const moved = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(moved.value.terminal, 'moved')
+    // One with no shell integration, whose state the editor cannot tell, is never typed into.
+    const blind = editor.openTerminal(repo)
+    editor.useTerminal(blind)
+    const unread = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(unread.value.terminal, 'shown')
+    // No terminal at all: none opens.
+    closeAllTerminals()
+    const before = editor.seen.terminals.length
+    const none = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(none.value.terminal, null)
+    assert.equal(editor.seen.terminals.length, before)
+})
+
+test('a terminal that was running something before LaneKit started is not taken for one at its prompt', async () => {
+    closeAllTerminals()
+    // Shell integration says where it is, but LaneKit has seen neither its prompt nor a command end.
+    const old = editor.openTerminal(repo, { shell: repo })
+    editor.useTerminal(old)
+    const reply = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(reply.value.terminal, 'opened')
+    assert.deepEqual(old.commands, [])
+    closeAllTerminals()
+})
+
+test('Terminal brings back the lane\'s own while it waits at its prompt, and opens another while it is busy', async () => {
+    closeAllTerminals()
+    const before = editor.seen.terminals.length
+    await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
+    const own = editor.seen.made.at(-1)
+    own.shellIntegration = { cwd: editor.vscode.Uri.file(working), executeCommand: async () => {} }
+    editor.emit('integration', { terminal: own, shellIntegration: own.shellIntegration })
+    own.shown = null
+    await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
+    assert.equal(editor.seen.terminals.length, before + 1, 'the same one again')
+    assert.deepEqual(own.shown, { preserveFocus: false })
+    editor.emit('start', { terminal: own })
+    await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
+    assert.equal(editor.seen.terminals.length, before + 2, 'a second while the first is busy')
+    closeAllTerminals()
+})
+
+test('Start agent opens a terminal named for the lane and the agent, in the lane\'s colour, and types the agent\'s command', async () => {
+    closeAllTerminals()
+    editor.answers.pick = 'Claude Code'
+    const reply = await editor.ask('open', { what: 'agent', repo, lane: 'working' })
+    assert.equal(reply.ok, true, reply.error)
+    const claude = editor.seen.made.at(-1)
+    assert.equal(claude.name, 'working · Claude')
+    assert.equal(claude.creationOptions.cwd, working)
+    assert.equal(claude.creationOptions.color.id, colourOf('working'))
+    assert.equal(claude.creationOptions.iconPath.id, 'sparkle')
+    assert.deepEqual(claude.typed, ['claude -n working'], 'typed into its shell, the session named for the lane')
+    assert.deepEqual(claude.shown, { preserveFocus: false }, 'in front, with the focus, to be typed to')
+    const offered = editor.seen.picks.at(-1)
+    assert.deepEqual(offered.map((item) => item.label).sort(), ['Claude Code', 'OpenCode'])
+    // A second Claude in the same lane is numbered.
+    await editor.ask('open', { what: 'agent', repo, lane: 'working' })
+    assert.equal(editor.seen.made.at(-1).name, 'working · Claude 2')
+    // OpenCode, from the palette; and the agent picked last is offered first after.
+    editor.answers.pick = 'OpenCode'
+    await editor.seen.commands.get('lanekit.startAgent')({ repo: 'demo', lane: 'working' })
+    const opencode = editor.seen.made.at(-1)
+    assert.equal(opencode.name, 'working · OpenCode')
+    assert.deepEqual(opencode.typed, ['opencode'])
+    editor.answers.pick = undefined
+    await editor.ask('open', { what: 'agent', repo, lane: 'working' })
+    assert.equal(editor.seen.picks.at(-1)[0].label, 'OpenCode')
+    // A closed agent's name is free again.
+    editor.closeTerminal(claude)
+    editor.answers.pick = 'Claude Code'
+    await editor.ask('open', { what: 'agent', repo, lane: 'working' })
+    assert.equal(editor.seen.made.at(-1).name, 'working · Claude')
+    editor.answers.pick = undefined
+    // An agent starts in a lane, not in the main checkout.
+    const main = await editor.ask('open', { what: 'agent', repo })
+    assert.equal(main.ok, false)
+    assert.match(main.error, /in a lane/)
+    closeAllTerminals()
+})
+
+test('every lane keeps one colour, from the terminal palette', () => {
+    assert.equal(colourOf('midi-export'), colourOf('midi-export'))
+    assert.match(colourOf('dark-mode'), /^terminal\.ansi[A-Z][a-z]+$/)
+    assert.ok(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(colourOf)).size > 1, 'lanes do not all share one')
 })

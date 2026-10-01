@@ -262,7 +262,8 @@ The page in the picture above, for every repository in a folder:
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
-  rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it, `f` fetches, `n` names a new lane from the lane's
+  rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it, `t` opens a terminal in it and `a` an agent (in
+  the editor), `f` fetches, `n` names a new lane from the lane's
   newest commit (or main's), `Esc` closes the details, `?` lists them; in the message form,
   `⌘ Enter` commits.
 
@@ -290,13 +291,19 @@ in the picture. There its clicks drive the editor:
   thing to do and a **⋯** that opens the rest;
 - **Goto** moves you to a lane, as Interactive Smartlog's Goto moves your working copy: each file you
   have open from another checkout reopens from that lane, where it was, and the Explorer shows its
-  folder; a file with unsaved changes stays where it is, and nothing on disk changes. It is on the
-  lane's toolbar, on its newest commit (and main's) under the pointer, in the details, and `o`.
-  **Terminal** opens a terminal in it;
+  folder; a file with unsaved changes stays where it is, and nothing on disk changes. The terminal
+  you were using follows: a shell waiting at its prompt in another checkout is sent `cd` to the
+  same folder in the lane; one running something (a server, an agent) is never typed into, and the
+  terminal you last used in the lane comes forward instead, or one opens there. It is on the
+  lane's toolbar, on its newest commit (and main's) under the pointer, in the details, and `o`;
+- **Terminal** opens a terminal in a lane, named for it and in a colour of its own that every
+  terminal of that lane shares, or brings back the one it opened before while it waits at its
+  prompt. **Agent** starts Claude Code or OpenCode in the lane, in a terminal named for both
+  (`midi-export · Claude`), so the terminal list says which agent works where;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
-  land"); a click opens that lane's menu: Goto, Changes, Terminal, Gate, Land, Rebase, Push, **New
+  land"); a click opens that lane's menu: Goto, Changes, Terminal, Start agent, Gate, Land, Rebase, Push, **New
   lane from here** (on top of this one), or the lane in a new window of its own;
 - the palette's **LaneKit: …** commands act on the lane in front of you, with the page's own
   checks, and a press that ends while LaneKit is out of sight says how it ended;
@@ -314,7 +321,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.9.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.10.0.vsix
 ```
 
 <br clear="right">
