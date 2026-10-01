@@ -279,7 +279,7 @@ in the picture. There its clicks drive the editor:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanekit-sidebar-dark.png">
-  <img alt="LaneKit in the editor's side bar: the landing order on one line, then dark-mode marked You are here, its line in blue, with its uncommitted files ticked; midi-export ready to land, with its pull request's badges; both curving into main, whose newest commit is under the pointer, offering New lane here and Copy. The command bar along the bottom." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
+  <img alt="LaneKit in the editor's side bar: the landing order in groups (Ready: midi-export; Commit first: dark-mode), then dark-mode marked You are here, its line in blue, with its uncommitted files ticked; midi-export ready to land, with its pull request's badges; both curving into main, whose newest commit is under the pointer, offering New lane here and Copy. The command bar along the bottom." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
 </picture>
 
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
