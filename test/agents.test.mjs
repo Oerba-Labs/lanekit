@@ -323,3 +323,20 @@ test('every repository\'s agents are attributed to the lane whose folder holds t
     assert.deepEqual(found.sort(), [['in-lane', 'midi-export'], ['in-main', null]])
     for (const session of ['in-main', 'in-lane']) reportClaude(JSON.stringify({ ...event('SessionEnd'), session_id: session }), { chain: chainTo(RUNNING) })
 })
+
+test('agent-reports installs for the person running it, and says what it did in words or in JSON', () => {
+    const home = path.join(scratch, 'home-cli')
+    const run = (...args) => spawnSync(process.execPath, [path.join(KIT, 'bin', 'agent-reports.mjs'), ...args], {
+        env: { ...env, HOME: home, CLAUDE_CONFIG_DIR: '', XDG_CONFIG_HOME: '', NO_COLOR: '1' }, encoding: 'utf8'
+    })
+    const checked = run('--check', '--json')
+    assert.equal(checked.status, 0, checked.stderr)
+    assert.equal(JSON.parse(checked.stdout).wrote.length, 2)
+    assert.ok(!fs.existsSync(home), '--check writes nothing')
+    const words = run()
+    assert.equal(words.status, 0, words.stderr)
+    assert.match(words.stdout, /wrote\s+.*\.claude\/settings\.json \(LaneKit's hooks\)/)
+    assert.ok(fs.existsSync(path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')))
+    const again = JSON.parse(run('--json').stdout)
+    assert.deepEqual([again.wrote.length, again.kept.length, again.warnings.length], [0, 2, 0], 'settled: nothing to say')
+})

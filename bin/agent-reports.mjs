@@ -6,11 +6,14 @@
  *
  *     node <lanekit>/bin/agent-reports.mjs            adds them, and says where
  *     node <lanekit>/bin/agent-reports.mjs --check    says what it would add, adds nothing
+ *     node <lanekit>/bin/agent-reports.mjs --json     says it as { wrote, kept, warnings }, for a
+ *                                                     workspace's setup to tell its person
  *
  * WHY ONCE A MACHINE. The hooks and the plugin go where Claude Code and OpenCode look for every project
  * (~/.claude/settings.json, ~/.config/opencode/plugins/), so one install covers every repository with
  * lanes here and nothing is committed to any of them. The editor's extension asks to do the same the
- * first time it finds lanes on a machine; this is for a machine without it, or for saying yes later.
+ * first time it finds lanes on a machine; this is for a machine without it, for saying yes later, and
+ * for a workspace's own setup, which runs it at every start so its person is never asked.
  *
  * WHAT IT WILL NOT DO. Replace a hook or a plugin that is not LaneKit's, or touch settings that are not
  * valid JSON: it says so and leaves them. LaneKit's own are brought up to date where they name another
@@ -28,6 +31,10 @@ const [GREEN, YELLOW, DIM, OFF] = TINT ? ['\x1b[32m', '\x1b[33m', '\x1b[2m', '\x
 
 const check = process.argv.includes('--check')
 const said = installForUser(KIT, { check })
+if (process.argv.includes('--json')) {
+    console.log(JSON.stringify(said))
+    process.exit(0)
+}
 console.log('')
 for (const file of said.wrote) console.log(`  ${GREEN}${check ? 'would write' : 'wrote'}${OFF}  ${file}`)
 for (const file of said.kept) console.log(`  ${DIM}kept   ${file} (LaneKit's already, up to date)${OFF}`)
