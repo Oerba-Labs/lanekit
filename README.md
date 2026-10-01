@@ -191,6 +191,11 @@ node ~/.lanekit/dev/lane.mjs web --scan ~/code
 
 The page in the picture above, for every repository in a folder:
 
+- **More than one repository** brings a switcher along the top: *All*, then each repository with the
+  number of lanes in it, and a dot on one not shown while something runs there. Choosing one shows it
+  alone and gives the page its name for a title (*api · LaneKit*). The address keeps the choice
+  (`?repo=api`), so a browser tab can stay open on each; `[` and `]` step through them, *All* among
+  them. A Cmd- or Ctrl-click on one, or the ↗ beside its **Fetch**, opens it in a tab of its own.
 - **Each repository** opens with its **landing order**, grouped by what each lane needs: *Ready*,
   *Needs a gate*, *Commit first*, *Waiting* (each with the lanes it waits for: "dark-mode after
   midi-export"), *Rebase first*, *Part-way* (a rebase not finished), and *Quiet*. An order only holds
@@ -264,7 +269,8 @@ The page in the picture above, for every repository in a folder:
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
   rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it, `t` opens a terminal in it and `a` an agent (in
   the editor), `f` fetches, `n` names a new lane from the lane's
-  newest commit (or main's), `Esc` closes the details, `?` lists them; in the message form,
+  newest commit (or main's), `[` and `]` show the repository before or the next, `Esc` closes the
+  details, `?` lists them; in the message form,
   `⌘ Enter` commits.
 
 It listens on the loopback only. `--ssh-host <host>` adds a link that opens a lane in VS Code over
@@ -287,6 +293,11 @@ in the picture. There its clicks drive the editor:
   holds that the integration branch does not, committed or not, against its files as they are,
   so you can edit them in the diff; an uncommitted file opens its own difference;
 - the lane the file in front of you is in says **You are here**;
+- **a repository in a tab of its own**: each tab is titled with the repository its switcher shows
+  (*api · LaneKit*), and a Cmd- or middle-click on one in the switcher, the ↗ beside its **Fetch**, the
+  status bar's menu, or **LaneKit: Show a Repository in a Tab of Its Own…** opens one for that
+  repository alone, or brings forward the one already open. A lane asked for from the status bar
+  goes to the tab showing its repository, and each tab comes back on its repository after a reload;
 - in the side bar, where there is no room for a toolbar, the pointer on a lane shows the next
   thing to do and a **⋯** that opens the rest;
 - **Goto** moves you to a lane, as Interactive Smartlog's Goto moves your working copy: each file you
@@ -321,7 +332,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.10.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.11.0.vsix
 ```
 
 <br clear="right">

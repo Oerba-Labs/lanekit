@@ -73,6 +73,28 @@ const standIn = (folders) => {
         onDidChangeViewState: event(),
         onDidDispose: event()
     }
+    /** Every tab made after the first, each a page of its own: what was posted to it, how often it was brought
+        forward, and closing it, as the person would. */
+    const panels = []
+    const makePanel = () => {
+        let heard = null
+        const closed = []
+        const made = {
+            visible: true, title: '', revealed: 0, posted: [],
+            webview: {
+                options: null, html: '', cspSource: 'vscode-webview:',
+                asWebviewUri: (uri) => ({ toString: () => `vscode-webview://page${uri.path}` }),
+                postMessage (message) { made.posted.push(message); return Promise.resolve(true) },
+                onDidReceiveMessage: (listener) => { heard = listener; return disposable }
+            },
+            reveal () { this.revealed++ },
+            says: (message) => heard(message),
+            close: () => { for (const listener of closed) listener() },
+            onDidChangeViewState: event(),
+            onDidDispose: (listener) => { closed.push(listener); return disposable }
+        }
+        return made
+    }
     // The side bar's view, made by the provider when VS Code first shows it (here: when asked to focus it).
     const sideView = {
         visible: true,
@@ -98,8 +120,15 @@ const standIn = (folders) => {
         StatusBarAlignment: { Left: 1 },
         window: {
             createOutputChannel: () => ({ append () {}, appendLine () {}, show () {}, dispose () {} }),
-            createWebviewPanel: () => panel,
-            registerWebviewPanelSerializer: () => disposable,
+            // The first tab is `panel`, as every test before there were several expects; each after it is new.
+            createWebviewPanel: (view, title) => {
+                const made = seen.tabs ? makePanel() : panel
+                seen.tabs = (seen.tabs ?? 0) + 1
+                made.title = title
+                if (made !== panel) panels.push(made)
+                return made
+            },
+            registerWebviewPanelSerializer: (view, serializer) => { seen.serializer = serializer; return disposable },
             createStatusBarItem: () => bar,
             createTerminal: (options) => {
                 seen.terminals.push(options)
@@ -166,6 +195,7 @@ const standIn = (folders) => {
         throw new Error(`no reply to ${method} in the side bar`)
     }
     const sideSays = (message) => sideReceive(message)
+    const tabSays = (message) => receive(message)
     /** A terminal the person opened themselves, in `cwd`; `shell` gives it shell integration, which says where it is now. */
     const openTerminal = (cwd, { shell = null, name = 'zsh' } = {}) => {
         const commands = []
@@ -179,7 +209,7 @@ const standIn = (folders) => {
     const useTerminal = (made) => { activeTerminal = made; if (made) emit('active', made) }
     const closeTerminal = (made) => { terminals.splice(terminals.indexOf(made), 1); if (activeTerminal === made) activeTerminal = undefined; emit('close', made) }
     return {
-        vscode, seen, bar, panel, sideView, ask, askSide, sideSays, config, answers, emit, openTerminal, useTerminal, closeTerminal,
+        vscode, seen, bar, panel, panels, makePanel, sideView, ask, askSide, sideSays, tabSays, config, answers, emit, openTerminal, useTerminal, closeTerminal,
         setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null }
     }
 }
@@ -746,4 +776,47 @@ test('every lane keeps one colour, from the terminal palette', () => {
     assert.equal(colourOf('midi-export'), colourOf('midi-export'))
     assert.match(colourOf('dark-mode'), /^terminal\.ansi[A-Z][a-z]+$/)
     assert.ok(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(colourOf)).size > 1, 'lanes do not all share one')
+})
+
+test('a tab is titled with the repository its page shows, and LaneKit while it shows every one', async () => {
+    await editor.seen.commands.get('lanekit.show')()
+    await editor.tabSays({ type: 'showing', repo: 'demo', title: 'Demo' })
+    assert.equal(editor.panel.title, 'Demo · LaneKit')
+    await editor.tabSays({ type: 'showing', repo: null, title: null })
+    assert.equal(editor.panel.title, 'LaneKit')
+})
+
+test('a repository opens in a tab of its own, on it and with its name, and a second ask brings that one forward', async () => {
+    const before = editor.panels.length
+    assert.equal((await editor.ask('tab', { repo: 'demo' })).ok, true)
+    assert.equal(editor.panels.length, before + 1)
+    const own = editor.panels.at(-1)
+    assert.equal(own.title, 'demo · LaneKit')
+    assert.match(own.webview.html, /<html data-surface="tab" data-repo="demo"/)
+    assert.equal((await editor.ask('tab', { repo: 'demo' })).ok, true)
+    assert.equal(editor.panels.length, before + 1, 'no second tab for one repository')
+    assert.equal(own.revealed, 1)
+    assert.equal((await editor.ask('tab', { repo: 'elsewhere' })).ok, false, 'only a repository LaneKit reads')
+    // A lane asked for goes to the tab showing its repository alone.
+    await editor.seen.commands.get('lanekit.show')({ repo: 'demo', lane: 'working' })
+    assert.deepEqual(own.posted.filter((message) => message.type === 'focus'), [{ type: 'focus', repo: 'demo', lane: 'working' }])
+    own.close()
+    assert.equal(host.tabs().length, 1)
+    assert.equal(host.panel()?.webview, editor.panel.webview, 'the tab left is where the icon goes')
+})
+
+test('a tab brought back after a reload starts on the repository it last showed', async () => {
+    const restored = editor.makePanel()
+    await editor.seen.serializer.deserializeWebviewPanel(restored, { only: 'demo', expanded: [] })
+    assert.match(restored.webview.html, /data-repo="demo"/)
+    restored.close()
+    const all = editor.makePanel()
+    await editor.seen.serializer.deserializeWebviewPanel(all, { only: null })
+    assert.doesNotMatch(all.webview.html, /data-repo/)
+    all.close()
+})
+
+test('a repository\'s name goes into the page as text, whatever it holds', () => {
+    const html = pageHtml(path.join(KIT, 'web'), editor.panel.webview, (file) => editor.vscode.Uri.file(file), { repo: 'a"b<c>$&' })
+    assert.match(html, /<html data-surface="tab" data-repo="a&quot;b&lt;c&gt;\$&amp;"/)
 })

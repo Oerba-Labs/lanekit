@@ -92,8 +92,12 @@ code { font-family: var(--vscode-editor-font-family, monospace); }
 <p>To keep it here in the side bar instead, set <code>lanekit.opensIn</code> to <code>sideBar</code>.</p>
 </body></html>`
 
-/** The page's HTML for a webview: its own files by the webview's addresses, and nothing else allowed. */
-export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(18).toString('base64'), surface = 'tab' } = {}) => {
+/** A value put inside an attribute's double quotes, as text: a repository's name is somebody's words. */
+const attribute = (value) => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/** The page's HTML for a webview: its own files by the webview's addresses, and nothing else allowed. `repo` is the
+    repository a tab opened for one starts on. */
+export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(18).toString('base64'), surface = 'tab', repo = null } = {}) => {
     const uri = (file) => webview.asWebviewUri(fileUri(path.join(webDir, file))).toString()
     const csp = [
         "default-src 'none'",
@@ -110,7 +114,9 @@ export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(
     html = html.replace(script, `<script nonce="${nonce}" src="${uri('lanes.js')}" defer></script>`)
     // Where the page is drawn, for its stylesheet and its log: the side bar's is narrow.
     if (!/<html\b/.test(html)) throw new Error('web/index.html has no <html> element to say where it is drawn')
-    return html.replace(/<html\b/, `<html data-surface="${surface === 'sidebar' ? 'sidebar' : 'tab'}"`)
+    const marks = `data-surface="${surface === 'sidebar' ? 'sidebar' : 'tab'}"${repo ? ` data-repo="${attribute(repo)}"` : ''}`
+    // A function, so nothing in a repository's name is read as a replacement pattern ($&).
+    return html.replace(/<html\b/, () => `<html ${marks}`)
 }
 
 export const activate = async (context, vscode, { root }) => {
@@ -132,58 +138,73 @@ export const activate = async (context, vscode, { root }) => {
     // Every page open, each its own webview. What changed and a job's news go to all of them; a reply goes
     // only to the page that asked, since each page numbers its own questions from one.
     const pages = new Set()
+    // Tabs, as many as there are repositories at most: one shows every repository, each other one repository (its
+    // `showing`), titled with its name. `panel` is the tab looked at last, where the icon and a Show go.
     let panel = null
     let sidebar = null
+    const tabs = () => [...pages].filter((page) => page.surface === 'tab')
     /** Where LaneKit opens, from its icon and from everything that asks to show it: an editor tab, by default (the
         owner, 30 Sep: the icon should open the page in the editor, not the narrow side bar), or the side bar itself
         where lanekit.opensIn says sideBar. */
     const inTab = () => vscode.workspace.getConfiguration('lanekit').get('opensIn') !== 'sideBar'
-    let pendingFocus = null   // { surface, repo, lane }: asked for before that page could hear it
+    let pendingFocus = null   // { page, surface, repo, lane }: asked for before that page could hear it
     let lastSent = null
     const post = (message) => { for (const page of pages) page.webview.postMessage(message) }
     const anyVisible = () => [...pages].some((page) => page.visible())
 
     const wire = (page) => {
         page.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(webDir)] }
-        page.webview.html = pageHtml(webDir, page.webview, (file) => vscode.Uri.file(file), { surface: page.surface })
+        page.webview.html = pageHtml(webDir, page.webview, (file) => vscode.Uri.file(file), { surface: page.surface, repo: page.showing })
         pages.add(page)
         lastSent = null
         page.webview.onDidReceiveMessage((message) => onMessage(message, page), null, subscriptions)
     }
     /** A lane to mark on a page: at once on a page that is listening, when it says it is ready on one just made. */
-    const focusIn = (surface, focus, fresh) => {
+    const focusIn = (surface, focus, fresh, page = surface === 'tab' ? panel : sidebar) => {
         if (!focus?.repo || !focus?.lane) return
-        const page = surface === 'tab' ? panel : sidebar
-        if (fresh || !page) pendingFocus = { surface, repo: focus.repo, lane: focus.lane }
+        if (fresh || !page) pendingFocus = { page, surface, repo: focus.repo, lane: focus.lane }
         else page.webview.postMessage({ type: 'focus', repo: focus.repo, lane: focus.lane })
     }
 
-    const adopt = (made) => {
-        const page = { surface: 'tab', webview: made.webview, visible: () => made.visible, reveal: () => made.reveal() }
+    const adopt = (made, { repo = null } = {}) => {
+        const page = { surface: 'tab', made, showing: repo, webview: made.webview, visible: () => made.visible, reveal: () => made.reveal() }
         panel = page
         wire(page)
-        made.onDidChangeViewState(() => schedule(true), null, subscriptions)
-        made.onDidDispose(() => { pages.delete(page); if (panel === page) panel = null; schedule() }, null, subscriptions)
+        made.onDidChangeViewState(() => { if (made.active) panel = page; schedule(true) }, null, subscriptions)
+        made.onDidDispose(() => { pages.delete(page); if (panel === page) panel = tabs().at(-1) ?? null; schedule() }, null, subscriptions)
+        return page
     }
+    /** A new tab: every repository, or the one named, under its name until its page says what it is called. */
+    const newTab = (repo = null) => adopt(vscode.window.createWebviewPanel(VIEW, repo ? `${repo} · LaneKit` : 'LaneKit', vscode.ViewColumn.Active, {
+        enableScripts: true,
+        // Its drawer, its open confirmations and where it was scrolled survive a switch of tabs.
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.file(webDir)]
+    }), { repo })
 
-    /** The full page in a tab of its own: room for a long log, or a second look beside the side bar's. */
+    /** The full page in a tab of its own: room for a long log, or a second look beside the side bar's. A lane asked
+        for goes to the tab showing its repository alone, if one does; anything else to the tab looked at last. */
     const show = (focus) => {
-        const fresh = !panel
-        if (panel) panel.reveal()
-        else {
-            adopt(vscode.window.createWebviewPanel(VIEW, 'LaneKit', vscode.ViewColumn.Active, {
-                enableScripts: true,
-                // Its drawer, its open confirmations and where it was scrolled survive a switch of tabs.
-                retainContextWhenHidden: true,
-                localResourceRoots: [vscode.Uri.file(webDir)]
-            }))
-        }
-        focusIn('tab', focus, fresh)
+        const target = (focus?.repo && tabs().find((page) => page.showing === focus.repo)) || panel
+        if (target) target.reveal()
+        const page = target ?? newTab()
+        focusIn('tab', focus, !target, page)
+        schedule(true)
+    }
+    /** One repository in a tab of its own, titled with its name: the tab already showing it, or a new one. */
+    const showOwn = (repo) => {
+        const open = tabs().find((page) => page.showing === repo)
+        if (open) open.reveal(); else newTab(repo)
         schedule(true)
     }
 
+    // A tab VS Code brings back after a reload is the page's again, on the repository it last showed (the page keeps
+    // that in its state, which VS Code hands back here too).
     subscriptions.push(vscode.window.registerWebviewPanelSerializer(VIEW, {
-        deserializeWebviewPanel: async (restored) => { adopt(restored); schedule(true) }
+        deserializeWebviewPanel: async (restored, state) => {
+            adopt(restored, { repo: typeof state?.only === 'string' && state.only ? state.only : null })
+            schedule(true)
+        }
     }))
 
     // The side bar's view, behind the LaneKit icon, which is there whenever the extension is. VS Code makes it the
@@ -697,6 +718,13 @@ export const activate = async (context, vscode, { root }) => {
                 return true
             }
             case 'open': return open(params)
+            case 'tab': {
+                // A repository in a tab of its own: only one LaneKit reads.
+                const repo = service.known().repos.find((candidate) => candidate.id === params?.repo)
+                if (!repo) throw new Error('That is not a repository LaneKit reads.')
+                showOwn(repo.id)
+                return true
+            }
             default: throw new Error(`The page asked for "${String(method)}", which the extension does not do.`)
         }
     }
@@ -711,11 +739,19 @@ export const activate = async (context, vscode, { root }) => {
             if (known) page.webview.postMessage({ type: 'state', state: known })
             updateBar()
             // A lane asked for before this page could hear it: said now, and then forgotten.
-            if (pendingFocus?.surface === page.surface) {
+            if (pendingFocus && (pendingFocus.page ? pendingFocus.page === page : pendingFocus.surface === page.surface)) {
                 page.webview.postMessage({ type: 'focus', repo: pendingFocus.repo, lane: pendingFocus.lane })
                 pendingFocus = null
             }
             schedule(true)
+            return
+        }
+        if (message.type === 'showing') {
+            // What the page shows, for its title: a repository's name on its tab, or beside the side bar's.
+            page.showing = typeof message.repo === 'string' && message.repo ? message.repo : null
+            const title = typeof message.title === 'string' && message.title ? message.title.slice(0, 80) : null
+            if (page.made) page.made.title = title ? `${title} · LaneKit` : 'LaneKit'
+            else if (page.view) page.view.description = title ?? undefined
             return
         }
         if (message.type !== 'request') return
@@ -820,6 +856,7 @@ export const activate = async (context, vscode, { root }) => {
         const items = []
         const item = (label, detail, run) => items.push({ label, detail, run })
         item('$(list-tree) Show in LaneKit', `${inTab() ? 'its tab' : 'the side bar'}, with this lane marked`, () => reveal(lane ? at : null))
+        if (service.known().repos.length > 1) item('$(link-external) A tab of its own', `${repo.name ?? repo.id} alone, in a LaneKit tab with its name`, () => showOwn(repo.id))
         if (lane && here?.lane?.name !== lane.name) item('$(arrow-right) Goto', `move here: the files you have open reopen from ${lane.name}, and your terminal follows`, () => gotoCheckout(repo, lane))
         if (!lane && here?.lane) item('$(arrow-right) Goto main', `the files you have open reopen from ${repo.id}'s main checkout, and your terminal follows`, () => gotoCheckout(repo, null))
         if (lane) {
@@ -891,6 +928,16 @@ export const activate = async (context, vscode, { root }) => {
             if (await pressFromPalette({ repo: x.repo.id, verb: 'push', lane: x.lane.name, force })) output.show(true)
         },
         'lanekit.show': (focus) => show(focus),
+        'lanekit.showRepository': async (argument) => {
+            await readIfNever()
+            const repos = service.known().repos
+            if (!repos.length) { vscode.window.showInformationMessage('LaneKit: no repository with a lane.config.json is open here.'); return }
+            const id = typeof argument?.repo === 'string' ? argument.repo
+                : repos.length === 1 ? repos[0].id
+                    : (await vscode.window.showQuickPick(repos.map((candidate) => ({ label: candidate.name ?? candidate.id, description: candidate.path, id: candidate.id })),
+                        { title: 'Show which repository in a tab of its own?', matchOnDescription: true }))?.id
+            if (id && repos.some((candidate) => candidate.id === id)) showOwn(id)
+        },
         'lanekit.reveal': (focus) => reveal(focus),
         'lanekit.refresh': () => schedule(true),
         'lanekit.newLane': async () => {
@@ -984,6 +1031,7 @@ export const activate = async (context, vscode, { root }) => {
         commands: Object.keys(commands),
         service,
         panel: () => panel,
+        tabs: () => tabs(),
         sidebar: () => sidebar,
         dispose: () => { disposed = true; clearTimeout(timer); clearTimeout(jobPing); service.dispose() }
     }

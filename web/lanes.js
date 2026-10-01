@@ -105,7 +105,8 @@ const browserHost = () => ({
     copy: (text) => navigator.clipboard.writeText(text),
     on: () => {},
     remember: () => {},
-    recall: () => null
+    recall: () => null,
+    showing: () => {}
 })
 
 const editorHost = (api) => {
@@ -145,6 +146,9 @@ const editorHost = (api) => {
         on: (type, listener) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
         remember: (value) => api.setState(value),
         recall: () => api.getState(),
+        // What the page shows, for its tab's title: one repository, by its id and its name, or every one.
+        showing: (repo, title) => api.postMessage({ type: 'showing', repo, title }),
+        tab: (repo) => ask('tab', { repo }),
         ready: () => api.postMessage({ type: 'ready' })
     }
 }
@@ -180,12 +184,24 @@ const opens = (node, title, action) => {
 let current = null
 let lastDrawn = ''
 let lastDrawnAt = 0
+/** Keep a part of what this page remembers across a reload of its tab: the editor keeps one value for the whole page. */
+const keep = (part) => host.remember({ ...(host.recall() ?? {}), ...part })
 const expanded = new Set(host.recall()?.expanded ?? [])   // `${repo}/${lane}` showing every commit, `…:files` showing files
 const toggle = (key) => {
     if (expanded.has(key)) expanded.delete(key); else expanded.add(key)
-    host.remember({ expanded: [...expanded] })
+    keep({ expanded: [...expanded] })
     draw(true)
 }
+// Which repository the page shows: one, by its id, or every one of them (null). A browser keeps it in the address
+// (?repo=api), so a tab can be open on each and bookmarked; the editor keeps it with its tab, and a tab opened for
+// one repository starts on it (the extension says which in data-repo).
+const firstShown = () => {
+    if (!host.inEditor) return new URLSearchParams(location.search).get('repo') || null
+    const kept = host.recall()
+    if (kept && 'only' in kept) return kept.only
+    return document.documentElement.dataset.repo || null
+}
+let only = firstShown()
 const pending = new Map()       // `${repo}/${lane}` -> { verb, stage, jobId }
 let naming = null               // { repo, sha, from }: the commit row a new lane is being named on
 let here = null                 // { repo, lane }: where the editor is, the file in front's lane (null lane: main)
@@ -1117,7 +1133,8 @@ const ICONS = {
     cross: [['path', { d: 'M4.5 4.5l7 7M11.5 4.5l-7 7' }]],
     output: [['rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }], ['path', { d: 'M4.5 6h7M4.5 8.5h5M4.5 11h6' }]],
     aside: [['rect', { x: 2, y: 3, width: 12, height: 3, rx: 1 }], ['path', { d: 'M3 6v7h10V6' }], ['path', { d: 'M6.5 9h3' }]],
-    unaside: [['rect', { x: 2, y: 3, width: 12, height: 3, rx: 1 }], ['path', { d: 'M3 6v7h10V6' }], ['path', { d: 'M8 12V8.5M6.3 10.2 8 8.5l1.7 1.7' }]]
+    unaside: [['rect', { x: 2, y: 3, width: 12, height: 3, rx: 1 }], ['path', { d: 'M3 6v7h10V6' }], ['path', { d: 'M8 12V8.5M6.3 10.2 8 8.5l1.7 1.7' }]],
+    tab: [['path', { d: 'M9.5 2.5h4v4' }], ['path', { d: 'M13.5 2.5 8 8' }], ['path', { d: 'M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3' }]]
 }
 const icon = (name) => {
     const svg = svgEl('svg', { class: `icon icon-${name}`, width: 14, height: 14, viewBox: '0 0 16 16', 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
@@ -1509,6 +1526,10 @@ const headOf = (repo) => {
         el('span', { class: 'repo-sub mono', text: repo.path }),
         el('span', { class: 'grow' }),
         repo.error ? null : el('div', { class: 'actions' },
+            shownRepos().length > 1 ? iconButton('tab', 'A tab of its own', {
+                title: `${repo.name ?? repo.id} in a ${host.inEditor ? 'LaneKit' : 'browser'} tab of its own (a Cmd- or Ctrl-click on its name in the switcher does the same)`,
+                onclick: () => openOwnTab(repo.id)
+            }, true) : null,
             pullButton(repo),
             host.inEditor ? iconButton('terminal', 'Terminal', {
                 title: `A terminal in ${repo.path}`,
@@ -1741,6 +1762,82 @@ const settledOf = (repo) => {
     ].filter(Boolean)
 }
 
+// ---------------------------------------------------------------------------
+// the switcher: one repository, or every one, and a tab of its own for each
+// ---------------------------------------------------------------------------
+
+/** The repositories this page draws: the one chosen, while it is here, or all of them. */
+const shownRepos = () => {
+    const all = current?.repos ?? []
+    const one = only ? all.find((repo) => repo.id === only) : null
+    return one ? [one] : all
+}
+/** The repository chosen, while it is here; null when the page shows every one. */
+const shownId = () => (only && current?.repos.some((repo) => repo.id === only) ? only : null)
+const liveLanes = (repo) => (repo.error ? [] : repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside))
+
+/** Show one repository (its id), or every one (null): remembered where this page keeps it, and drawn at once. */
+const showRepo = (id) => {
+    only = id
+    // What was chosen or being named in a repository no longer shown goes with it.
+    if (id && selected && selected.repo !== id) selected = null
+    if (id && naming && naming.repo !== id) naming = null
+    if (host.inEditor) keep({ only: id })
+    else history.replaceState(null, '', id ? `?repo=${encodeURIComponent(id)}` : location.pathname)
+    draw(true)
+    window.scrollTo(0, 0)
+}
+/** A repository in a tab of its own: a LaneKit tab in the editor (one per repository, brought forward if open), a browser tab elsewhere. */
+const openOwnTab = (id) => {
+    if (host.inEditor) return host.tab(id).catch((error) => notice(error.message))
+    window.open(`?repo=${encodeURIComponent(id)}`, '_blank', 'noopener')
+}
+
+const drawSwitcher = () => {
+    const nav = $('switcher')
+    const repos = current?.repos ?? []
+    nav.hidden = repos.length < 2
+    if (nav.hidden) { nav.replaceChildren(); return }
+    const showing = shownId()
+    const busy = (id) => (current.jobs ?? []).some((job) => job.repo === id && (job.state === 'running' || job.state === 'queued'))
+    const tab = (id, label, count, title, { running = false, broken = false } = {}) => el('a', {
+        href: id ? `?repo=${encodeURIComponent(id)}` : location.pathname,
+        // Its key keeps the keyboard on it across a redraw, as a lane's does.
+        'data-key': `switcher:${id ?? ''}`,
+        title, 'aria-current': id === showing ? 'page' : null,
+        'aria-label': `${label}, ${plural(count, 'lane')}${running ? ', something running' : ''}${broken ? ', unreadable' : ''}`,
+        onclick: (event) => {
+            const elsewhere = event.metaKey || event.ctrlKey || event.shiftKey
+            // A browser opens the address in a tab of its own by itself; the editor is asked to.
+            if (elsewhere && !host.inEditor) return
+            event.preventDefault()
+            if (elsewhere) { if (id) openOwnTab(id); return }
+            if (id !== showing) showRepo(id)
+        },
+        onauxclick: (event) => { if (host.inEditor && event.button === 1) { event.preventDefault(); if (id) openOwnTab(id) } }
+    },
+    el('span', { class: broken ? 'broken' : null, text: label }),
+    el('span', { class: 'n', text: String(count) }),
+    running ? el('span', { class: 'busy', title: 'Something is running in it' }) : null)
+    nav.replaceChildren(
+        tab(null, 'All', repos.reduce((sum, repo) => sum + liveLanes(repo).length, 0), 'Every repository, one after another ([ and ] step through them)'),
+        ...repos.map((repo) => tab(repo.id, repo.name ?? repo.id, liveLanes(repo).length,
+            `${repo.path}${repo.error ? ` — ${repo.error}` : ''}\n${host.inEditor ? 'Cmd- or Ctrl-click, or a middle click' : 'Cmd- or Ctrl-click'}: a tab of its own`,
+            { running: repo.id !== showing && busy(repo.id), broken: !!repo.error })))
+}
+
+/** The page's title, and the editor's tab's: the repository's name while one is shown, LaneKit while every one is. */
+let titled = null
+const sayTitle = () => {
+    const shown = current ? shownRepos() : []
+    const one = shown.length === 1 ? shown[0] : null
+    const said = JSON.stringify([shownId(), one ? one.name ?? one.id : null])
+    if (said === titled) return
+    titled = said
+    document.title = one ? `${one.name ?? one.id} · LaneKit` : 'LaneKit'
+    host.showing(shownId(), one ? one.name ?? one.id : null)
+}
+
 const sectionFor = (repo) => {
     let kept = sections.get(repo.id)
     if (kept) return kept
@@ -1773,8 +1870,11 @@ const draw = (force = false) => {
 
     const where = (current.roots?.length ? current.roots : [current.scan]).join(', ')
     $('where').textContent = where + (current.kit ? ` · lanekit ${current.kit}` : '')
+    drawSwitcher()
+    sayTitle()
     const pane = $('repos')
-    const ids = new Set(current.repos.map((repo) => repo.id))
+    const shown = shownRepos()
+    const ids = new Set(shown.map((repo) => repo.id))
     for (const [id, kept] of sections) {
         if (!ids.has(id)) { kept.root.remove(); sections.delete(id) }
     }
@@ -1788,7 +1888,7 @@ const draw = (force = false) => {
     }
     const empty = $('empty')
     if (empty) empty.remove()
-    current.repos.forEach((repo, index) => {
+    shown.forEach((repo, index) => {
         const kept = sectionFor(repo)
         kept.head.replaceChildren(...headOf(repo))
         kept.queue.replaceChildren(...queueOf(repo))
@@ -1820,7 +1920,8 @@ const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
     ...(host.inEditor ? [['t', 'a terminal in it'], ['a', 'start an agent in it'], ['o', 'go to it: the files and the terminal you have open move to it']] : []),
-    ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'], ['?', 'these keys'],
+    ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
+    ['[  ]', 'the repository before, or the next, All among them'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
 ]
 const keysPanel = el('div', { class: 'keys', hidden: true, role: 'dialog', 'aria-label': 'Keys' },
@@ -1841,12 +1942,19 @@ const laneInFocus = () => {
 }
 document.addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-    if (event.target.closest?.('input, textarea, select, button, a, summary, [contenteditable]')) return
+    // A tab of the switcher is a link the mouse leaves the keyboard on: the page's keys still work from it.
+    if (event.target.closest?.('input, textarea, select, button, a, summary, [contenteditable]') && !event.target.closest?.('.switcher')) return
     const key = event.key
     const done = () => event.preventDefault()
     if (key === '?') { toggleKeys(); return done() }
     if (key === 'Escape' && !keysPanel.hidden) { toggleKeys(false); return done() }
     if (key === 'Escape' && selected) { select(null); return done() }
+    if ((key === '[' || key === ']') && (current?.repos.length ?? 0) > 1) {
+        const order = [null, ...current.repos.map((repo) => repo.id)]
+        const at = order.indexOf(shownId())
+        showRepo(order[(at + (key === ']' ? 1 : order.length - 1)) % order.length])
+        return done()
+    }
     const cards = laneCards()
     if (['j', 'k', 'ArrowDown', 'ArrowUp'].includes(key) && cards.length) {
         const at = cards.indexOf(document.activeElement)
@@ -1856,7 +1964,7 @@ document.addEventListener('keydown', (event) => {
         return done()
     }
     const here = laneInFocus()
-    const repo = here?.repo ?? current?.repos.find((candidate) => !candidate.error)
+    const repo = here?.repo ?? shownRepos().find((candidate) => !candidate.error)
     if (key === 'n' && repo) {
         const from = here?.lane?.stack?.[0] ? { commit: here.lane.stack[0], lane: here.lane.name } : null
         if (from) startNaming(repo, from.commit, from.lane); else if (repo.spine?.[0]) startNaming(repo, repo.spine[0])
@@ -1884,6 +1992,7 @@ document.addEventListener('keydown', (event) => {
 /** Bring a lane into view and mark it for a moment: the editor's status bar asked for it. */
 let wantFocus = null
 const focusLane = (repoId, laneName) => {
+    if (shownId() && shownId() !== repoId && current?.repos.some((repo) => repo.id === repoId)) showRepo(repoId)
     const key = `${repoId}/${laneName}`
     const node = [...document.querySelectorAll('[data-key]')].find((candidate) => candidate.dataset.key === key)
     if (!node) { wantFocus = { repo: repoId, lane: laneName }; return }
@@ -1893,6 +2002,11 @@ const focusLane = (repoId, laneName) => {
     void node.offsetWidth
     node.classList.add('flash')
 }
+
+const header = document.querySelector('header.bar')
+const measureBar = () => document.documentElement.style.setProperty('--bar-h', `${header.offsetHeight}px`)
+if (typeof ResizeObserver === 'function') new ResizeObserver(measureBar).observe(header)
+measureBar()
 
 host.ready?.()
 loop()

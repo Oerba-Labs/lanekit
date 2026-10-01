@@ -80,6 +80,7 @@ body.in-editor .btn:not(.primary):not(.link):not(.quiet):not(.danger):hover:not(
 /* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
 body.in-editor .product { display: none; }
 body.in-editor .bar { padding-top: 8px; padding-bottom: 8px; }
+body.in-editor .switcher { margin-bottom: -8px; }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -98,11 +99,11 @@ a:hover { text-decoration: underline; }
 /* ---- the bar ---------------------------------------------------------- */
 .bar {
   position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: baseline; gap: 12px;
   padding: 12px 24px;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
+.bar-line { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .product { font-weight: 600; font-size: var(--s17); letter-spacing: -0.01em; flex: none; }
 .where, .repo-sub {
   color: var(--muted); font-family: var(--mono); font-size: var(--s12);
@@ -110,6 +111,26 @@ a:hover { text-decoration: underline; }
 }
 .updated { color: var(--muted); font-size: var(--s12); flex: none; }
 .updated.lost { color: var(--warn); }
+
+/* The switcher: a tab for every repository, and All, while the page has more than one. Each sits on the bar's
+   own line, as an editor's tabs do, and scrolls sideways rather than widening the page. */
+.switcher {
+  display: flex; gap: 2px; margin: 8px -8px -12px; min-width: 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+.switcher[hidden] { display: none; }
+.switcher a {
+  display: inline-flex; align-items: baseline; gap: 6px; flex: none;
+  padding: 4px 8px 7px; border-bottom: 2px solid transparent;
+  color: var(--muted); font-size: var(--s13); white-space: nowrap;
+}
+.switcher a:hover { color: var(--ink); text-decoration: none; }
+.switcher a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.switcher a[aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.switcher .n { font-size: var(--s12); font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Something running in a repository the page is not showing: a dot, so it is not missed. */
+.switcher .busy { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); align-self: center; }
+.switcher .broken { color: var(--risk); }
 
 .notice {
   margin: 12px 24px 0; padding: 8px 12px;
@@ -250,6 +271,8 @@ html[data-surface="sidebar"] body.vscode-high-contrast, html[data-surface="sideb
 }
 html[data-surface="sidebar"] .bar { padding: 6px 12px; }
 html[data-surface="sidebar"] .where { display: none; }
+html[data-surface="sidebar"] .switcher { flex-wrap: wrap; margin: 4px -6px -6px; overflow-x: visible; }
+html[data-surface="sidebar"] .switcher a { padding: 2px 6px 4px; font-size: var(--s12); }
 html[data-surface="sidebar"] .notice { margin: 8px 12px 0; }
 html[data-surface="sidebar"] .pane { padding: 6px 12px 140px; }
 html[data-surface="sidebar"] .repo { margin: 0 0 24px; }
@@ -466,8 +489,8 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
 .split > .pane { flex: 1 1 auto; min-width: 0; }
 .details {
   flex: 0 0 360px; max-width: 42%;
-  position: sticky; top: 45px; align-self: flex-start;
-  max-height: calc(100vh - 45px - 36px); overflow: auto;
+  position: sticky; top: var(--bar-h, 45px); align-self: flex-start;
+  max-height: calc(100vh - var(--bar-h, 45px) - 36px); overflow: auto;
   padding: 18px 20px 24px; border-left: 1px solid var(--line); background: var(--bg);
   font-size: var(--s13);
 }
