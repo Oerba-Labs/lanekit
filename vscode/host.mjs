@@ -302,6 +302,7 @@ export const activate = async (context, vscode, { root }) => {
     // The pages are told of a job with the job itself (its step, its state), and ask for its new output when
     // they show it: told at most every tenth of a second.
     service.events.on('started', (job) => post({ type: 'job', id: job.id, job }))
+    service.events.on('queued', (job) => post({ type: 'job', id: job.id, job }))
     service.events.on('output', (job, text) => {
         output.append(text)
         pingedJob = job
@@ -311,7 +312,8 @@ export const activate = async (context, vscode, { root }) => {
     // A press that ends while no LaneKit page is in sight says how it ended, whoever pressed it, with the lane and
     // its output a click away.
     const SAID = { gate: ['passed', 'failed'], land: ['landed', 'did not land'], rebase: ['rebased', 'stopped'], push: ['pushed', 'was refused'],
-        pr: ['has a pull request', 'has no pull request'], pull: ['pulled', 'did not pull'], new: ['is made', 'was not made'], sweep: ['swept', 'was not swept'] }
+        pr: ['has a pull request', 'has no pull request'], pull: ['pulled', 'did not pull'], new: ['is made', 'was not made'], sweep: ['swept', 'was not swept'],
+        commit: ['is committed', 'was not committed'], uncommit: ['is uncommitted', 'was not uncommitted'], discard: ['is discarded', 'was not discarded'], resolve: ['is resolved', 'is not resolved'] }
     service.events.on('done', (job) => {
         post({ type: 'job', id: job.id, job })
         schedule(true)
@@ -496,6 +498,22 @@ export const activate = async (context, vscode, { root }) => {
                 return pressed
             }
             case 'job': return service.job(String(params.id ?? ''), params.from)
+            case 'cancel': return service.cancel(String(params?.id ?? ''))
+            case 'commit': {
+                // A commit's words and files, for the details pane: only a commit of a repository LaneKit reads.
+                const repo = service.known().repos.find((candidate) => candidate.path === params?.repo && !candidate.error)
+                if (!repo) throw new Error('That is not a repository LaneKit reads.')
+                const details = await service.commitDetails(repo.path, String(params.sha ?? ''))
+                if (!details) throw new Error('That is not a commit of this repository.')
+                return details
+            }
+            case 'copy': {
+                // A commit's hash, to the clipboard: a webview cannot always reach it itself.
+                const text = String(params?.text ?? '')
+                if (!/^[0-9a-f]{4,64}$/.test(text)) throw new Error('Only a commit\'s hash is copied from here.')
+                await vscode.env.clipboard.writeText(text)
+                return true
+            }
             case 'open': return open(params)
             default: throw new Error(`The page asked for "${String(method)}", which the extension does not do.`)
         }

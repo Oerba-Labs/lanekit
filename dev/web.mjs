@@ -79,8 +79,11 @@ const routeOf = (pathname) => {
     if (pathname.endsWith('/healthz')) return { name: 'health' }
     if (pathname.endsWith('/api/state')) return { name: 'state' }
     if (pathname.endsWith('/api/jobs')) return { name: 'jobs' }
+    if (pathname.endsWith('/api/commit')) return { name: 'commit' }
     const job = /\/api\/jobs\/([a-z0-9-]+)$/.exec(pathname)
     if (job) return { name: 'job', id: job[1] }
+    const cancel = /\/api\/jobs\/([a-z0-9-]+)\/cancel$/.exec(pathname)
+    if (cancel) return { name: 'cancel', id: cancel[1] }
     for (const [tail, file] of Object.entries(FILES)) {
         if (tail !== '/' && pathname.endsWith(tail)) return { name: 'file', file }
     }
@@ -108,6 +111,15 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
             if (request.method === 'GET' && route.name === 'job') {
                 const job = service.job(route.id, url.searchParams.get('from'))
                 return job ? send(response, 200, job) : send(response, 404, { error: 'no such job' })
+            }
+            if (request.method === 'GET' && route.name === 'commit') {
+                // A commit's words and files, for the details pane: of a repository this page reads, only.
+                const details = await service.commitDetails(String(url.searchParams.get('repo') ?? ''), String(url.searchParams.get('sha') ?? ''))
+                return details ? send(response, 200, details) : send(response, 404, { error: 'no such commit here' })
+            }
+            if (request.method === 'POST' && route.name === 'cancel') {
+                if (request.headers['x-lanes'] !== '1') return send(response, 403, { error: 'this address takes presses from the lanes page only' })
+                return service.cancel(route.id) ? send(response, 200, { cancelled: true }) : send(response, 409, { error: 'it is not waiting: it has begun, ended, or is not kept' })
             }
             if (request.method === 'POST' && route.name === 'jobs') {
                 // A header a form cannot set and a type a form cannot send: another page cannot

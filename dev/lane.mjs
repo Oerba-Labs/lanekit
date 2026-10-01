@@ -22,6 +22,7 @@ import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
 import { planQueue, landBlockers } from '../lib/queue.mjs'
+import { changesOf } from '../lib/state.mjs'
 import {
     lanes, laneDirFor, mainRepoFrom, prefixFor,
     nextFreePort, portOf, listenersOn, writeEnv, readEnv, isUnder
@@ -565,8 +566,9 @@ const rebase = (config, name, options) => {
 }
 
 /**
- * Commit everything uncommitted in a lane: a commit of its own with the message given, or with
- * `--amend` into the lane's newest commit, keeping its message unless one is given.
+ * Commit what is uncommitted in a lane: a commit of its own with the message given, or with `--amend` into the
+ * lane's newest commit, keeping its message unless one is given. Every file, or only those named after `--`.
+ * `--amend` with a message and nothing uncommitted rewords the newest commit.
  *
  * AMEND ONLY WHAT IS THE LANE'S. A lane with no commits of its own has the integration branch's
  * commit at its head; amending that would rewrite main's history under every other lane.
@@ -579,15 +581,92 @@ const commitIn = (config, name, options) => {
     if (!options.amend && !message) fail('a commit needs a message: -m "what it does"')
     const own = Number(gitQuiet(['rev-list', '--count', `${config.integrationBranch}..HEAD`], dir).out || 0)
     if (options.amend && !own) fail(`${name} has no commit of its own to amend: its newest commit is ${config.integrationBranch}'s.`)
-    const dirt = dirtIn(dir, config)
-    if (!dirt.length && !options.amend) fail(`${name} has nothing uncommitted to commit.`)
-    if (dirt.length) git(['add', '-A'], dir)
-    const args = ['commit', '-q', ...(options.amend ? ['--amend', ...(message ? ['-m', message] : ['--no-edit'])] : ['-m', message])]
+    const changed = changesOf(dir, config)
+    const paths = options.paths ?? []
+    const stray = paths.filter((file) => !changed.some((change) => change.path === file))
+    if (stray.length) fail(`not uncommitted in ${name}: ${stray.join(', ')}`)
+    if (!changed.length && !options.amend) fail(`${name} has nothing uncommitted to commit.`)
+    if (!changed.length && options.amend && !message) fail(`${name} has nothing uncommitted to amend with: give a new message with -m to reword its newest commit.`)
+    if (paths.length) git(['add', '-A', '--', ...paths], dir)
+    else if (changed.length) git(['add', '-A'], dir)
+    const args = ['commit', '-q', ...(options.amend ? ['--amend', ...(message ? ['-m', message] : ['--no-edit'])] : ['-m', message]),
+        ...(paths.length ? ['--', ...paths] : [])]
     const made = spawnSync('git', args, { cwd: dir, stdio: 'inherit', env: { ...process.env, GIT_EDITOR: 'true' } })
     if (made.status !== 0) fail('git commit did not finish (above).')
     const head = gitQuiet(['log', '-1', '--format=%h %s'], dir).out
     const rule = '─'.repeat(64)
     console.log(`\n${rule}\n  ${GREEN}${options.amend ? 'AMENDED' : 'COMMITTED'}${OFF}  ·  ${name}  ·  ${head}\n${rule}\n`)
+}
+
+/**
+ * Take a lane's newest commit back out, keeping what it changed as uncommitted work: `git reset --soft HEAD~1`.
+ *
+ * ONLY THE LANE'S OWN, never a commit of the integration branch. A commit already pushed may be uncommitted
+ * too: the next push then asks before replacing origin's copy, as after a rebase.
+ */
+const uncommit = (config, name) => {
+    const lane = laneNamed(config, name, 'uncommit')
+    const dir = lane.path
+    if (inRebase(dir)) fail(`${name} is part-way through a rebase: resolve and continue it instead.`)
+    const own = Number(gitQuiet(['rev-list', '--count', `${config.integrationBranch}..HEAD`], dir).out || 0)
+    if (!own) fail(`${name} has no commit of its own to uncommit: its newest commit is ${config.integrationBranch}'s.`)
+    const sha = git(['rev-parse', 'HEAD'], dir)
+    const was = gitQuiet(['log', '-1', '--format=%h %s'], dir).out
+    git(['reset', '-q', '--soft', 'HEAD~1'], dir)
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}UNCOMMITTED${OFF}  ·  ${name}  ·  ${was}\n${rule}\n`)
+    log(`what it changed is uncommitted again ${DIM}(git reset --soft ${sha.slice(0, 12)} puts the commit back)${OFF}`)
+}
+
+/**
+ * Throw away what is uncommitted in the files named, in a lane: a changed or deleted file goes back to the lane's
+ * newest commit, and a new one is removed.
+ *
+ * THE FILES NAMED, and only files that are uncommitted: there is no "discard everything" here, and nothing
+ * committed is touched. What is thrown away is gone; nothing keeps a copy.
+ */
+const discard = (config, name, options) => {
+    const lane = laneNamed(config, name, 'discard')
+    const dir = lane.path
+    const paths = options.paths ?? []
+    if (!paths.length) fail(`lane discard needs the files: lane discard ${name} -- <file>…`)
+    if (inRebase(dir)) fail(`${name} is part-way through a rebase: resolve and continue it, or abort it, instead.`)
+    const changed = changesOf(dir, config)
+    const named = paths.map((file) => changed.find((change) => change.path === file) ?? { path: file, status: null })
+    const stray = named.filter((change) => !change.status).map((change) => change.path)
+    if (stray.length) fail(`not uncommitted in ${name}: ${stray.join(', ')}`)
+    const fresh = named.filter((change) => change.status === '?').map((change) => change.path)
+    const tracked = named.filter((change) => change.status !== '?').map((change) => change.path)
+    if (tracked.length) git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked], dir)
+    if (fresh.length) git(['clean', '-q', '-f', '-d', '--', ...fresh], dir)
+    const left = changesOf(dir, config).filter((change) => paths.includes(change.path))
+    if (left.length) fail(`these are still uncommitted after the discard: ${left.map((change) => change.path).join(', ')}`)
+    log(`discarded ${paths.length === 1 ? paths[0] : `${paths.length} files`} in ${name}`)
+}
+
+/**
+ * Mark files resolved in a lane stopped part-way through a rebase: `git add`, once each has no conflict markers
+ * left. `lane rebase <name> --continue` carries on when every file is.
+ */
+const resolve = (config, name, options) => {
+    const lane = laneNamed(config, name, 'resolve')
+    const dir = lane.path
+    const paths = options.paths ?? []
+    if (!paths.length) fail(`lane resolve needs the files: lane resolve ${name} -- <file>…`)
+    if (!inRebase(dir)) fail(`${name} is not part-way through a rebase: there is nothing to resolve.`)
+    const unmerged = conflictsIn(dir)
+    const stray = paths.filter((file) => !unmerged.includes(file))
+    if (stray.length) fail(`not in conflict in ${name}: ${stray.join(', ')}`)
+    for (const file of paths) {
+        const full = path.join(dir, file)
+        if (!fs.existsSync(full)) continue   // resolved by deleting it: git add records that
+        const lines = fs.readFileSync(full, 'utf8').split('\n')
+        const at = lines.findIndex((line) => /^(<{7}|>{7})(\s|$)/.test(line) || /^={7}$/.test(line))
+        if (at !== -1) fail(`${file} still has a conflict marker at line ${at + 1}: resolve it there first.`)
+    }
+    git(['add', '-A', '--', ...paths], dir)
+    const left = conflictsIn(dir)
+    log(`marked ${paths.join(', ')} resolved in ${name}${left.length ? `; ${left.length} still in conflict` : `: every conflict is resolved, and lane rebase ${name} --continue carries on`}`)
 }
 
 /**
@@ -663,7 +742,7 @@ const pull = (config) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull, commit: commitIn }
+const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull, commit: commitIn, uncommit, discard, resolve }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -672,7 +751,7 @@ const main = () => {
     // is started before this one's is looked for: /work above the checkouts has none.
     if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -689,11 +768,14 @@ const main = () => {
         forceWithLease: argv.includes('--force-with-lease'),
         onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
         amend: argv.includes('--amend'),
-        message: argv.includes('-m') ? argv[argv.indexOf('-m') + 1] : undefined
+        message: argv.includes('-m') ? argv[argv.indexOf('-m') + 1] : undefined,
+        // The files a commit, a discard or a resolve is about: everything after `--`.
+        paths: argv.includes('--') ? argv.slice(argv.indexOf('--') + 1) : []
     }
-    // What follows a flag that takes a value is the value, not a name.
+    // What follows a flag that takes a value is the value, not a name; what follows `--` is a file.
     const valued = new Set(['--base', '--onto', '-m'])
-    const positional = argv.slice(1).filter((arg, i, all) => !arg.startsWith('-') && !valued.has(all[i - 1]))
+    const flags = argv.includes('--') ? argv.slice(1, argv.indexOf('--')) : argv.slice(1)
+    const positional = flags.filter((arg, i, all) => !arg.startsWith('-') && !valued.has(all[i - 1]))
     const name = positional[0] !== options.base ? positional[0] : positional[1]
 
     let config
@@ -713,6 +795,9 @@ const main = () => {
     if (command === 'pr') return pr(config, name, options)
     if (command === 'pull') return pull(config, options)
     if (command === 'commit') return commitIn(config, name, options)
+    if (command === 'uncommit') return uncommit(config, name, options)
+    if (command === 'discard') return discard(config, name, options)
+    if (command === 'resolve') return resolve(config, name, options)
     return sweep(config, name, options)
 }
 
