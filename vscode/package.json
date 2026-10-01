@@ -3,7 +3,7 @@
   "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: open a commit's or a lane's changes, gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -36,7 +36,7 @@
     "commands": [
       {
         "command": "lanekit.reveal",
-        "title": "Show in the Side Bar",
+        "title": "Show LaneKit",
         "category": "LaneKit",
         "icon": "$(list-tree)"
       },
@@ -162,6 +162,19 @@
           },
           "default": [],
           "description": "Folders to find repositories with lanes in, besides the folders open in this window."
+        },
+        "lanekit.opensIn": {
+          "type": "string",
+          "enum": [
+            "tab",
+            "sideBar"
+          ],
+          "enumDescriptions": [
+            "An editor tab, with the whole page's room: the LaneKit icon opens it and closes the side bar again.",
+            "The side bar, beside whatever is open in the editor."
+          ],
+          "default": "tab",
+          "description": "Where LaneKit opens: from its icon in the activity bar, from the status bar's lane menu, and from a notification's Show."
         },
         "lanekit.gateOnCommit": {
           "type": "boolean",

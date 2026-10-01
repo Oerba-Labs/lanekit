@@ -52,6 +52,20 @@ export const wordOf = (lane) => {
     }
 }
 
+/** What the side bar's view holds where LaneKit opens in a tab: a line and a link, no script and no second page.
+    It is seen for a moment when the icon is pressed, or for good where the side bar cannot be closed. */
+export const signpostHtml = () => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<style>
+body { margin: 0; padding: 10px 14px; color: var(--vscode-descriptionForeground); font: var(--vscode-font-size, 13px)/1.5 var(--vscode-font-family, sans-serif); }
+a { color: var(--vscode-textLink-foreground); }
+code { font-family: var(--vscode-editor-font-family, monospace); }
+</style></head><body>
+<p>LaneKit opens in an editor tab. <a href="command:lanekit.show">Open LaneKit</a></p>
+<p>To keep it here in the side bar instead, set <code>lanekit.opensIn</code> to <code>sideBar</code>.</p>
+</body></html>`
+
 /** The page's HTML for a webview: its own files by the webview's addresses, and nothing else allowed. */
 export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(18).toString('base64'), surface = 'tab' } = {}) => {
     const uri = (file) => webview.asWebviewUri(fileUri(path.join(webDir, file))).toString()
@@ -94,6 +108,10 @@ export const activate = async (context, vscode, { root }) => {
     const pages = new Set()
     let panel = null
     let sidebar = null
+    /** Where LaneKit opens, from its icon and from everything that asks to show it: an editor tab, by default (the
+        owner, 30 Sep: the icon should open the page in the editor, not the narrow side bar), or the side bar itself
+        where lanekit.opensIn says sideBar. */
+    const inTab = () => vscode.workspace.getConfiguration('lanekit').get('opensIn') !== 'sideBar'
     let pendingFocus = null   // { surface, repo, lane }: asked for before that page could hear it
     let lastSent = null
     const post = (message) => { for (const page of pages) page.webview.postMessage(message) }
@@ -142,21 +160,52 @@ export const activate = async (context, vscode, { root }) => {
         deserializeWebviewPanel: async (restored) => { adopt(restored); schedule(true) }
     }))
 
-    // The side bar's page, behind the LaneKit icon, which is there whenever the extension is. VS Code makes it
-    // the first time it is shown and keeps what it holds while another view is in front.
-    subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR, {
-        resolveWebviewView: (view) => {
-            const page = { surface: 'sidebar', webview: view.webview, visible: () => view.visible }
+    // The side bar's view, behind the LaneKit icon, which is there whenever the extension is. VS Code makes it the
+    // first time it is shown and keeps what it holds while another view is in front. VS Code gives an activity-bar
+    // icon no way to open a tab of its own, so where LaneKit opens in a tab, the view, each time the icon brings it
+    // out, opens the tab and closes the side bar again, and holds a signpost rather than a second page. Where it
+    // opens in the side bar, the view is the page.
+    let sideView = null
+    const fillSide = (view) => {
+        const isPage = sidebar?.view === view
+        if (inTab()) {
+            if (isPage) { pages.delete(sidebar); sidebar = null }
+            view.webview.options = { enableScripts: false, enableCommandUris: ['lanekit.show'] }
+            view.webview.html = signpostHtml()
+        } else if (!isPage) {
+            const page = { surface: 'sidebar', view, webview: view.webview, visible: () => view.visible }
             sidebar = page
             wire(page)
-            view.onDidChangeVisibility(() => schedule(true), null, subscriptions)
-            view.onDidDispose(() => { pages.delete(page); if (sidebar === page) sidebar = null; schedule() }, null, subscriptions)
+        }
+    }
+    const toTab = async () => {
+        show()
+        await vscode.commands.executeCommand('workbench.action.closeSidebar')
+    }
+    subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR, {
+        resolveWebviewView: (view) => {
+            sideView = view
+            fillSide(view)
+            view.onDidChangeVisibility(() => {
+                if (view.visible && inTab()) void toTab()
+                schedule(true)
+            }, null, subscriptions)
+            view.onDidDispose(() => {
+                if (sidebar?.view === view) { pages.delete(sidebar); sidebar = null }
+                if (sideView === view) sideView = null
+                schedule()
+            }, null, subscriptions)
+            if (view.visible && inTab()) void toTab()
             schedule(true)
         }
     }, { webviewOptions: { retainContextWhenHidden: true } }))
+    subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('lanekit.opensIn') && sideView) fillSide(sideView)
+    }))
 
-    /** The side bar's page brought forward, with a lane marked on it: where the status bar sends you. */
+    /** LaneKit brought forward, with a lane marked on it, wherever it opens: where the status bar sends you. */
     const reveal = async (focus) => {
+        if (inTab()) return show(focus)
         const fresh = !sidebar
         await vscode.commands.executeCommand(`${SIDEBAR}.focus`)
         focusIn('sidebar', focus, fresh)
@@ -558,7 +607,7 @@ export const activate = async (context, vscode, { root }) => {
         const at = { repo: repo.id, lane: lane?.name }
         const items = []
         const item = (label, detail, run) => items.push({ label, detail, run })
-        item('$(list-tree) Show in LaneKit', 'the side bar, with this lane marked', () => reveal(lane ? at : null))
+        item('$(list-tree) Show in LaneKit', `${inTab() ? 'its tab' : 'the side bar'}, with this lane marked`, () => reveal(lane ? at : null))
         if (lane) {
             const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
             if (working || lane.dirty) item('$(diff) Changes', `everything ${lane.name} holds that ${repo.integrationBranch} does not`, () => open({ what: 'changes', repo: repo.path, lane: lane.name }))

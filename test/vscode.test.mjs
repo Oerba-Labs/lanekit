@@ -316,7 +316,44 @@ test('the side bar has a view of its own, which keeps its page while hidden', ()
     assert.ok(fs.existsSync(path.join(KIT, 'vscode', container.icon)), 'the icon the manifest names is there')
 })
 
-test('the status bar reveals the side bar, and its page marks the lane once it is ready', async () => {
+test('the LaneKit icon opens the page in a tab and closes the side bar, which holds only a link to it', async () => {
+    const view = editor.seen.views.get('lanekit.sidebar')
+    const listeners = []
+    const icon = {
+        visible: true,
+        webview: {
+            options: null, html: '', cspSource: 'vscode-webview:',
+            asWebviewUri: (uri) => ({ toString: () => `vscode-webview://icon${uri.path}` }),
+            postMessage: () => Promise.resolve(true),
+            onDidReceiveMessage: () => ({ dispose () {} })
+        },
+        onDidChangeVisibility: (listener) => { listeners.push(listener); return { dispose () {} } },
+        onDidDispose: () => ({ dispose () {} })
+    }
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+    editor.seen.executed.length = 0
+    view.provider.resolveWebviewView(icon)
+    await settle()
+    assert.ok(editor.seen.executed.some((args) => args[0] === 'workbench.action.closeSidebar'), 'the side bar closes again')
+    assert.match(editor.panel.webview.html, /<html data-surface="tab"/, 'the page is in the tab')
+    assert.match(icon.webview.html, /href="command:lanekit.show"/, 'the side bar holds a link to the tab')
+    assert.doesNotMatch(icon.webview.html, /<script/, 'and runs nothing')
+    assert.deepEqual(icon.webview.options, { enableScripts: false, enableCommandUris: ['lanekit.show'] })
+    // Pressed again, after something else had the side bar: the tab again.
+    editor.seen.executed.length = 0
+    for (const listener of listeners) listener()
+    await settle()
+    assert.ok(editor.seen.executed.some((args) => args[0] === 'workbench.action.closeSidebar'))
+    // The status bar's Show in LaneKit goes to the tab too, with the lane marked there.
+    editor.seen.executed.length = 0
+    const posted = editor.seen.posted.length
+    await editor.seen.commands.get('lanekit.reveal')({ repo: 'demo', lane: 'working' })
+    assert.ok(!editor.seen.executed.some((args) => args[0] === 'lanekit.sidebar.focus'), 'not the side bar')
+    assert.deepEqual(editor.seen.posted.slice(posted).filter((m) => m.type === 'focus'), [{ type: 'focus', repo: 'demo', lane: 'working' }])
+})
+
+test('with opensIn sideBar, the status bar reveals the side bar, and its page marks the lane once it is ready', async () => {
+    editor.config.opensIn = 'sideBar'
     await editor.seen.commands.get('lanekit.reveal')({ repo: 'demo', lane: 'working' })
     assert.ok(editor.seen.executed.some((args) => args[0] === 'lanekit.sidebar.focus'))
     assert.match(editor.sideView.webview.html, /<html data-surface="sidebar"/)
