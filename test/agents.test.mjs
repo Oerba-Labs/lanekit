@@ -22,7 +22,7 @@ import { after, before, test } from 'node:test'
 
 import {
     agentsDir, agentsIn, ancestry, CLAUDE_EVENTS, claudeHooks, claudeStep, installForUser, opencodePlugin, opencodeReporter,
-    readReports, reportClaude, reportersOn, statOf, withClaudeHooks
+    readReports, reportClaude, reportersOn, statOf, tmuxOf, withClaudeHooks
 } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
@@ -370,4 +370,19 @@ test('agent-reports installs for the person running it, and says what it did in 
     assert.ok(fs.existsSync(path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')))
     const again = JSON.parse(run('--json').stdout)
     assert.deepEqual([again.wrote.length, again.kept.length, again.warnings.length], [0, 2, 0], 'settled: nothing to say')
+})
+
+test('an agent in tmux says which pane it runs in, from what tmux puts in its environment, and nothing else of it', () => {
+    assert.deepEqual(tmuxOf({ TMUX: '/tmp/tmux-1000/default,4242,3', TMUX_PANE: '%7' }), { socket: '/tmp/tmux-1000/default', pane: '%7' })
+    assert.equal(tmuxOf({}), null, 'not in tmux')
+    assert.equal(tmuxOf({ TMUX: 'relative,1,1', TMUX_PANE: '%7' }), null)
+    assert.equal(tmuxOf({ TMUX: '/tmp/tmux-1000/default,1,1', TMUX_PANE: '7; rm -rf' }), null)
+    const written = reportClaude(JSON.stringify({ ...event('SessionStart'), session_id: 'in-tmux' }), {
+        chain: chainTo(RUNNING), env: { TMUX: '/tmp/tmux-1000/default,4242,3', TMUX_PANE: '%7' }
+    })
+    assert.deepEqual(written.tmux, { socket: '/tmp/tmux-1000/default', pane: '%7' })
+    assert.deepEqual(readReports().find((report) => report.key === 'claude-in-tmux').tmux, { socket: '/tmp/tmux-1000/default', pane: '%7' })
+    const bare = reportClaude(JSON.stringify({ ...event('UserPromptSubmit'), session_id: 'in-tmux' }), { chain: chainTo(RUNNING), env: {} })
+    assert.equal(bare.tmux, null)
+    reportClaude(JSON.stringify({ ...event('SessionEnd'), session_id: 'in-tmux' }), { chain: chainTo(RUNNING) })
 })

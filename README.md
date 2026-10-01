@@ -335,7 +335,11 @@ in the picture. There its clicks drive the editor:
   in the details, and `o`. A terminal LaneKit opens in a lane is named for it and wears a colour of
   its own that all of the lane's terminals share;
 - **Agent** starts Claude Code or OpenCode in the lane, in a terminal named for both
-  (`midi-export · Claude`), so the terminal list says which agent works where;
+  (`midi-export · Claude`), so the terminal list says which agent works where. Where tmux 3 or newer
+  is installed the agent runs in a tmux session of its own, which the terminal only shows: closing
+  the terminal, or the editor, detaches the agent rather than ending it, and a click on the agent
+  finds the terminal showing it or attaches a new one. The session ends when the agent does.
+  `lanekit.agentsInTmux` turns it off;
 - **the agents at work** are drawn on the lane each works in, Claude Code's and OpenCode's alike:
   **Thinking**, **Running** a tool, **Needs you** (a permission or a question, and what it asks to
   use), **Done** or **Failed**, since when; a click on one brings forward its terminal. One coming
@@ -371,7 +375,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.15.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
 ```
 
 <br clear="right">

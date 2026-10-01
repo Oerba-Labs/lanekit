@@ -3,7 +3,7 @@
   "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: go to a lane with your files and terminal, see which agent works where and which needs you, and gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -215,6 +215,11 @@
           "default": "ask",
           "scope": "machine",
           "description": "Whether this machine's agents say which lane they work in and what they are doing, through LaneKit's hook in ~/.claude/settings.json and its plugin in ~/.config/opencode/plugins/."
+        },
+        "lanekit.agentsInTmux": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run an agent started from LaneKit inside a tmux session of its own, where tmux 3 or newer is installed, so closing its terminal or the editor detaches it rather than ending it; a click on the agent attaches a terminal to it again. Off, the agent runs in its terminal's shell."
         },
         "lanekit.gateOnCommit": {
           "type": "boolean",

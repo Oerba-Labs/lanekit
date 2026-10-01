@@ -50,7 +50,7 @@ const standIn = (folders) => {
     const answers = {}   // what the stand-in person picks and types, when a test says
     const seen = { picks: [], commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], made: [], views: new Map() }
     /** A terminal as the editor hands one out: where it was opened, what was typed into it, how it was last shown. */
-    let nextPid = 70000
+    let nextPid = 3_900_000   // above any process id a test's own processes are, so no terminal is taken for one
     const terminal = (options, extra = {}) => ({
         name: options.name, creationOptions: options, typed: [], shown: null, processId: Promise.resolve(++nextPid),
         show (preserveFocus = false) { this.shown = { preserveFocus } },
@@ -229,6 +229,7 @@ let first
 let editor
 let host
 let READ_AGENTS
+let FAKE_TMUX
 
 before(async () => {
     scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lanekit-vscode-')))
@@ -264,9 +265,26 @@ before(async () => {
     editor = standIn([working])
     // Never asked here whether to add the agents' reporters: the test of that asks in a home of its own.
     editor.config.reportAgents = 'never'
+    // A stand-in for tmux, which says how it was asked and answers as FAKE_TMUX_* say; agents start in it only in its test.
+    FAKE_TMUX = path.join(scratch, 'bin', 'tmux')
+    fs.mkdirSync(path.dirname(FAKE_TMUX), { recursive: true })
+    fs.writeFileSync(FAKE_TMUX, [
+        '#!/bin/sh',
+        'printf "%s\\n" "$*" >> "$FAKE_TMUX_LOG"',
+        'case "$1" in',
+        '  -V) echo "tmux 3.4"; exit 0 ;;',
+        '  has-session) [ "$3" = "=$FAKE_TMUX_TAKEN" ] && exit 0; exit 1 ;;',
+        '  -S) case "$3" in',
+        '        display-message) [ -n "$FAKE_TMUX_SESSION" ] || exit 1; echo "$FAKE_TMUX_SESSION" ;;',
+        '        list-clients) [ -n "$FAKE_TMUX_CLIENTS" ] && echo "$FAKE_TMUX_CLIENTS" ;;',
+        '      esac; exit 0 ;;',
+        'esac',
+        'exit 1', ''].join('\n'), { mode: 0o755 })
+    process.env.FAKE_TMUX_LOG = path.join(scratch, 'tmux.log')
+    editor.config.agentsInTmux = false
     const remembered = new Map()
     const workspaceState = { get: (key) => remembered.get(key), update: async (key, value) => { remembered.set(key, value) } }
-    host = await activate({ subscriptions: [], workspaceState }, editor.vscode, { root: KIT, home: path.join(scratch, 'home-never'), env: {} })
+    host = await activate({ subscriptions: [], workspaceState }, editor.vscode, { root: KIT, home: path.join(scratch, 'home-never'), env: {}, tmux: FAKE_TMUX })
 })
 
 after(() => {
@@ -957,4 +975,71 @@ test('an agent in a repository without lanes is counted, named by its folder, an
     say('SessionEnd')
     await editor.ask('state')
     assert.equal(editor.agentBar.shown, false)
+})
+
+test('in tmux, an agent starts in a session of its own, and a click finds the terminal attached to it, or attaches a new one', async () => {
+    closeAllTerminals()
+    const { reportClaude } = await import('../lib/agents.mjs')
+    editor.config.agentsInTmux = true
+    process.env.FAKE_TMUX_TAKEN = 'lk-demo-working-claude'   // one of that name runs already, so this one is numbered
+    editor.answers.pick = 'Claude Code'
+    const reply = await editor.ask('open', { what: 'agent', repo, lane: 'working' })
+    assert.equal(reply.ok, true, reply.error)
+    assert.equal(reply.value.tmux, 'lk-demo-working-claude-2')
+    const started = editor.seen.made.at(-1)
+    assert.equal(started.name, 'working · Claude 2', 'the terminal numbered as its session is')
+    assert.deepEqual(started.typed, [`'${FAKE_TMUX}' 'new-session' '-s' 'lk-demo-working-claude-2' '-c' '${working}' '${os.userInfo().shell}' '-lic' 'claude -n working'`],
+        'in a login shell of the person\'s own, in the lane')
+    editor.answers.pick = undefined
+
+    // The agent reports from inside the session: its pane is in its environment.
+    const chain = [{ pid: 4_194_101, name: 'node' }, { pid: process.pid, name: 'claude' }]
+    const tmuxEnv = { TMUX: '/tmp/tmux-501/default,999,3', TMUX_PANE: '%7' }
+    reportClaude(JSON.stringify({ session_id: 'vs-3', cwd: working, hook_event_name: 'SessionStart' }), { chain, dir: READ_AGENTS, env: tmuxEnv })
+    await editor.ask('state')
+    // A terminal whose shell runs a client of that session is the agent's: here, this test's own process, under its parent.
+    process.env.FAKE_TMUX_SESSION = 'lk-demo-working-claude-2'
+    process.env.FAKE_TMUX_CLIENTS = String(process.pid)
+    const attached = editor.openTerminal(working)
+    attached.processId = Promise.resolve(process.ppid)
+    const shown = await editor.ask('open', { what: 'agent-terminal', repo, key: 'claude-vs-3' })
+    assert.equal(shown.ok, true, shown.error)
+    assert.deepEqual(attached.shown, { preserveFocus: false })
+    assert.match(fs.readFileSync(process.env.FAKE_TMUX_LOG, 'utf8'), /-S \/tmp\/tmux-501\/default list-clients -t =lk-demo-working-claude-2 -F #\{client_pid\}/)
+
+    // That terminal closed, or the editor: a new one is attached to the session, named for the agent.
+    editor.closeTerminal(attached)
+    process.env.FAKE_TMUX_CLIENTS = ''
+    const before = editor.seen.terminals.length
+    await editor.ask('open', { what: 'agent-terminal', repo, key: 'claude-vs-3' })
+    assert.equal(editor.seen.terminals.length, before + 1)
+    const again = editor.seen.made.at(-1)
+    assert.equal(again.name, 'working · Claude')
+    assert.equal(again.creationOptions.color.id, colourOf('working'))
+    assert.deepEqual(again.typed, [`'${FAKE_TMUX}' '-S' '/tmp/tmux-501/default' 'attach-session' '-t' '=lk-demo-working-claude-2'`])
+    assert.deepEqual(again.shown, { preserveFocus: false })
+
+    // Its session gone: nothing to attach, and said.
+    process.env.FAKE_TMUX_SESSION = ''
+    editor.seen.said.length = 0
+    const count = editor.seen.terminals.length
+    await editor.ask('open', { what: 'agent-terminal', repo, key: 'claude-vs-3' })
+    assert.equal(editor.seen.terminals.length, count)
+    assert.match(editor.seen.said.at(-1), /runs in a terminal outside this window/)
+
+    reportClaude(JSON.stringify({ session_id: 'vs-3', cwd: working, hook_event_name: 'SessionEnd' }), { chain, dir: READ_AGENTS })
+    editor.config.agentsInTmux = false
+    for (const name of ['FAKE_TMUX_TAKEN', 'FAKE_TMUX_SESSION', 'FAKE_TMUX_CLIENTS']) delete process.env[name]
+    closeAllTerminals()
+})
+
+test('with agentsInTmux off, or no tmux, an agent is typed into its terminal\'s shell as before', async () => {
+    closeAllTerminals()
+    editor.config.agentsInTmux = false
+    editor.answers.pick = 'OpenCode'
+    const reply = await editor.ask('open', { what: 'agent', repo, lane: 'working' })
+    assert.equal(reply.value.tmux, undefined)
+    assert.deepEqual(editor.seen.made.at(-1).typed, ['opencode'])
+    editor.answers.pick = undefined
+    closeAllTerminals()
 })

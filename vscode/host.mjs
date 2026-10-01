@@ -21,12 +21,13 @@
  * stand-in (test/vscode.test.mjs).
  */
 
+import { execFile, spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { AGENT_NAMES, agentsDir, installForUser, reportersOn } from '../lib/agents.mjs'
+import { AGENT_NAMES, agentsDir, ancestry, installForUser, reportersOn } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
 export const VIEW = 'lanekit.lanes'
@@ -127,7 +128,7 @@ export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(
     return html.replace(/<html\b/, () => `<html ${marks}`)
 }
 
-export const activate = async (context, vscode, { root, home = os.homedir(), env = process.env }) => {
+export const activate = async (context, vscode, { root, home = os.homedir(), env = process.env, tmux: tmuxGiven }) => {
     const webDir = path.join(root, 'web')
     const subscriptions = context.subscriptions
     const output = vscode.window.createOutputChannel('LaneKit')
@@ -441,24 +442,62 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         return picked?.id ?? null
     }
 
+    // tmux, where the machine has it (3.0 or newer, which takes a command as words): an agent started from LaneKit runs
+    // in a tmux session of its own, and its terminal only shows it, so closing the terminal or the editor detaches the
+    // agent rather than ending it, and a click on the agent attaches a terminal to it again (the owner, 1 Oct).
+    // lanekit.agentsInTmux turns it off.
+    let tmuxAt
+    const tmuxPath = () => {
+        if (tmuxAt !== undefined) return tmuxAt
+        tmuxAt = null
+        const places = tmuxGiven !== undefined ? [tmuxGiven]
+            : [...String(env.PATH ?? '').split(path.delimiter), '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin'].filter(Boolean).map((dir) => path.join(dir, 'tmux'))
+        for (const file of places.filter(Boolean)) {
+            const said = spawnSync(file, ['-V'], { encoding: 'utf8', timeout: 3000 })
+            const major = Number(/tmux (?:next-)?(\d+)\./.exec(said.stdout ?? '')?.[1])
+            if (said.status === 0 && major >= 3) { tmuxAt = file; break }
+        }
+        return tmuxAt
+    }
+    /** What tmux answers, or null where it fails (a session that is not there, a server that is not running). */
+    const tmuxSays = (args) => new Promise((resolve) => {
+        if (!tmuxPath()) return resolve(null)
+        execFile(tmuxPath(), args, { timeout: 3000 }, (error, stdout) => resolve(error ? null : String(stdout).trim()))
+    })
+    const inTmux = () => vscode.workspace.getConfiguration('lanekit').get('agentsInTmux') !== false && Boolean(tmuxPath())
+    // Words typed into a person's shell, each one word whatever it holds: in sh, bash and zsh, and in fish alike.
+    const word = (text) => `'${String(text).replaceAll("'", "'\\''")}'`
+    const loginShell = () => { try { return os.userInfo().shell || '/bin/bash' } catch { return '/bin/bash' } }
+
     /**
      * An agent in a lane, in a terminal of its own named for the lane and the agent and in the lane's colour, so the
-     * terminal list says which agent works where. The command is typed into the terminal's shell rather than run as
-     * its process, so the agent has the PATH and the environment a person's terminal has, and a shell is left when it
-     * exits. A second of the same agent in one lane is numbered.
+     * terminal list says which agent works where. A second of the same agent in one lane is numbered. In tmux, the
+     * session is named as the terminal is, and the agent runs in a login shell of the person's own (`-lic`), so it has
+     * the PATH and the environment their terminal has; the session ends when the agent does, and the terminal is left
+     * at its prompt in the lane. Without tmux the command is typed into the terminal's shell, for the same reason.
      */
     const startAgent = async (repo, lane, id) => {
         const agent = AGENTS[id]
         if (!agent) throw new Error(`LaneKit knows no agent called ${id}.`)
         if (!NAME.test(lane.name)) throw new Error(`${lane.name} is not a lane name LaneKit would type into a terminal.`)
+        const tmux = inTmux() ? tmuxPath() : null
         const taken = new Set([...opened.values()].filter((about) => about.checkout === lane.path).map((about) => about.name))
-        let name = `${lane.name} · ${agent.short}`
-        for (let n = 2; taken.has(name); n++) name = `${lane.name} · ${agent.short} ${n}`
+        const stem = `lk-${String(repo.id).toLowerCase().replace(/[^a-z0-9-]+/g, '-')}-${lane.name}-${id}`
+        let name
+        let session
+        for (let n = 1; n < 100; n++) {
+            name = `${lane.name} · ${agent.short}${n > 1 ? ` ${n}` : ''}`
+            session = `${stem}${n > 1 ? `-${n}` : ''}`
+            if (taken.has(name)) continue
+            if (tmux && await tmuxSays(['has-session', '-t', `=${session}`]) !== null) continue   // a session of that name runs already
+            break
+        }
         const terminal = newTerminal(repo, lane, { agent: id, name })
-        terminal.sendText([agent.bin, ...agent.args(lane.name)].join(' '))
+        const command = [agent.bin, ...agent.args(lane.name)].join(' ')
+        terminal.sendText(tmux ? [tmux, 'new-session', '-s', session, '-c', lane.path, loginShell(), '-lic', command].map(word).join(' ') : command)
         terminal.show()
         await context.workspaceState?.update?.('lanekit.agent', id)
-        return { terminal: name }
+        return { terminal: name, ...(tmux ? { tmux: session } : {}) }
     }
 
     /**
@@ -498,18 +537,45 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
     let agentsSaid = null
     const agentStates = new Map()   // report key -> the state last heard, to say each change once
 
-    /** An agent's terminal: the one whose shell its process runs under, among this window's terminals. */
+    /** The tmux session an agent's pane is in, or null where its server or its pane is gone. */
+    const tmuxSessionOf = (agent) => (agent.tmux ? tmuxSays(['-S', agent.tmux.socket, 'display-message', '-p', '-t', agent.tmux.pane, '#{session_name}']) : Promise.resolve(null))
+    /**
+     * An agent's terminal, among this window's: the one whose shell its process runs under, or, for an agent in tmux,
+     * whose shell runs a tmux client attached to the agent's session.
+     */
     const terminalOfAgent = async (agent) => {
-        for (const terminal of vscode.window.terminals ?? []) {
-            const pid = await Promise.resolve(terminal.processId).catch(() => null)
-            if (pid && agent.pids.includes(pid)) return terminal
+        const terminals = await Promise.all((vscode.window.terminals ?? []).map(async (terminal) => [terminal, await Promise.resolve(terminal.processId).catch(() => null)]))
+        const under = (pids) => terminals.find(([, pid]) => pid && pids.includes(pid))?.[0] ?? null
+        const direct = under(agent.pids)
+        if (direct || !agent.tmux) return direct
+        const session = await tmuxSessionOf(agent)
+        if (!session) return null
+        const clients = await tmuxSays(['-S', agent.tmux.socket, 'list-clients', '-t', `=${session}`, '-F', '#{client_pid}'])
+        for (const client of String(clients ?? '').split('\n').map(Number).filter((pid) => pid > 1)) {
+            const showing = under(ancestry(client).map((entry) => entry.pid))
+            if (showing) return showing
         }
         return null
     }
-    /** An agent brought forward: its terminal, with the focus, or its lane on LaneKit's page where the terminal is not this window's. */
+    /**
+     * An agent brought forward: its terminal, with the focus. One in tmux with no terminal of this window on it (the
+     * terminal was closed, or the editor) is attached again in a new terminal named for it. Else its lane on LaneKit's
+     * page, and a word that the agent runs elsewhere.
+     */
     const showAgent = async (agent) => {
         const terminal = await terminalOfAgent(agent)
         if (terminal) { terminal.show(false); return true }
+        const session = await tmuxSessionOf(agent)
+        if (session) {
+            const again = vscode.window.createTerminal({
+                name: agentName(agent), ...(agent.cwd ? { cwd: agent.cwd } : {}),
+                ...(agent.lane && vscode.ThemeColor ? { color: new vscode.ThemeColor(colourOf(agent.lane)) } : {}),
+                ...(vscode.ThemeIcon ? { iconPath: new vscode.ThemeIcon('sparkle') } : {})
+            })
+            again.sendText([tmuxPath(), '-S', agent.tmux.socket, 'attach-session', '-t', `=${session}`].map(word).join(' '))
+            again.show(false)
+            return true
+        }
         if (agent.repo) await reveal({ repo: agent.repo, lane: agent.lane })
         vscode.window.showInformationMessage(`LaneKit: ${agentName(agent)} runs in a terminal outside this window (another window, tmux, or a terminal of its own).`)
         return false
