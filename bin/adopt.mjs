@@ -24,21 +24,18 @@
  *   .gitignore          a line for .lanekit/ (the gate's records), and one for the
  *                       environment file when git would otherwise see it
  *   /lane and /land     for Claude Code (.claude/commands) and OpenCode (.opencode/commands)
- *   status reporters    Claude Code's hooks, added to .claude/settings.json beside any there,
- *                       and OpenCode's plugin (.opencode/plugins/lanekit.js): each agent says
- *                       which lane it works in and whether it is thinking, running a tool,
- *                       waiting on you or done, for LaneKit's page and the editor (lib/agents.mjs)
  *
- * WHAT IT WILL NOT DO. Overwrite a file (it adds to .gitignore and .claude/settings.json), commit
- * anything, touch the application's code, or run in a lane or a folder that is not the top of a
- * repository's main checkout.
+ * Not the agents' status reporters: those are installed once a machine, not once a repository
+ * (bin/agent-reports.mjs, or the editor's extension asking).
+ *
+ * WHAT IT WILL NOT DO. Overwrite a file, commit anything, touch the application's code, or
+ * run in a lane or a folder that is not the top of a repository's main checkout.
  */
 
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { installReporters } from '../lib/agents.mjs'
 import { CONFIG_NAME } from '../lib/config.mjs'
 import { AGENTS, writeAgentCommands } from './claude-commands.mjs'
 import { CHECK, configFor, freeWindowBeside, shimFor, slugFor, WINDOW } from './init.mjs'
@@ -171,10 +168,6 @@ export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Obje
         ? agents.flatMap((agent) => ['lane.md', 'land.md'].map((file) => path.join(AGENTS[agent].dir, file))).filter((rel) => !fs.existsSync(path.join(dir, rel)))
         : writeAgentCommands(dir, name, slug, { agents })
     said.wrote.push(...commands)
-    const reporters = installReporters(dir, slug, { agents, check })
-    said.wrote.push(...reporters.wrote)
-    said.kept.push(...reporters.kept)
-    said.warnings.push(...reporters.warnings)
     return { ...said, name, slug, envFile, integrationBranch: config.integrationBranch, portWindow: [config.lane?.portBase, config.lane?.portCeiling] }
 }
 

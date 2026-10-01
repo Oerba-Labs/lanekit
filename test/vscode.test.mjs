@@ -149,7 +149,7 @@ const standIn = (folders) => {
             onDidChangeActiveTerminal: heard('active'),
             onDidCloseTerminal: heard('close'),
             registerWebviewViewProvider: (id, provider, options) => { seen.views.set(id, { provider, options }); return disposable },
-            showInformationMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
+            showInformationMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(answers.choose?.(args[0], args.slice(1))) },
             showErrorMessage: (...args) => { seen.said.push(args[0]); return Promise.resolve(undefined) },
             showWarningMessage: () => Promise.resolve(undefined),
             showQuickPick: (items) => { seen.picks.push(items); return Promise.resolve(answers.pick ? items.find((item) => item.label.includes(answers.pick)) : undefined) },
@@ -257,9 +257,11 @@ before(async () => {
 
     // The editor opened on the lane itself: its repository is still found.
     editor = standIn([working])
+    // Never asked here whether to add the agents' reporters: the test of that asks in a home of its own.
+    editor.config.reportAgents = 'never'
     const remembered = new Map()
     const workspaceState = { get: (key) => remembered.get(key), update: async (key, value) => { remembered.set(key, value) } }
-    host = await activate({ subscriptions: [], workspaceState }, editor.vscode, { root: KIT })
+    host = await activate({ subscriptions: [], workspaceState }, editor.vscode, { root: KIT, home: path.join(scratch, 'home-never'), env: {} })
 })
 
 after(() => {
@@ -887,4 +889,49 @@ test('an agent at work is told to the pages and the status bar, said once when i
     assert.equal(gone.ok, false)
     assert.match(gone.error, /stopped/)
     closeAllTerminals()
+})
+
+test('the agents\' reporters are offered once a machine: added on Add, not asked again after Not now, and kept up to date after a yes', async () => {
+    const home = path.join(scratch, 'home-offer')
+    const settingsFile = path.join(home, '.claude', 'settings.json')
+    const pluginFile = path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')
+    const QUESTION = /^LaneKit can show what your agents are doing/
+    /** A window opening on this machine: the person's answer to the question, and what the machine remembers. */
+    const open = async (choose, remembered, { setting, wait = (said) => said.some((line) => QUESTION.test(line)) } = {}) => {
+        const other = standIn([working])
+        other.answers.choose = (text, choices) => (QUESTION.test(text) ? choose : undefined)
+        if (setting) other.config.reportAgents = setting
+        const globalState = { get: (key) => remembered.get(key), update: async (key, value) => { remembered.set(key, value) } }
+        const made = await activate({ subscriptions: [], globalState }, other.vscode, { root: KIT, home, env: {} })
+        for (let i = 0; i < 150 && !wait(other.seen.said); i++) await new Promise((resolve) => setTimeout(resolve, 20))
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        made.dispose()
+        return other.seen.said
+    }
+    const machine = new Map()
+    const declined = await open('Not now', machine)
+    assert.ok(declined.some((line) => QUESTION.test(line)), 'asked, once lanes are open')
+    assert.equal(machine.get('lanekit.reportAgents'), 'no')
+    assert.ok(!fs.existsSync(settingsFile) && !fs.existsSync(pluginFile), 'nothing written')
+    const again = await open('Add', machine, { wait: () => false })
+    assert.ok(!again.some((line) => QUESTION.test(line)), 'not asked again after Not now')
+
+    const other = new Map()
+    const added = await open('Add', other, { wait: (said) => said.some((line) => /^LaneKit: Added/.test(line)) })
+    assert.equal(other.get('lanekit.reportAgents'), 'yes')
+    assert.ok(added.some((line) => line.includes(settingsFile) && line.includes(pluginFile)), added.join(' | '))
+    assert.match(fs.readFileSync(settingsFile, 'utf8'), /lane\.mjs' report claude/)
+    assert.ok(fs.existsSync(pluginFile))
+
+    // lanekit moved since: after a yes, brought up to date without a word.
+    const written = fs.readFileSync(settingsFile, 'utf8')
+    fs.writeFileSync(settingsFile, written.replaceAll(KIT, '/somewhere/old'))
+    const quiet = await open('Add', other, { wait: () => fs.readFileSync(settingsFile, 'utf8') === written })
+    assert.equal(fs.readFileSync(settingsFile, 'utf8'), written)
+    assert.ok(!quiet.some((line) => QUESTION.test(line)))
+
+    // A workspace's setup can answer for it.
+    fs.rmSync(path.join(home, '.config'), { recursive: true })
+    await open(undefined, new Map(), { setting: 'always', wait: () => fs.existsSync(pluginFile) })
+    assert.ok(fs.existsSync(pluginFile), 'always: added without asking')
 })

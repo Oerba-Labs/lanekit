@@ -3,7 +3,7 @@
   "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: open a commit's or a lane's changes, gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -111,6 +111,11 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "lanekit.reportAgents",
+        "title": "Have This Machine's Agents Report to LaneKit",
+        "category": "LaneKit"
+      },
+      {
         "command": "lanekit.goto",
         "title": "Go to a Lane\u2026",
         "category": "LaneKit",
@@ -199,6 +204,22 @@
           ],
           "default": "tab",
           "description": "Where LaneKit opens: from its icon in the activity bar, from the status bar's lane menu, and from a notification's Show."
+        },
+        "lanekit.reportAgents": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Ask once, the first time a repository with lanes is open on this machine.",
+            "Add LaneKit's hook to Claude Code's settings and its plugin to OpenCode's without asking, and keep them up to date.",
+            "Never add them, and never ask."
+          ],
+          "default": "ask",
+          "scope": "machine",
+          "description": "Whether this machine's agents say which lane they work in and what they are doing, through LaneKit's hook in ~/.claude/settings.json and its plugin in ~/.config/opencode/plugins/."
         },
         "lanekit.gateOnCommit": {
           "type": "boolean",

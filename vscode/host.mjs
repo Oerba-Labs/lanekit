@@ -26,7 +26,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { AGENT_NAMES } from '../lib/agents.mjs'
+import { AGENT_NAMES, installForUser, reportersOn } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
 export const VIEW = 'lanekit.lanes'
@@ -126,7 +126,7 @@ export const pageHtml = (webDir, webview, fileUri, { nonce = crypto.randomBytes(
     return html.replace(/<html\b/, () => `<html ${marks}`)
 }
 
-export const activate = async (context, vscode, { root }) => {
+export const activate = async (context, vscode, { root, home = os.homedir(), env = process.env }) => {
     const webDir = path.join(root, 'web')
     const subscriptions = context.subscriptions
     const output = vscode.window.createOutputChannel('LaneKit')
@@ -292,6 +292,7 @@ export const activate = async (context, vscode, { root }) => {
             if (key !== lastSent) { lastSent = key; post({ type: 'state', state }) }
             updateBar()
             heardAgents(state.agents ?? [])
+            if (state.repos.length) void offerReporters().catch((error) => output.appendLine(`Offering the agents' reporters failed: ${error.message}`))
             // Somebody is looking: each repository fetched now and then, by itself (the service keeps to five minutes).
             if (anyVisible()) service.fetchQuietly().catch(() => {})
             gateOnCommit(state)
@@ -556,6 +557,44 @@ export const activate = async (context, vscode, { root }) => {
         try { heardAgents(service.agents()) } catch (error) { output.appendLine(`Reading the agents failed: ${error.message}`) }
     }
     const agentsTimer = setInterval(watchAgents, AGENTS_EVERY_MS)
+
+    // The reporters, once a machine (lib/agents.mjs): LaneKit's hook in the person's Claude Code settings and its
+    // plugin among their OpenCode plugins. Asked once, the first time a repository with lanes is open on the
+    // machine, and the answer kept for it; lanekit.reportAgents answers instead, `always` (a workspace's setup can
+    // say so) or `never`. After a yes they are kept up to date, should lanekit move.
+    const places = { home, env }
+    let reportersOffered = false
+    const addReporters = (quietly) => {
+        const said = installForUser(root, places)
+        for (const file of said.wrote) output.appendLine(`LaneKit: wrote ${file}, so this machine's agents say what they are doing.`)
+        for (const warning of said.warnings) output.appendLine(`LaneKit: ${warning}.`)
+        if (!quietly) {
+            const what = said.wrote.length ? `Added: ${said.wrote.join('; ')}.` : 'They were in place already.'
+            const left = said.warnings.length ? ` ${said.warnings.join('. ')}.` : ''
+            vscode.window.showInformationMessage(`LaneKit: ${what} Agents started from now on say what they are doing; one running already, once it is started again.${left}`)
+        }
+        return said
+    }
+    const offerReporters = async () => {
+        if (reportersOffered) return
+        reportersOffered = true
+        const setting = vscode.workspace.getConfiguration('lanekit').get('reportAgents') ?? 'ask'
+        if (setting === 'never') return
+        const now = reportersOn(root, places)
+        if (now.claude.state !== 'missing' && now.opencode.state !== 'missing') return
+        const answered = context.globalState?.get?.('lanekit.reportAgents')
+        if (setting === 'always' || answered === 'yes') { addReporters(true); return }
+        if (answered === 'no') return
+        const choice = await vscode.window.showInformationMessage(
+            'LaneKit can show what your agents are doing on each lane: thinking, running, needs you, done. Add its hook to your Claude Code settings and its plugin to your OpenCode plugins, on this machine?',
+            'Add', 'Not now')
+        if (choice === 'Add') {
+            await context.globalState?.update?.('lanekit.reportAgents', 'yes')
+            addReporters(false)
+        } else if (choice === 'Not now') {
+            await context.globalState?.update?.('lanekit.reportAgents', 'no')
+        }
+    }
 
     // -----------------------------------------------------------------------
     // what the page opens
@@ -1085,6 +1124,10 @@ export const activate = async (context, vscode, { root }) => {
             await readIfNever()
             const x = await laneFor(null, 'Open which lane in a new window?', () => true)
             if (x) await open({ what: 'lane', repo: x.repo.path, lane: x.lane.name })
+        },
+        'lanekit.reportAgents': async () => {
+            await context.globalState?.update?.('lanekit.reportAgents', 'yes')
+            addReporters(false)
         },
         'lanekit.agents': async () => {
             const agents = service.known().at ? service.agents() : []

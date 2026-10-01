@@ -14,8 +14,7 @@
  *
  * WHAT IT WRITES, and nothing more: `lane.config.json`, the shim named after the project,
  * a `check` script that is the whole of tier 1, a `.gitignore` that keeps a lane's
- * environment file out of git, a README, /lane and /land with each agent's status reporter
- * (lib/agents.mjs), and the first commit on `main`. No language is
+ * environment file out of git, a README, and the first commit on `main`. No language is
  * chosen and no dependency enters the tree; what the project is made of is the first
  * thing its author decides, not this.
  *
@@ -38,7 +37,6 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { installReporters } from '../lib/agents.mjs'
 import { CONFIG_NAME } from '../lib/config.mjs'
 import { writeAgentCommands } from './claude-commands.mjs'
 
@@ -230,9 +228,6 @@ const main = () => {
     // /lane and /land for Claude Code and OpenCode, in the repository so they are wherever a checkout is.
     writeAgentCommands(dir, name, slug)
     log('wrote /lane and /land for Claude Code (.claude/commands) and OpenCode (.opencode/commands)')
-    // Each agent says which lane it works in and what it is doing, for LaneKit's page and the editor.
-    installReporters(dir, slug)
-    log("wrote Claude Code's status hooks (.claude/settings.json) and OpenCode's plugin (.opencode/plugins/lanekit.js)")
 
     const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
     try {

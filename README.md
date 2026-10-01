@@ -173,7 +173,6 @@ README, and makes the first commit. Its port window sits above any other project
 | `./<project>` | the shim, the one command everything goes through |
 | `./check` | what the gate runs: put the project's tests in it |
 | `.claude/commands/`, `.opencode/commands/` | `/lane` and `/land` for Claude Code and OpenCode |
-| `.claude/settings.json` hooks, `.opencode/plugins/lanekit.js` | each agent saying which lane it works in and what it is doing, for the page and the editor |
 
 ## Working with an agent
 
@@ -317,9 +316,13 @@ in the picture. There its clicks drive the editor:
   use), **Done** or **Failed**, since when; a click on one brings forward its terminal. One coming
   to need you is said in a notification with **Show**, unless its terminal is the one in front, and
   the status bar counts the agents and those waiting on you, a click listing them all. Each agent
-  says this itself, through the hooks and the plugin `adopt` writes, into the main checkout's
-  `.lanekit/agents/`: its state, the name of its tool, its folder and its process, never what the
-  tool was given or what anybody said. An agent that ends, or dies, drops off;
+  says this itself, into the main checkout's `.lanekit/agents/`: its state, the name of its tool,
+  its folder and its process, never what the tool was given or what anybody said. An agent that
+  ends, or dies, drops off. It says so through a hook in your Claude Code settings and a plugin among
+  your OpenCode plugins, installed once a machine rather than once a repository, so nothing is
+  committed: the extension asks the first time it finds lanes on a machine (`lanekit.reportAgents`
+  answers instead, `always` or `never`), or run `node ~/.lanekit/bin/agent-reports.mjs`. Outside a
+  repository with lanes an agent says nothing;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
@@ -341,7 +344,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.12.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.13.0.vsix
 ```
 
 <br clear="right">

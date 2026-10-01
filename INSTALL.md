@@ -26,8 +26,6 @@ small files and no dependency:
 | `.gitignore` | a line for `.lanekit/`, the gate's records, and for the environment file if git would otherwise see it |
 | `.claude/commands/lane.md`, `land.md` | `/lane` and `/land` for Claude Code |
 | `.opencode/commands/lane.md`, `land.md` | `/lane` and `/land` for OpenCode |
-| `.claude/settings.json` | Claude Code's status hooks, added beside any hooks there: each event runs `./<slug> lane report claude` in the background, so LaneKit can say which lane the session works in and whether it is thinking, running a tool, waiting on the person or done |
-| `.opencode/plugins/lanekit.js` | the same for OpenCode, as a plugin that finds lanekit where the shim does |
 
 **Done looks like this:** `./<slug> lane new lanekit-trial` makes a lane with a port of its own,
 `./<slug> gate` inside it prints `READY`, and the trial lane is cleared away again.
@@ -89,8 +87,7 @@ node <lanekit>/bin/adopt.mjs
 ```
 
 `adopt` writes the files in the table above, **each only where it is missing**, and never
-overwrites anything: to `.gitignore` and `.claude/settings.json` it adds, beside what is there.
-Run it again in a repository adopted before, and it adds only what is new. It reads the integration branch from git (the remote's default branch, else
+overwrites anything. It reads the integration branch from git (the remote's default branch, else
 `main`, else `master`) and chooses an environment file git ignores. It takes a port window of a
 hundred above any other lanekit project in the parent folder, and names the project from
 `package.json`, else the folder. Options: `--name "<Name>"`, `--port-base <port>`, and
@@ -237,7 +234,7 @@ A lane starts from the last commit on the integration branch, so the shim and th
 committed before a lane can have them. Stage the files by name, never with `git add -A`:
 
 ```sh
-git add lane.config.json <slug> check .gitignore .claude/commands .claude/settings.json .opencode/commands .opencode/plugins/lanekit.js
+git add lane.config.json <slug> check .gitignore .claude/commands .opencode/commands
 git status --short                  # only those, and nothing secret
 git commit -m "Give the repository lanes (lanekit)"
 ```

@@ -2,9 +2,9 @@
  * The agents' reports (lib/agents.mjs), asked what they promise: Claude Code's hook events and
  * OpenCode's taken to one state each, a late event never undoing a later one, a report written into
  * the main checkout whichever lane the agent works in and read back against that lane, an agent no
- * longer running left unread and then cleared away, `lane report claude` silent on stdout and never
- * failing, OpenCode's plugin finding lanekit, and the reporters added to a repository beside what
- * is there without replacing it.
+ * longer running left unread and then cleared away, nothing said outside a repository with lanes,
+ * `lane report claude` silent on stdout and never failing, OpenCode's plugin finding lanekit, and the
+ * reporters installed once a machine beside what is there, without replacing anything not LaneKit's.
  *
  *     node --test
  *
@@ -20,8 +20,8 @@ import { pathToFileURL } from 'node:url'
 import { after, before, test } from 'node:test'
 
 import {
-    agentsDirOf, agentsIn, ancestry, claudeHooks, claudeStep, installReporters, OPENCODE_PLUGIN, opencodeReporter,
-    readReports, reportClaude, statOf, withClaudeHooks
+    agentsDirOf, agentsIn, ancestry, CLAUDE_EVENTS, claudeHooks, claudeStep, installForUser, opencodePlugin, opencodeReporter,
+    readReports, reportClaude, reportersOn, statOf, withClaudeHooks
 } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
@@ -223,65 +223,96 @@ test('OpenCode\'s events come to one state for the process, written only when it
     fs.rmSync(file)
 })
 
-test('OpenCode\'s plugin finds lanekit where the shim does, and hands over to it', async () => {
-    const plugin = path.join(laneDir, '.opencode', 'plugins', 'lanekit.js')
+test('OpenCode\'s plugin finds this lanekit, hands over to it, and does nothing outside a repository with lanes', async () => {
+    const plugin = path.join(scratch, 'opencode-plugins', 'lanekit.js')
     fs.mkdirSync(path.dirname(plugin), { recursive: true })
-    fs.writeFileSync(plugin, OPENCODE_PLUGIN)
-    const kept = process.env.LANEKIT
-    process.env.LANEKIT = KIT
-    try {
-        const { LaneKitReport } = await import(pathToFileURL(plugin).href)
-        const hooks = await LaneKitReport({ directory: laneDir, worktree: laneDir })
-        assert.equal(typeof hooks.event, 'function')
-        assert.equal(typeof hooks['tool.execute.before'], 'function')
-        assert.ok(fs.existsSync(path.join(agentsDirOf(repo), `opencode-${process.pid}.json`)))
-        fs.rmSync(path.join(agentsDirOf(repo), `opencode-${process.pid}.json`))
-        process.env.LANEKIT = path.join(scratch, 'nowhere')
-        const elsewhere = path.join(scratch, 'elsewhere')
-        fs.mkdirSync(elsewhere, { recursive: true })
-        const none = await LaneKitReport({ directory: elsewhere, worktree: elsewhere })
-        assert.deepEqual(none, {}, 'outside a repository, or with no lanekit found: no hooks, and no failure')
-    } finally {
-        if (kept === undefined) delete process.env.LANEKIT; else process.env.LANEKIT = kept
-        fs.rmSync(path.join(laneDir, '.opencode'), { recursive: true })
-    }
+    fs.writeFileSync(plugin, opencodePlugin(KIT))
+    const { LaneKitReport } = await import(pathToFileURL(plugin).href)
+    const hooks = await LaneKitReport({ directory: laneDir, worktree: laneDir })
+    assert.equal(typeof hooks.event, 'function')
+    assert.equal(typeof hooks['tool.execute.before'], 'function')
+    const file = path.join(agentsDirOf(repo), `opencode-${process.pid}.json`)
+    assert.ok(fs.existsSync(file))
+    fs.rmSync(file)
+    const elsewhere = path.join(scratch, 'elsewhere')
+    fs.mkdirSync(elsewhere, { recursive: true })
+    assert.deepEqual(await LaneKitReport({ directory: elsewhere, worktree: elsewhere }), {}, 'outside a repository: no hooks, and no failure')
+})
+
+test('an agent in a repository without lanes says nothing, and gives it no .lanekit folder', async () => {
+    const plain = path.join(scratch, 'plain')
+    fs.mkdirSync(plain, { recursive: true })
+    git(plain, 'init', '-q', '-b', 'main')
+    assert.equal(reportClaude(JSON.stringify({ ...event('SessionStart'), cwd: plain }), { chain: chainTo(RUNNING) }), null)
+    assert.deepEqual(await opencodeReporter({ directory: plain, worktree: plain }, { pid: RUNNING, chain: [] }), {})
+    assert.ok(!fs.existsSync(path.join(plain, '.lanekit')))
 })
 
 test('Claude Code\'s hooks are added beside the ones there, once, in the background but for SessionEnd, and never fail it', () => {
     const theirs = { permissions: { allow: ['Bash(npm test)'] }, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './guard.sh' }] }] } }
-    const { settings, added } = withClaudeHooks(theirs, 'demo')
-    assert.equal(added, Object.keys(claudeHooks('demo')).length)
+    const { settings, added } = withClaudeHooks(theirs, KIT)
+    assert.equal(added, CLAUDE_EVENTS.length)
     assert.deepEqual(settings.permissions, theirs.permissions)
     assert.equal(settings.hooks.PreToolUse.length, 2)
     assert.equal(settings.hooks.PreToolUse[0].hooks[0].command, './guard.sh', 'theirs first, untouched')
     const ours = settings.hooks.PreToolUse[1].hooks[0]
-    assert.equal(ours.command, '"$CLAUDE_PROJECT_DIR"/demo lane report claude || true')
+    assert.equal(ours.command, `node '${KIT}/dev/lane.mjs' report claude || true`)
     assert.equal(ours.async, true)
     assert.equal(settings.hooks.SessionEnd[0].hooks[0].async, undefined, 'SessionEnd waits: Claude Code may be gone before a background hook starts')
-    assert.equal(withClaudeHooks(settings, 'demo').added, 0, 'once')
+    assert.equal(withClaudeHooks(settings, KIT).added, 0, 'once')
+    // lanekit moved: LaneKit's own are made to name it, and nothing else changes.
+    const moved = withClaudeHooks(settings, '/opt/lanekit')
+    assert.deepEqual([moved.added, moved.updated], [0, CLAUDE_EVENTS.length])
+    assert.equal(moved.settings.hooks.PreToolUse[1].hooks[0].command, "node '/opt/lanekit/dev/lane.mjs' report claude || true")
+    assert.equal(moved.settings.hooks.PreToolUse[0].hooks[0].command, './guard.sh')
+    // A path with a quote in it is still one word to the shell.
+    assert.equal(claudeHooks("/srv/it's/lanekit").Stop.command, `node '/srv/it'\\''s/lanekit/dev/lane.mjs' report claude || true`)
 })
 
-test('the reporters are written into a repository where missing, and what is there is kept', () => {
-    const dir = path.join(scratch, 'reporters')
-    fs.mkdirSync(path.join(dir, '.claude'), { recursive: true })
-    fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Read'] } }))
-    const first = installReporters(dir, 'demo')
-    assert.deepEqual(first.wrote, [path.join('.claude', 'settings.json') + " (LaneKit's status hooks)", path.join('.opencode', 'plugins', 'lanekit.js')])
-    const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'))
-    assert.deepEqual(settings.permissions, { allow: ['Read'] })
-    assert.ok(settings.hooks.Stop)
-    assert.equal(fs.readFileSync(path.join(dir, '.opencode', 'plugins', 'lanekit.js'), 'utf8'), OPENCODE_PLUGIN)
-    const second = installReporters(dir, 'demo')
-    assert.deepEqual(second.wrote, [])
-    assert.equal(second.kept.length, 2)
-    fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{ not json')
-    const broken = installReporters(dir, 'demo', { agents: ['claude'] })
-    assert.deepEqual(broken.wrote, [])
-    assert.match(broken.warnings[0], /not valid JSON/)
-    assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'), '{ not json', 'left as it was')
-    const checked = installReporters(path.join(scratch, 'checked'), 'demo', { check: true })
+test('the hook Claude Code is given runs the reporter, from any folder', () => {
+    const { command } = claudeHooks(KIT).SessionStart
+    const ran = spawnSync('sh', ['-c', command], { cwd: scratch, env, input: JSON.stringify({ ...event('SessionStart'), session_id: 'by-hook' }), encoding: 'utf8' })
+    assert.equal(ran.status, 0, ran.stderr)
+    assert.equal(ran.stdout, '')
+    assert.ok(fs.existsSync(path.join(agentsDirOf(repo), 'claude-by-hook.json')))
+    spawnSync('sh', ['-c', command], { cwd: scratch, env, input: JSON.stringify({ ...event('SessionEnd'), session_id: 'by-hook' }), encoding: 'utf8' })
+    assert.ok(!fs.existsSync(path.join(agentsDirOf(repo), 'claude-by-hook.json')))
+})
+
+test('the reporters are installed once a machine, where Claude Code and OpenCode look, and nothing not LaneKit\'s is replaced', () => {
+    const home = path.join(scratch, 'home')
+    const places = { home, env: {} }
+    const settingsFile = path.join(home, '.claude', 'settings.json')
+    const pluginFile = path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true })
+    fs.writeFileSync(settingsFile, JSON.stringify({ model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] } }))
+    assert.deepEqual([reportersOn(KIT, places).claude.state, reportersOn(KIT, places).opencode.state], ['missing', 'missing'])
+    const checked = installForUser(KIT, { ...places, check: true })
     assert.equal(checked.wrote.length, 2)
-    assert.ok(!fs.existsSync(path.join(scratch, 'checked')), '--check writes nothing')
+    assert.ok(!fs.existsSync(pluginFile), '--check writes nothing')
+    const first = installForUser(KIT, places)
+    assert.deepEqual(first.wrote, [`${settingsFile} (LaneKit's hooks)`, pluginFile])
+    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
+    assert.equal(settings.model, 'opus')
+    assert.equal(settings.hooks.Stop[0].hooks[0].command, 'say done', 'theirs kept, first')
+    assert.equal(settings.hooks.Stop.length, 2)
+    assert.equal(fs.readFileSync(pluginFile, 'utf8'), opencodePlugin(KIT))
+    assert.deepEqual([reportersOn(KIT, places).claude.state, reportersOn(KIT, places).opencode.state], ['current', 'current'])
+    assert.deepEqual(installForUser(KIT, places).wrote, [], 'once')
+    // Another lanekit: LaneKit's own brought up to date.
+    assert.equal(installForUser('/opt/lanekit', places).wrote.length, 2)
+    assert.match(fs.readFileSync(pluginFile, 'utf8'), /\["\/opt\/lanekit"/)
+    // What is not LaneKit's is left, and said.
+    fs.writeFileSync(pluginFile, '// somebody else\'s plugin\n')
+    fs.writeFileSync(settingsFile, '{ not json')
+    const refused = installForUser(KIT, places)
+    assert.deepEqual(refused.wrote, [])
+    assert.equal(refused.warnings.length, 2)
+    assert.equal(fs.readFileSync(pluginFile, 'utf8'), '// somebody else\'s plugin\n')
+    assert.equal(fs.readFileSync(settingsFile, 'utf8'), '{ not json')
+    // Where Claude Code and OpenCode are told to look instead.
+    const elsewhere = installForUser(KIT, { home, env: { CLAUDE_CONFIG_DIR: path.join(scratch, 'cc'), XDG_CONFIG_HOME: path.join(scratch, 'xdg') } })
+    assert.deepEqual(elsewhere.wrote, [`${path.join(scratch, 'cc', 'settings.json')} (LaneKit's hooks)`, path.join(scratch, 'xdg', 'opencode', 'plugins', 'lanekit.js')])
 })
 
 test('every repository\'s agents are attributed to the lane whose folder holds theirs, the main checkout else', () => {
