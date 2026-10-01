@@ -223,6 +223,7 @@ const QUEUE_FULL = 5
 const busyIn = (repoId) => (current?.jobs ?? []).filter((job) => job.repo === repoId && job.state === 'queued').length >= QUEUE_FULL
 const jobById = (id) => (current?.jobs ?? []).find((job) => job.id === id)
 const pressedHere = new Set()   // jobs this page pressed: one of them failing opens its output
+const showWhenDone = new Set()  // jobs whose output is the point of them (adopt's: what to decide next), opened when they end
 
 // ---------------------------------------------------------------------------
 // asking
@@ -239,6 +240,7 @@ const notice = (message, tone = 'risk') => {
 
 const took = (state) => {
     current = state
+    for (const job of state.jobs ?? []) doneHere(job)
     settleOptimistic()
     const updated = $('updated')
     updated.classList.remove('lost')
@@ -279,10 +281,18 @@ host.on('job', (message) => {
         const before = at >= 0 ? jobs[at] : null
         if (at >= 0) jobs[at] = message.job; else jobs.unshift(message.job)
         if (!before || before.step !== message.job.step || before.state !== message.job.state) draw(true)
+        doneHere(message.job)
         failedHere(message.job)
     }
     if (message.id === shownJob) followJob(message.id)
 })
+/** A press whose output is the point of it opens that output when it ends, well or badly. */
+const doneHere = (job) => {
+    if (!job || job.state !== 'done' || !showWhenDone.has(job.id)) return
+    showWhenDone.delete(job.id)
+    pressedHere.delete(job.id)
+    if (shownJob !== job.id) showJob(job.id)
+}
 /** A press made on this page that ended badly opens its output, once: what went wrong is there. */
 const failedHere = (job) => {
     if (!job || job.state !== 'done' || job.code === 0 || !pressedHere.has(job.id)) return
@@ -1100,9 +1110,10 @@ const inlineDetails = (repo, commit) => (IN_SIDEBAR && selected?.sha && isSelect
 // ---------------------------------------------------------------------------
 
 const VERB_WORDS = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making a lane',
-    pull: 'Pulling', fetch: 'Fetching', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved' }
+    pull: 'Pulling', fetch: 'Fetching', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
 /** A job's command as a person would type it: lane …, gate, git …, without the node and the path in front. */
 const typed = (command) => String(command ?? '').replace(/^node (?:\S*\/)?dev\/lane\.mjs /, 'lane ').replace(/^node (?:\S*\/)?dev\/gate\.mjs\b/, 'gate')
+    .replace(/^node (?:\S*\/)?bin\/adopt\.mjs\b/, 'lane adopt')
 const cancelJob = async (id) => {
     try { if (!await host.cancel(id)) notice('It had begun already, so it was not cancelled.') } catch { notice('LaneKit did not answer; nothing was cancelled.') }
     refresh()
@@ -1886,6 +1897,74 @@ const sayTitle = () => {
     host.showing(shownId(), one ? one.name ?? one.id : null)
 }
 
+// ---------------------------------------------------------------------------
+// repositories without lanes: each a press from them, after a look at what that writes
+// ---------------------------------------------------------------------------
+
+/** Adopt's check, run first: what the question will show. */
+const adoptCheck = async (bare) => {
+    const answer = await press({ repo: bare.id, verb: 'adopt', dryRun: true })
+    if (answer) pending.set(`adopt:${bare.id}`, { verb: 'adopt', stage: 'checking', jobId: answer.id })
+    draw(true)
+}
+/** What the check printed, asked for once it has ended: the files it would write and the window its lanes take. */
+const checkSaid = async (waiting) => {
+    if (waiting.asked) return
+    waiting.asked = true
+    try {
+        const job = await host.job(waiting.jobId, 0)
+        const lines = String(job.output ?? '').split('\n')
+        const kept = lines.filter((line) => /^\s+(would write|kept|note)\b|lanes come from/.test(line)).map((line) => line.trim())
+        waiting.said = kept.length ? kept.join('\n') : lines.slice(-12).join('\n').trim()
+    } catch {
+        waiting.said = ''
+    }
+    draw(true)
+}
+const bareRow = (bare) => {
+    const key = `adopt:${bare.id}`
+    const waiting = pending.get(key)
+    const job = waiting?.jobId ? jobById(waiting.jobId) : null
+    if (waiting?.stage === 'checking' && job?.state === 'done') waiting.stage = job.code === 0 ? 'confirm' : 'refused'
+    if (waiting && waiting.stage !== 'checking') checkSaid(waiting)
+    const giving = (current?.jobs ?? []).find((candidate) => candidate.repo === bare.id && candidate.verb === 'adopt' && !candidate.dryRun && candidate.state !== 'done')
+    const busy = busyIn(bare.id) || Boolean(waiting) || Boolean(giving)
+    const said = waiting?.said ? el('pre', { class: 'adopt-said', text: waiting.said }) : null
+    const dismiss = (label) => el('button', { type: 'button', class: 'btn quiet', text: label, onclick: () => { pending.delete(key); draw(true) } })
+    const question = !waiting ? null
+        : waiting.stage === 'checking' ? el('div', { class: 'confirm' }, el('p', { text: `Reading ${bare.id} for what lanes need…` }))
+            : waiting.stage === 'refused' ? el('div', { class: 'confirm refused' }, el('p', { text: `${bare.id} cannot be given lanes as it is. What the check said:` }), said, dismiss('Dismiss'))
+                : el('div', { class: 'confirm' },
+                    el('p', { text: `Give ${bare.id} lanes? These files are written, each only where it is missing, and committed on its own as one commit, so every lane starts with them. Nothing else of yours goes in it, and nothing is pushed.` }),
+                    said,
+                    el('button', {
+                        type: 'button', class: 'btn primary', text: 'Give it lanes', disabled: busyIn(bare.id),
+                        onclick: async () => {
+                            pending.delete(key)
+                            draw(true)
+                            const answer = await press({ repo: bare.id, verb: 'adopt' })
+                            // Its output says what is left to decide, so it opens when it ends.
+                            if (answer) showWhenDone.add(answer.id)
+                        }
+                    }),
+                    dismiss('Cancel'))
+    return el('li', {},
+        el('span', { class: 'bare-name', text: bare.id }),
+        el('span', { class: 'muted mono bare-path', text: bare.path }),
+        el('span', { class: 'grow' }),
+        giving ? state('info', 'Giving it lanes…', 'small')
+            : iconButton('plus', 'Give it lanes…', { disabled: busy, title: `Shows what LaneKit would write into ${bare.id}, then asks (lane adopt --commit)`, onclick: () => adoptCheck(bare) }),
+        question ? el('div', { class: 'full' }, question) : null)
+}
+/** The repositories here with no lanes yet, listed apart: LaneKit draws a repository once it has them. */
+const withoutLanesOf = () => {
+    const bare = current?.withoutLanes ?? []
+    if (!bare.length) return null
+    return el('section', { class: 'without-lanes' },
+        el('p', { class: 'landed-title', text: `Without lanes · ${bare.length}` }),
+        el('ul', { class: 'landed' }, bare.map(bareRow)))
+}
+
 const sectionFor = (repo) => {
     let kept = sections.get(repo.id)
     if (kept) return kept
@@ -1947,12 +2026,15 @@ const draw = (force = false) => {
     for (const [id, kept] of sections) {
         if (!ids.has(id)) { kept.root.remove(); sections.delete(id) }
     }
+    const bare = shownId() ? null : withoutLanesOf()
     if (!current.repos.length) {
         pane.replaceChildren(el('div', { class: 'empty' },
             el('p', { class: 'empty-title', text: 'No repository here has lanes yet.' }),
             el('p', { class: 'muted', text: `LaneKit looks in ${where}: a checkout with a lane.config.json, one directly inside, or the one a lane belongs to. It appears here by itself.` }),
-            el('p', {}, 'To give a repository lanes, run ', el('code', { text: 'node ~/.lanekit/bin/adopt.mjs' }), ' in it, or ask your agent to follow ',
-                el('a', { href: 'https://github.com/Oerba-Labs/lanekit/blob/main/INSTALL.md', target: '_blank', rel: 'noopener noreferrer', text: 'INSTALL.md' }), '.')))
+            el('p', {}, bare ? 'Give one lanes below, or run ' : 'To give a repository lanes, run ', el('code', { text: 'lane adopt --commit' }), ' in it; then ask your agent to follow ',
+                el('a', { href: 'https://github.com/Oerba-Labs/lanekit/blob/main/INSTALL.md', target: '_blank', rel: 'noopener noreferrer', text: 'INSTALL.md' }),
+                ' for what only the repository can say: how its app picks a port, and its tests.')), bare)
+        drawCommandBar()
         return
     }
     const empty = $('empty')
@@ -1970,6 +2052,7 @@ const draw = (force = false) => {
     for (const node of [...pane.children]) {
         if (![...sections.values()].some((kept) => kept.root === node)) node.remove()
     }
+    if (bare) pane.append(bare)
     drawDetails()
     drawCommandBar()
     if (wantFocus) focusLane(wantFocus.repo, wantFocus.lane)

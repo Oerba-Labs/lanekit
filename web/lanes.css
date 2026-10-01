@@ -470,6 +470,14 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
 .landed li > .full:empty { display: none; }
 .landed .confirm { margin: 0; }
 
+/* Repositories here with no lanes yet, under the ones with them: a name, where it is, and Give it lanes. */
+.without-lanes { margin: 0 0 48px; }
+.without-lanes li { align-items: baseline; }
+.bare-name { font-weight: 600; font-size: var(--s14); }
+.bare-path { font-size: var(--s12); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.adopt-said { flex: 1 1 100%; margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--bg); font-size: var(--s12); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+html[data-surface="sidebar"] .bare-path { display: none; }
+
 
 /* ---- what a press ran ------------------------------------------------------ */
 .job {

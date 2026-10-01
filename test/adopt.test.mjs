@@ -148,3 +148,56 @@ test('a file already named like the shim is kept, and said', () => {
 test('the command writer refuses an agent it does not know', () => {
     assert.throws(() => writeAgentCommands(scratch, 'X', 'x', { agents: ['cursor'] }), /no agent called "cursor"/)
 })
+
+const adoptCli = (dir, ...args) => {
+    try {
+        return { code: 0, out: sh(dir, process.execPath, path.join(KIT, 'bin', 'adopt.mjs'), ...args) }
+    } catch (error) {
+        return { code: error.status, out: `${error.stdout ?? ''}${error.stderr ?? ''}` }
+    }
+}
+
+test('--commit commits what it wrote and nothing else, staged or not', () => {
+    const dir = existing('committed-shop')
+    fs.writeFileSync(path.join(dir, 'src', 'app.js'), 'console.log("staged, and not adopt\'s")\n')
+    git(dir, 'add', 'src/app.js')
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'untracked, and not adopt\'s\n')
+    const ran = adoptCli(dir, '--commit')
+    assert.equal(ran.code, 0, ran.out)
+    assert.match(ran.out, /committed what it wrote, as [0-9a-f]+ on main/)
+    assert.match(git(dir, 'log', '-1', '--format=%s'), /^Give committed-shop lanes$/m)
+    const files = git(dir, 'show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort()
+    assert.deepEqual(files, ['.claude/commands/land.md', '.claude/commands/lane.md', '.gitignore', '.opencode/commands/land.md',
+        '.opencode/commands/lane.md', 'check', 'committed-shop', 'lane.config.json'])
+    assert.equal(git(dir, 'diff', '--cached', '--name-only').trim(), 'src/app.js', 'what was staged stays staged')
+    assert.match(git(dir, 'status', '--porcelain'), /^\?\? notes\.txt$/m)
+})
+
+test('a repository just made by git init gets lanes from its first commit, on the branch it is on', () => {
+    const dir = path.join(scratch, 'brand-new')
+    fs.mkdirSync(dir)
+    git(dir, 'init', '-q', '-b', 'trunk')
+    const ran = adoptCli(dir, '--commit')
+    assert.equal(ran.code, 0, ran.out)
+    assert.equal(JSON.parse(read(path.join(dir, 'lane.config.json'))).integrationBranch, 'trunk', 'the unborn branch HEAD names')
+    assert.equal(git(dir, 'rev-list', '--count', 'HEAD').trim(), '1')
+    sh(dir, path.join(dir, 'brand-new'), 'lane', 'new', 'first-idea')
+    assert.ok(fs.existsSync(path.join(scratch, 'brand-new-first-idea', 'lane.config.json')), 'the lane has the config, since it was committed')
+})
+
+test('--commit writes and leaves the commit to a person where .gitignore holds their changes, or main is elsewhere', () => {
+    const dir = existing('busy-shop')
+    fs.appendFileSync(path.join(dir, '.gitignore'), 'dist/\n')
+    const ran = adoptCli(dir, '--commit')
+    assert.equal(ran.code, 1)
+    assert.match(ran.out, /not committed.*\.gitignore already held changes of yours/)
+    assert.ok(fs.existsSync(path.join(dir, 'lane.config.json')), 'written all the same')
+    assert.equal(git(dir, 'log', '-1', '--format=%s').trim(), 'Begin')
+
+    const elsewhere = existing('branch-shop')
+    git(elsewhere, 'checkout', '-q', '-b', 'feature')
+    const off = adoptCli(elsewhere, '--commit')
+    assert.equal(off.code, 1)
+    assert.match(off.out, /on feature, not main/)
+    assert.equal(git(elsewhere, 'log', '-1', '--format=%s').trim(), 'Begin')
+})

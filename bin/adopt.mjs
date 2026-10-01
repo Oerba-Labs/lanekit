@@ -6,6 +6,7 @@
  *     node <lanekit>/bin/adopt.mjs                     in the repository's main checkout
  *     node <lanekit>/bin/adopt.mjs --check             says what it would write, writes nothing
  *     node <lanekit>/bin/adopt.mjs --name "Piano Sheets" --port-base 8300 --agents claude
+ *     node <lanekit>/bin/adopt.mjs --commit            writes, then commits what it wrote, and only that
  *
  * WHY THIS EXISTS BESIDE init. `init` starts a project from nothing and refuses a folder
  * with anything in it, because an existing repository's roots, environment file and tests
@@ -28,8 +29,17 @@
  * Not the agents' status reporters: those are installed once a machine, not once a repository
  * (bin/agent-reports.mjs, or the editor's extension asking).
  *
- * WHAT IT WILL NOT DO. Overwrite a file, commit anything, touch the application's code, or
- * run in a lane or a folder that is not the top of a repository's main checkout.
+ * --commit, AND ONLY WHAT IT WROTE. A lane starts from a commit of main, so files that are
+ * written and not committed are files no lane has: no config, no shim, no ./check for its gate.
+ * The lanes page gives a repository lanes in one press, after showing what it would write, and
+ * so commits them; a person at a terminal asks for it. It commits on the branch lanes land on and
+ * names each path, so nothing else staged or changed goes in with it; where .gitignore, the one
+ * file it adds to rather than creates, already holds changes of somebody's, it writes and leaves
+ * the commit to them, and says so.
+ *
+ * WHAT IT WILL NOT DO. Overwrite a file, commit anything it did not write (or anything at all
+ * without --commit), touch the application's code, or run in a lane or a folder that is not the
+ * top of a repository's main checkout.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -56,8 +66,10 @@ export const integrationBranchOf = (dir) => {
     for (const candidate of ['main', 'master']) {
         if (git(dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${candidate}`).ok) return candidate
     }
-    const current = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')
-    return current.ok && current.out !== 'HEAD' ? current.out : 'main'
+    // symbolic-ref names the branch HEAD is on even before its first commit, as in a repository just made by
+    // `git init`, where rev-parse cannot; a detached HEAD names none.
+    const current = git(dir, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+    return current.ok && current.out ? current.out : 'main'
 }
 
 const ignored = (dir, rel) => git(dir, 'check-ignore', '-q', rel).ok
@@ -87,8 +99,9 @@ const nameOf = (dir, given) => {
     return path.basename(dir)
 }
 
-export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Object.keys(AGENTS), check = false }) => {
-    const said = { wrote: [], kept: [], warnings: [] }
+export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Object.keys(AGENTS), check = false, commit = false }) => {
+    // `paths`: every file written or added to, as git names it, for --commit; `wrote` is the same said for a person.
+    const said = { wrote: [], kept: [], warnings: [], paths: [], committed: null }
     const top = git(dir, 'rev-parse', '--show-toplevel')
     if (!top.ok) throw new Error(`${dir} is not inside a git repository.`)
     if (fs.realpathSync(top.out) !== fs.realpathSync(dir)) throw new Error(`${dir} is not the top of its repository; run this in ${top.out}.`)
@@ -123,6 +136,7 @@ export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Obje
         if (!env.exists) said.warnings.push(`no environment file is here yet: a lane writes its port into ${env.file}, which lanekit creates`)
         if (!check) fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n')
         said.wrote.push(CONFIG_NAME)
+        said.paths.push(CONFIG_NAME)
     }
     if (typeof config.slug !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(config.slug)) throw new Error(`${CONFIG_NAME} has no usable slug.`)
     const { name, slug } = config
@@ -136,6 +150,7 @@ export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Obje
             if (mode) fs.chmodSync(to, mode)
         }
         said.wrote.push(rel)
+        said.paths.push(rel)
         return true
     }
     const isShim = (file) => fs.statSync(file).isFile() && fs.readFileSync(file, 'utf8').includes('the lane tooling')
@@ -151,11 +166,15 @@ export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Obje
     if (!ignored(dir, '.lanekit/runs.json')) wanted.push('# What the gate records about its runs. It names absolute paths on one machine.', '.lanekit/')
     if (tracked(dir, envFile)) said.warnings.push(`${envFile} is tracked by git: a lane writes its port into it, so every lane would look uncommitted; move the port to an ignored file and name it in lane.env.file`)
     else if (!ignored(dir, envFile)) wanted.push("# A lane's port and paths live in its environment file, and secrets end up there too.", envFile)
+    // Whether .gitignore holds somebody's changes before this adds to it: then a commit of it would take them too.
+    const ignoreTheirs = fs.existsSync(path.join(dir, '.gitignore'))
+        && (!tracked(dir, '.gitignore') || git(dir, 'status', '--porcelain', '--', '.gitignore').out !== '')
     if (wanted.length) {
         const file = path.join(dir, '.gitignore')
         const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
         if (!check) fs.writeFileSync(file, before + (before && !before.endsWith('\n') ? '\n' : '') + (before ? '\n' : '') + wanted.join('\n') + '\n')
         said.wrote.push('.gitignore (' + wanted.filter((line) => !line.startsWith('#')).join(', ') + ')')
+        said.paths.push('.gitignore')
     }
 
     for (const agent of agents) {
@@ -168,7 +187,28 @@ export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Obje
         ? agents.flatMap((agent) => ['lane.md', 'land.md'].map((file) => path.join(AGENTS[agent].dir, file))).filter((rel) => !fs.existsSync(path.join(dir, rel)))
         : writeAgentCommands(dir, name, slug, { agents })
     said.wrote.push(...commands)
+    said.paths.push(...commands)
+    if (commit && !check) said.committed = commitWritten(dir, said, { name, integrationBranch: config.integrationBranch, ignoreTheirs })
     return { ...said, name, slug, envFile, integrationBranch: config.integrationBranch, portWindow: [config.lane?.portBase, config.lane?.portCeiling] }
+}
+
+/**
+ * Commit what adopt wrote, by name, on the branch lanes land on: `{ sha }`, or `{ refused }` with why it was left
+ * for a person. Never anything else that is staged or changed: `git commit -- <paths>` takes those paths alone.
+ */
+const commitWritten = (dir, said, { name, integrationBranch, ignoreTheirs }) => {
+    if (!said.paths.length) return { refused: 'nothing was written, so there is nothing to commit' }
+    const branch = git(dir, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+    if (!branch.ok) return { refused: `the main checkout is not on a branch; check out ${integrationBranch} and commit these yourself` }
+    if (branch.out !== integrationBranch) return { refused: `the main checkout is on ${branch.out}, not ${integrationBranch}, where lanes start and land; commit these there yourself` }
+    if (said.paths.includes('.gitignore') && ignoreTheirs) return { refused: '.gitignore already held changes of yours, which a commit of it would take too; commit them together yourself' }
+    const add = spawnSync('git', ['add', '--', ...said.paths], { cwd: dir, encoding: 'utf8' })
+    if (add.status !== 0) return { refused: `git add said: ${(add.stderr || add.stdout).trim().split('\n').pop()}` }
+    const message = `Give ${name} lanes\n\nWritten by lanekit's adopt: the config, the project's shim, a ./check for the gate,\n` +
+        'the /lane and /land commands for its agents, and what .gitignore must keep out. INSTALL.md in\nlanekit says what to decide next.'
+    const made = spawnSync('git', ['commit', '--quiet', '-m', message, '--', ...said.paths], { cwd: dir, encoding: 'utf8' })
+    if (made.status !== 0) return { refused: `git commit said: ${(made.stderr || made.stdout).trim().split('\n').pop()}` }
+    return { sha: git(dir, 'rev-parse', '--short', 'HEAD').out }
 }
 
 const main = () => {
@@ -187,9 +227,10 @@ const main = () => {
         process.exit(1)
     }
     const check = argv.includes('--check')
+    const commit = argv.includes('--commit')
     let done
     try {
-        done = adopt({ dir, name: flag('--name'), portBase: rawBase === undefined ? undefined : Number(rawBase), agents, check })
+        done = adopt({ dir, name: flag('--name'), portBase: rawBase === undefined ? undefined : Number(rawBase), agents, check, commit })
     } catch (error) {
         console.error(`\n${RED}  ${error.message}${OFF}\n`)
         process.exit(1)
@@ -212,6 +253,11 @@ const main = () => {
   Then try it:  ./${done.slug} lane new lanekit-trial
 `)
     if (check) console.log('  --check: nothing was written.\n')
+    if (done.committed?.sha) console.log(`  ${GREEN}committed${OFF} what it wrote, as ${done.committed.sha} on ${done.integrationBranch}: lanes start from it.\n`)
+    if (done.committed?.refused) {
+        console.log(`  ${RED}not committed${OFF}: ${done.committed.refused}. A lane starts from a commit, so it has none of these until they are.\n`)
+        process.exit(1)
+    }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) main()

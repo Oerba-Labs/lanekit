@@ -139,7 +139,11 @@ does not grow a `node_modules` to use it.
 
 ```
 git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit
+ln -s ~/.lanekit/dev/lane.mjs ~/.local/bin/lane      # optional: one `lane` for every repository
 ```
+
+With `lane` on your PATH, it does in a repository with lanes what the project's shim does, and
+anywhere it starts one: `lane init` and `lane adopt`, below.
 
 ### In a repository you already have: let your agent do it
 
@@ -151,13 +155,18 @@ In Claude Code, OpenCode or any agent that can run commands, from the repository
 [INSTALL.md](INSTALL.md) is written for the agent. It writes the files that are the same for
 every project with `adopt`, reads your repository for the rest (how the app picks its port,
 what a lane must have its own copy of, what the tests are), makes a trial lane to prove it,
-and tells you what it decided. To do it yourself, run `node ~/.lanekit/bin/adopt.mjs` in the
-repository and follow the same document.
+and tells you what it decided. To do it yourself, run `lane adopt` in the repository (or
+`node ~/.lanekit/bin/adopt.mjs`): `--check` says what it would write first, and `--commit` commits
+what it wrote, and only that, so every lane starts with it. Then follow the same document.
+
+Or from LaneKit's page, which lists a repository it finds without lanes under *Without lanes*:
+**Give it lanes…** shows what `lane adopt` would write, asks, then writes and commits it, and the
+repository joins the others.
 
 ### A new project, with lanes from its first commit
 
 ```
-node ~/.lanekit/bin/init.mjs "Piano Sheets"
+lane init "Piano Sheets"                  # or node ~/.lanekit/bin/init.mjs "Piano Sheets"
 cd piano-sheets
 ./piano-sheets lane new first-idea
 ```
@@ -191,6 +200,9 @@ node ~/.lanekit/dev/lane.mjs web --scan ~/code
 
 The page in the picture above, for every repository in a folder:
 
+- **A repository with no lanes yet** is listed apart, under *Without lanes*, with **Give it
+  lanes…**: it shows what `lane adopt` would write, asks, then writes it and commits only that, and
+  opens what is left to decide (how the app picks its port, its tests), which INSTALL.md walks through.
 - **More than one repository** brings a switcher along the top: *All*, then each repository with the
   number of lanes in it, and a dot on one not shown while something runs there. Choosing one shows it
   alone and gives the page its name for a title (*api · LaneKit*). The address keeps the choice

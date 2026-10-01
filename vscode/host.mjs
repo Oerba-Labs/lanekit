@@ -368,7 +368,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
     const SAID = { gate: ['passed', 'failed'], land: ['landed', 'did not land'], rebase: ['rebased', 'stopped'], push: ['pushed', 'was refused'],
         pr: ['has a pull request', 'has no pull request'], pull: ['pulled', 'did not pull'], new: ['is made', 'was not made'], sweep: ['swept', 'was not swept'],
         commit: ['is committed', 'was not committed'], uncommit: ['is uncommitted', 'was not uncommitted'], discard: ['is discarded', 'was not discarded'], resolve: ['is resolved', 'is not resolved'],
-        aside: ['is set aside', 'was not set aside'], resume: ['is back', 'was not brought back'], drop: ['is dropped, its branch kept', 'was not dropped'] }
+        aside: ['is set aside', 'was not set aside'], resume: ['is back', 'was not brought back'], drop: ['is dropped, its branch kept', 'was not dropped'], adopt: ['has lanes', 'was not given lanes'] }
     service.events.on('done', (job) => {
         post({ type: 'job', id: job.id, job })
         schedule(true)

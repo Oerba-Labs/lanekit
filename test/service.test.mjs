@@ -167,3 +167,48 @@ test('git\'s name-status list is read whole, renames included', () => {
     ])
     assert.deepEqual(parseNameStatus(''), [])
 })
+
+test('a repository without lanes is offered them: adopt\'s check first, then adopt and a commit of what it wrote', async () => {
+    const other = path.join(scratch, 'other')
+    const plain = path.join(other, 'plain')
+    fs.mkdirSync(plain, { recursive: true })
+    fs.writeFileSync(path.join(plain, 'app.txt'), 'one\n')
+    git(plain, 'init', '-q', '-b', 'main')
+    git(plain, 'add', '-A')
+    git(plain, 'commit', '-qm', 'Begin')
+    fs.mkdirSync(path.join(other, '.hidden'))
+    git(path.join(other, '.hidden'), 'init', '-q')
+    fs.mkdirSync(path.join(other, 'notes'))
+    // The commit adopt makes is git's, under whoever runs the service.
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.invalid' })
+    const service = createService({ dirs: [other] })
+    const run = async (request) => {
+        const done = new Promise((resolve) => { const on = (job) => { if (job.id === pressed.body.id) { service.events.off('done', on); resolve(job) } }; service.events.on('done', on) })
+        const pressed = await service.press(request)
+        assert.equal(pressed.status, 202, JSON.stringify(pressed.body))
+        await done
+        return service.job(pressed.body.id, 0)
+    }
+    try {
+        const before = await service.state()
+        assert.deepEqual(before.withoutLanes, [{ id: 'plain', path: plain }], 'hidden folders and folders outside git are not offered')
+        assert.deepEqual(before.repos, [])
+
+        const checked = await run({ repo: 'plain', verb: 'adopt', dryRun: true })
+        assert.equal(checked.code, 0)
+        assert.match(checked.output, /would write {2}lane\.config\.json/)
+        assert.ok(!fs.existsSync(path.join(plain, 'lane.config.json')), 'a check writes nothing')
+
+        const adopted = await run({ repo: 'plain', verb: 'adopt' })
+        assert.equal(adopted.code, 0, adopted.output)
+        assert.match(git(plain, 'log', '-1', '--format=%s'), /^Give plain lanes$/m)
+        const after = await service.state()
+        assert.deepEqual(after.withoutLanes, [])
+        assert.deepEqual(after.repos.map((repo) => repo.id), ['plain'])
+
+        assert.equal((await service.press({ repo: 'plain', verb: 'adopt' })).status, 404, 'it has lanes now')
+        assert.equal((await service.press({ repo: 'notes', verb: 'adopt' })).status, 404, 'not a repository')
+    } finally {
+        service.dispose()
+    }
+})
