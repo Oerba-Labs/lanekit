@@ -313,7 +313,8 @@ export const activate = async (context, vscode, { root }) => {
     // its output a click away.
     const SAID = { gate: ['passed', 'failed'], land: ['landed', 'did not land'], rebase: ['rebased', 'stopped'], push: ['pushed', 'was refused'],
         pr: ['has a pull request', 'has no pull request'], pull: ['pulled', 'did not pull'], new: ['is made', 'was not made'], sweep: ['swept', 'was not swept'],
-        commit: ['is committed', 'was not committed'], uncommit: ['is uncommitted', 'was not uncommitted'], discard: ['is discarded', 'was not discarded'], resolve: ['is resolved', 'is not resolved'] }
+        commit: ['is committed', 'was not committed'], uncommit: ['is uncommitted', 'was not uncommitted'], discard: ['is discarded', 'was not discarded'], resolve: ['is resolved', 'is not resolved'],
+        aside: ['is set aside', 'was not set aside'], resume: ['is back', 'was not brought back'], drop: ['is dropped, its branch kept', 'was not dropped'] }
     service.events.on('done', (job) => {
         post({ type: 'job', id: job.id, job })
         schedule(true)
@@ -697,6 +698,13 @@ export const activate = async (context, vscode, { root }) => {
             if (lane.behind > 0 && !lane.operation) item('$(sync) Rebase…', `${lane.behind} behind ${repo.integrationBranch}`, () => commands['lanekit.rebase'](at))
             if (lane.kind === 'working' && (!lane.upstream || lane.upstream.ahead > 0)) item('$(cloud-upload) Push', lane.upstream ? `${lane.upstream.ahead} not pushed` : 'not pushed yet', () => commands['lanekit.push'](at))
             item('$(add) New lane from here…', `on top of ${lane.branch}`, () => commands['lanekit.newLaneHere'](at))
+            if (lane.aside) item('$(archive) Bring back', 'into the landing order and the log again', () => pressFromPalette({ repo: repo.id, verb: 'resume', lane: lane.name }))
+            else item('$(archive) Set aside', 'out of the landing order and the log, nothing removed', () => pressFromPalette({ repo: repo.id, verb: 'aside', lane: lane.name }))
+            if (!lane.operation) item('$(trash) Drop…', 'remove its folder, keep its branch', async () => {
+                const where = !lane.ahead ? 'It has no commits of its own.' : !lane.upstream ? `It was never pushed: its ${lane.ahead} commits stay only in the branch ${lane.branch} here.` : `Its branch ${lane.branch} stays, and origin has a copy.`
+                const go = await vscode.window.showWarningMessage(`Drop ${lane.name}? Its folder goes and what serves on its port stops; its branch stays.`, { modal: true, detail: `${where} lane new ${lane.name} --existing brings it back.` }, 'Drop it')
+                if (go === 'Drop it' && await pressFromPalette({ repo: repo.id, verb: 'drop', lane: lane.name })) output.show(true)
+            })
             item('$(multiple-windows) Open in a new window', lane.path, () => open({ what: 'lane', repo: repo.path, lane: lane.name }))
         } else {
             item('$(add) New lane…', `from ${repo.integrationBranch}`, () => commands['lanekit.newLaneHere']({ repo: repo.id }))

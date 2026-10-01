@@ -191,10 +191,21 @@ node ~/.lanekit/dev/lane.mjs web --scan ~/code
 
 The page in the picture above, for every repository in a folder:
 
-- **Each repository** opens with its **landing order**, on one line: the lanes in the order to land
-  them (of any that collide, the costlier first), each with a dot for what it needs, and **Land
-  next** for the first when its gate names its commit. Two lanes that change the same files are
-  joined by a bracket in the margin.
+- **Each repository** opens with its **landing order**, grouped by what each lane needs: *Ready*,
+  *Needs a gate*, *Commit first*, *Waiting* (each with the lanes it waits for: "dark-mode after
+  midi-export"), *Rebase first*, *Part-way* (a rebase not finished), and *Quiet*. An order only holds
+  between lanes that change the same files, so it is said only there, the costlier first; two such
+  lanes are joined by a bracket in the margin. **Land next** lands the first ready one, after a
+  check. A lane with nothing in it, or one set aside, is not in it.
+- **A lane nobody has touched for a while is *quiet***: two weeks, or `lane.staleAfterDays` in its
+  config, since its newest commit, its newest uncommitted change, or (with neither) its making. It
+  says "Quiet for 4 weeks" first among its facts, and moves to the end of the landing order.
+- **A lane not being worked on** can be **set aside**: out of the landing order and the log, listed
+  apart under *Set aside* with **Bring back**, and nothing removed (it is kept in the clone's own git
+  settings). Or **dropped**, after a check: what serves on its port stops and its folder goes, and its
+  branch is kept, with the page saying whether origin has a copy or the branch here is the only one.
+  A lane with uncommitted work is not dropped; commit or discard it first. `lane new <name>
+  --existing` brings a dropped lane back from its branch; deleting the branch is a step of its own.
 - **Each lane** is drawn as Interactive Smartlog draws a stack: its name as a tag, its state, its
   uncommitted files, and its commits as dots on a line of its own, which curves into main's line at
   the commit it started from. A commit is its words and its age (*22m*, *3d*); its hash is in its
@@ -303,7 +314,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.8.1.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.9.0.vsix
 ```
 
 <br clear="right">
@@ -324,12 +335,16 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.8.1.vsix
 ./<project> lane uncommit <name> take the newest commit back out, its changes left uncommitted
 ./<project> lane discard <name> -- <file>…   throw away what is uncommitted in those files
 ./<project> lane resolve <name> -- <file>…   mark conflicted files resolved, once no marker is left
+./<project> lane aside <name>    set a lane aside: out of the landing order, nothing removed
+./<project> lane resume <name>   bring a lane set aside back
+./<project> lane drop <name>     remove a lane's folder and keep its branch; --dry-run says what it would do
 ./<project> lane sweep [name]    remove lanes whose branch has landed
 ./<project> lane web             a page of every lane (in your editor: LaneKit's side bar)
 ./<project> check                what the gate runs
 ```
 
 `lane new` takes `--base <ref>` to start from something other than the integration branch,
+`--existing` to make a lane of a branch that is there already (one dropped earlier),
 `--install` to build the lane's own copies of what would otherwise be shared, `--no-seed` to
 skip filling what it must own, and `--no-provision` to make the folder and stop. `gate` takes
 `--fast` (tier 1 whatever the change earns; it says `UNDER-GATED` rather than `READY`),
@@ -381,6 +396,7 @@ to its front end might say:
 | `gate.tiers` | what the gate runs. Tier 1 is every change; tier 2 is earned by a change to `gate.sides.app` or to `gate.seam`, the files one side shares with the other |
 | `gate.generated` | committed files a generator owns: regenerated and compared, so a stale one is caught |
 | `lane.portBase`, `portCeiling` | the window a lane's port comes from. A machine can take a share of it with `LANEKIT_PORTS="<slug>=<first>-<last>"`, which narrows it and never widens it |
+| `lane.staleAfterDays` | optional: after how many days with nothing done in it a lane is called quiet; fourteen when left out |
 | `lane.copyOnCreate` | files git ignores that a running checkout needs: copied into each lane, never shared |
 | `lane.linkOnCreate` | big folders every lane can share, linked from the main checkout; `lane new --install` builds the lane's own and runs `lane.provision` |
 | `lane.env` | the file a lane writes its port into (`portKey`), and values each lane must have its own of (`perLane`) |

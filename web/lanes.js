@@ -376,6 +376,7 @@ document.addEventListener('keydown', (event) => {
 /** What a lane's state is, in a dashboard's words: [tone, word, detail]. */
 const statusOf = (lane) => {
     if (lane.kind === 'missing') return ['risk', 'Folder is gone', 'git worktree prune, in the main checkout, clears it away']
+    if (lane.aside) return ['quiet', 'Set aside', null]
     if (lane.operation) return ['warn', lane.operation === 'rebase' ? 'Mid-rebase' : 'Mid-merge', 'Finish or abort it in the lane before anything else']
     if (lane.kind === 'landed') return lane.dirty ? ['warn', 'Landed, with uncommitted changes', 'A sweep would delete them'] : ['done', 'Landed', null]
     if (lane.kind === 'fresh' && !lane.dirty) return ['quiet', 'Nothing committed yet', null]
@@ -1108,7 +1109,9 @@ const ICONS = {
     check: [['path', { d: 'M3 8.5l3 3 7-7' }]],
     play: [['path', { d: 'M5 3.5l7 4.5-7 4.5z' }]],
     cross: [['path', { d: 'M4.5 4.5l7 7M11.5 4.5l-7 7' }]],
-    output: [['rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }], ['path', { d: 'M4.5 6h7M4.5 8.5h5M4.5 11h6' }]]
+    output: [['rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }], ['path', { d: 'M4.5 6h7M4.5 8.5h5M4.5 11h6' }]],
+    aside: [['rect', { x: 2, y: 3, width: 12, height: 3, rx: 1 }], ['path', { d: 'M3 6v7h10V6' }], ['path', { d: 'M6.5 9h3' }]],
+    unaside: [['rect', { x: 2, y: 3, width: 12, height: 3, rx: 1 }], ['path', { d: 'M3 6v7h10V6' }], ['path', { d: 'M8 12V8.5M6.3 10.2 8 8.5l1.7 1.7' }]]
 }
 const icon = (name) => {
     const svg = svgEl('svg', { class: `icon icon-${name}`, width: 14, height: 14, viewBox: '0 0 16 16', 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
@@ -1157,7 +1160,7 @@ const confirmOf = (repo, lane, key) => {
     }
     if (waiting.stage === 'refused') {
         return el('div', { class: 'confirm refused' },
-            el('p', { text: waiting.verb === 'land' ? `${lane.name} cannot land yet. The check below says why.` : `${lane.name} cannot be swept. The check below says why.` }),
+            el('p', { text: waiting.verb === 'land' ? `${lane.name} cannot land yet. The check below says why.` : waiting.verb === 'drop' ? `${lane.name} cannot be dropped. The check below says why.` : `${lane.name} cannot be swept. The check below says why.` }),
             el('button', { type: 'button', class: 'btn quiet', text: 'Dismiss', onclick: () => { pending.delete(key); draw(true) } }))
     }
     if (waiting.verb === 'gate') {
@@ -1215,6 +1218,18 @@ const confirmOf = (repo, lane, key) => {
                 type: 'button', class: 'btn danger', text: files.length === 1 ? 'Discard it' : 'Discard them', disabled: busy,
                 onclick: async () => { pending.delete(key); unchecked.delete(key); draw(true); await press({ repo: repo.id, verb: 'discard', lane: lane.name, paths: files }) }
             }), cancel)
+    }
+    if (waiting.verb === 'drop') {
+        const own = lane.ahead || 0
+        const up = lane.upstream
+        const where = !own ? 'It has no commits of its own.'
+            : !up ? `It was never pushed, so its ${plural(own, 'commit')} will be in the branch ${lane.branch} here and nowhere else.`
+                : up.ahead ? `${up.name} has some of it; ${plural(up.ahead, 'commit')} will be only in the branch here.`
+                    : `${up.name} has all of it as well.`
+        return el('div', { class: 'confirm danger' },
+            el('p', { text: `The check passed. Drop ${lane.name}? Its folder goes, and whatever serves on its port stops; its branch ${lane.branch} stays. ${where} lane new ${lane.name} --existing brings it back.` }),
+            el('button', { type: 'button', class: 'btn danger', text: 'Drop it', disabled: busy, onclick: async () => { pending.delete(key); draw(true); await press({ repo: repo.id, verb: 'drop', lane: lane.name }) } }),
+            cancel)
     }
     if (waiting.verb === 'sweep') {
         return el('div', { class: 'confirm' },
@@ -1310,6 +1325,11 @@ const laneCard = (repo, lane, forked = true) => {
     }
     // What openLinks has nothing for (no Changes for an empty lane, no Goto where you are) is left out, not kept as a gap.
     buttons.push(...openLinks(repo, lane).filter(Boolean))
+    // A lane not being worked on: set aside (nothing removed), or dropped (its folder removed, its branch kept), after a check.
+    if ((lane.kind === 'working' || lane.kind === 'fresh') && lane.exists && !lane.operation) {
+        buttons.push(iconButton('aside', 'Set aside', { class: 'btn quiet', disabled: busy, title: 'Out of the landing order and the log, listed apart; nothing removed', onclick: () => press({ repo: repo.id, verb: 'aside', lane: lane.name }) }))
+        buttons.push(iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }))
+    }
     if (lane.pending) buttons.length = 0
 
     const files = lane.queue?.files ?? []
@@ -1327,6 +1347,7 @@ const laneCard = (repo, lane, forked = true) => {
 
     // What is true of it besides its state, in one quiet line: no count of its commits, which its dots show.
     const facts = el('div', { class: 'facts' },
+        lane.quiet ? Object.assign(state('quiet', `Quiet for ${quietFor(lane.quietDays)}`, 'small quiet-for'), { title: `Nothing done in it since ${exactly(lane.lastActive)}: set it aside, or drop it, if it is not wanted now` }) : null,
         lane.branch !== lane.name ? el('span', { text: `branch ${lane.branch}` }) : null,
         lane.behind ? el('span', { text: `${lane.behind} behind ${repo.integrationBranch}` }) : null,
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
@@ -1534,7 +1555,7 @@ const spineOf = (repo, live) => {
 const logOf = (repo) => {
     if (repo.error) return []
     const onSpine = new Set(repo.spine.map((commit) => commit.sha))
-    const live = repo.lanes.filter((lane) => lane.kind === 'working' || lane.kind === 'fresh')
+    const live = repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
     const newestFirst = (a, b) => (b.head?.at ?? 0) - (a.head?.at ?? 0)
     const rows = []
     if (!live.length) {
@@ -1571,43 +1592,77 @@ const logOf = (repo) => {
 // the queue: the order to land in, what each needs, and who collides with whom
 // ---------------------------------------------------------------------------
 
-const VERDICT_RANK = { 'land now': 0, 'gate now': 1, 'commit first': 2, 'hold the gate': 3, 'rebase first': 4, parked: 5 }
 const VERDICT_WORDS = {
     'land now': ['done', 'ready to land'], 'gate now': ['info', 'needs a gate'], 'commit first': ['warn', 'commit first'],
     'hold the gate': ['warn', 'waits for another lane'], 'rebase first': ['risk', 'rebase first'], parked: ['quiet', 'parked']
 }
-/** The lanes with something to land, in the order to land them: a group's costlier first, then readiness. */
-const queueOrder = (repo) => repo.lanes
-    .filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && lane.queue)
-    .sort((a, b) => (a.queue.position ?? 99) - (b.queue.position ?? 99) ||
-        (VERDICT_RANK[a.queue.verdict] ?? 9) - (VERDICT_RANK[b.queue.verdict] ?? 9) || a.name.localeCompare(b.name))
+/**
+ * The landing order as groups rather than one chain: an order only holds between lanes that collide, so the rest are
+ * said by what each needs. Ready, Needs a gate, Commit first, Waiting (each with the lanes it waits for), Rebase first,
+ * Part-way (a rebase or a merge not finished), and Quiet last: a lane gone quiet that is not ready. Plain data in and
+ * out, so lanekit's tests run it as it is written here (test/tidy.test.mjs).
+ */
+const LANDING_GROUPS = [
+    ['land now', 'Ready'], ['gate now', 'Needs a gate'], ['commit first', 'Commit first'],
+    ['hold the gate', 'Waiting'], ['rebase first', 'Rebase first'], ['parked', 'Part-way']
+]
+const landingGroupsOf = (lanes) => {
+    const queued = lanes.filter((lane) => lane.queue && !lane.aside)
+    const byPlace = (a, b) => (a.queue.position ?? 0) - (b.queue.position ?? 0) || a.name.localeCompare(b.name)
+    const isQuiet = (lane) => lane.quiet && lane.queue.verdict !== 'land now'
+    const groups = []
+    for (const [verdict, label] of LANDING_GROUPS) {
+        const members = queued.filter((lane) => lane.queue.verdict === verdict && !isQuiet(lane)).sort(byPlace)
+        if (!members.length) continue
+        groups.push({
+            verdict, label,
+            lanes: members.map((lane) => ({
+                name: lane.name,
+                // Whom it waits for: the lanes it collides with that land before it.
+                after: verdict === 'hold the gate'
+                    ? (lane.queue.collisions ?? []).map((collision) => collision.lane).filter((other) => {
+                        const ahead = queued.find((candidate) => candidate.name === other)
+                        return ahead && (ahead.queue.position ?? 0) < (lane.queue.position ?? 0)
+                    })
+                    : []
+            }))
+        })
+    }
+    const quiet = queued.filter(isQuiet).sort((a, b) => (b.quietDays ?? 0) - (a.quietDays ?? 0) || a.name.localeCompare(b.name))
+    if (quiet.length) groups.push({ verdict: 'quiet', label: 'Quiet', lanes: quiet.map((lane) => ({ name: lane.name, after: [], days: lane.quietDays })) })
+    return groups
+}
+/** How long a lane has been quiet, in the largest unit that says it. */
+const quietFor = (days) => (days >= 60 ? plural(Math.floor(days / 30), 'month') : days >= 14 ? plural(Math.floor(days / 7), 'week') : plural(days, 'day'))
 
-/** The landing order at the head of a repository, with Land next when the first is ready. */
+/** The landing order at the head of a repository, in groups, with Land next when one is ready. */
 const queueOf = (repo) => {
     if (repo.error) return []
-    const order = queueOrder(repo)
-    if (!order.length) return []
-    const next = order.find((lane) => lane.queue.verdict === 'land now')
+    const groups = landingGroupsOf(repo.lanes)
+    if (!groups.length) return []
+    const ready = groups.find((group) => group.verdict === 'land now')
+    const next = ready ? repo.lanes.find((lane) => lane.name === ready.lanes[0].name) : null
     const busy = busyIn(repo.id)
-    // One line: the names in the order to land them, the next in bold, and Land next. Each lane says its own
-    // state where it is drawn, so here it is the dot's colour and the name's title, not words again.
+    const tone = { 'land now': 'done', 'gate now': 'info', 'commit first': 'warn', 'hold the gate': 'warn', 'rebase first': 'risk', parked: 'quiet', quiet: 'quiet' }
     return [el('div', { class: 'queue' },
-        el('span', { class: 'queue-title', text: order.length === 1 ? 'Next to land' : 'Landing order' }),
-        el('ol', { class: 'queue-list' }, order.map((lane) => {
-            const [tone, words] = VERDICT_WORDS[lane.queue.verdict] ?? ['quiet', lane.queue.verdict]
-            const collides = (lane.queue.collisions ?? []).map((collision) => collision.lane)
-            const item = el('li', { class: lane === next ? 'next' : null, tabindex: '0', role: 'button', title: `${lane.name}: ${words}${collides.length ? `; collides with ${collides.join(', ')}` : ''}` },
-                el('span', { class: `queue-dot ${tone}`, 'aria-hidden': 'true' }),
-                el('span', { class: 'queue-name', text: lane.name }),
-                el('span', { class: 'visually-hidden', text: `, ${words}` }))
-            item.addEventListener('click', () => focusLane(repo.id, lane.name))
-            item.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); focusLane(repo.id, lane.name) } })
-            return item
-        })),
+        el('span', { class: 'queue-title', text: 'Landing order' }),
+        el('div', { class: 'queue-groups' }, groups.map((group) => el('span', { class: 'queue-group' },
+            el('span', { class: 'queue-label', text: group.label }),
+            group.lanes.map((item) => {
+                const lane = repo.lanes.find((candidate) => candidate.name === item.name)
+                const words = item.after.length ? `${item.name}, after ${item.after.join(' and ')}` : item.days ? `${item.name}, quiet for ${quietFor(item.days)}` : item.name
+                const chip = el('span', { class: 'queue-item', tabindex: '0', role: 'button', title: `${words}: ${VERDICT_WORDS[lane?.queue?.verdict]?.[1] ?? group.label.toLowerCase()}` },
+                    el('span', { class: `queue-dot ${tone[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
+                    el('span', { class: 'queue-name', text: item.name }),
+                    item.after.length ? el('span', { class: 'queue-after', text: `after ${item.after.join(', ')}` }) : null)
+                chip.addEventListener('click', () => focusLane(repo.id, item.name))
+                chip.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); focusLane(repo.id, item.name) } })
+                return chip
+            })))),
         el('span', { class: 'grow' }),
         next ? iconButton('land', `Land ${next.name}…`, {
             class: 'btn primary', disabled: busy,
-            title: `Check that ${next.name} can land, then ask: it is first in the order and its gate names its commit`,
+            title: `Check that ${next.name} can land, then ask: it is ready, and first among any it collides with`,
             onclick: () => check(repo, next, 'land')
         }) : null)]
 }
@@ -1653,13 +1708,31 @@ const drawCollisions = () => {
 }
 window.addEventListener('resize', () => drawCollisions())
 
+/** A lane set aside, in its list: what it holds, how long it has been quiet, and Bring back, Drop… and Goto. */
+const asideRow = (repo, lane) => {
+    const key = `${repo.id}/${lane.name}`
+    const busy = busyIn(repo.id) || Boolean(lane.pending)
+    return el('li', { 'data-key': key, tabindex: '0' },
+        el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) }),
+        el('span', { class: 'muted', text: [lane.ahead ? plural(lane.ahead, 'commit') : 'nothing committed', lane.dirty ? `${lane.dirty} uncommitted` : null,
+            lane.aside ? `set aside ${ago(Date.parse(lane.aside))}` : null, lane.quiet ? `quiet for ${quietFor(lane.quietDays)}` : null].filter(Boolean).join(' · ') }),
+        el('span', { class: 'grow' }),
+        el('div', { class: 'actions' },
+            iconButton('unaside', 'Bring back', { disabled: busy, title: 'Into the landing order and the log again', onclick: () => press({ repo: repo.id, verb: 'resume', lane: lane.name }) }),
+            lane.exists && !lane.operation ? iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }) : null,
+            gotoButton(repo, lane)),
+        el('div', { class: 'full' }, confirmOf(repo, lane, key)))
+}
+
 const settledOf = (repo) => {
     const settled = repo.error ? [] : repo.lanes.filter((lane) => lane.kind === 'landed' || lane.kind === 'missing')
-    if (!settled.length) return []
+    const asideLanes = repo.error ? [] : repo.lanes.filter((lane) => lane.aside && lane.kind !== 'landed' && lane.kind !== 'missing')
     return [
-        el('p', { class: 'landed-title', text: 'Finished lanes' }),
-        el('ul', { class: 'landed' }, settled.map((lane) => landedRow(repo, lane)))
-    ]
+        asideLanes.length ? el('p', { class: 'landed-title', text: 'Set aside' }) : null,
+        asideLanes.length ? el('ul', { class: 'landed aside-list' }, asideLanes.map((lane) => asideRow(repo, lane))) : null,
+        settled.length ? el('p', { class: 'landed-title', text: 'Finished lanes' }) : null,
+        settled.length ? el('ul', { class: 'landed' }, settled.map((lane) => landedRow(repo, lane))) : null
+    ].filter(Boolean)
 }
 
 const sectionFor = (repo) => {

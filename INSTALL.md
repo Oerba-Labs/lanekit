@@ -279,7 +279,7 @@ the fix as a second commit, and try again. Never work around a failure with a ba
 | `roots.<key> names "…", which is not in …` | fix or remove that entry in `roots` |
 | `the lane tooling is not on this machine` | step 2: clone lanekit to `~/.lanekit`, or set `LANEKIT` |
 | `LANEKIT_PORTS gives … outside the window` | the machine's `LANEKIT_PORTS` names this project with ports outside its window: correct that entry |
-| `no free port between …` | sweep finished lanes, or raise `lane.portCeiling` |
+| `no free port between …` | sweep finished lanes, `lane drop` ones no longer wanted, or raise `lane.portCeiling` |
 | `the working tree has uncommitted changes` (gate) | commit in the lane first: a gate result names a commit |
 | `… is on "…", not <branch>` (land) | switch the main checkout to the integration branch |
 

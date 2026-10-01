@@ -79,10 +79,14 @@ const create = (config, name, options) => {
             '  digits and dashes, starting with a letter or digit.')
     }
     if (fs.existsSync(laneDir)) fail(`${laneDir} already exists.`)
-    if (gitQuiet(['rev-parse', '--verify', `refs/heads/${name}`], mainRepo).ok) {
+    const existing = gitQuiet(['rev-parse', '--verify', `refs/heads/${name}`], mainRepo).ok
+    if (existing && !options.existing) {
         fail(`a branch called "${name}" already exists.\n\n` +
-            `  Pick another name, or delete it: git branch -D ${name}`)
+            `  lane new ${name} --existing makes a lane of it as it is (a lane dropped earlier, say),\n` +
+            `  or pick another name.`)
     }
+    if (!existing && options.existing) fail(`there is no branch called "${name}" to make a lane of.`)
+    if (existing && options.base) fail('--existing takes the branch as it is: give no --base with it.')
     if (!gitQuiet(['rev-parse', '--verify', base], mainRepo).ok) {
         fail(`the base "${base}" does not resolve in ${mainRepo}.`)
     }
@@ -94,8 +98,13 @@ const create = (config, name, options) => {
         log(`${mainRepo} has uncommitted changes; they stay there — this lane branches from ${base}`)
     }
 
-    log(`creating ${path.basename(laneDir)} on a new branch "${name}" from ${base}`)
-    run('git', ['worktree', 'add', laneDir, '-b', name, base], mainRepo, 'git worktree add')
+    if (existing) {
+        log(`creating ${path.basename(laneDir)} on the branch "${name}" as it is, ${git(['rev-list', '--count', `${config.integrationBranch}..${name}`], mainRepo)} commits of its own`)
+        run('git', ['worktree', 'add', laneDir, name], mainRepo, 'git worktree add')
+    } else {
+        log(`creating ${path.basename(laneDir)} on a new branch "${name}" from ${base}`)
+        run('git', ['worktree', 'add', laneDir, '-b', name, base], mainRepo, 'git worktree add')
+    }
 
     // The files a checkout needs and git does not carry. Copied rather than
     // linked: a lane that shares its environment file with main is a lane whose
@@ -681,6 +690,79 @@ const resolve = (config, name, options) => {
 }
 
 /**
+ * Set a lane aside, or bring it back: a person's word that it is not being worked on now. Nothing is removed or
+ * stopped; the page leaves it out of the landing order and the log, and lists it apart. Kept in the clone's own git
+ * settings (branch.<branch>.lanekitAside), so nothing is committed and every lane of the clone reads it.
+ */
+const ASIDE = (branch) => `branch.${branch}.lanekitAside`
+const aside = (config, name) => {
+    const lane = laneNamed(config, name, 'aside')
+    const mainRepo = mainRepoFrom(process.cwd())
+    const branch = lane.branch ?? name
+    if (gitQuiet(['config', '--get', ASIDE(branch)], mainRepo).ok) { log(`${name} is set aside already`); return }
+    git(['config', ASIDE(branch), new Date().toISOString()], mainRepo)
+    log(`set ${name} aside: out of the landing order, listed apart, nothing removed ${DIM}(lane resume ${name} brings it back)${OFF}`)
+}
+const resume = (config, name) => {
+    const lane = laneNamed(config, name, 'resume')
+    const mainRepo = mainRepoFrom(process.cwd())
+    const branch = lane.branch ?? name
+    if (!gitQuiet(['config', '--get', ASIDE(branch)], mainRepo).ok) fail(`${name} is not set aside.`)
+    git(['config', '--unset', ASIDE(branch)], mainRepo)
+    log(`${name} is back in the landing order`)
+}
+
+/**
+ * Drop a lane no longer wanted: stop what serves on its port, remove its folder, and keep its branch, so that
+ * `lane new <name> --existing` brings it back. The lane's own work is in its branch and nowhere else unless it was
+ * pushed, which it says.
+ *
+ * NOT A LANE WITH WORK IN NO COMMIT. Uncommitted changes would go with the folder, so a lane with any is refused:
+ * commit them, or discard them, first. Nor one part-way through a rebase, nor the lane you are standing in. The
+ * branch is never deleted here; that is a step of its own, which it names.
+ */
+const drop = (config, name, options) => {
+    const lane = laneNamed(config, name, 'drop')
+    const mainRepo = mainRepoFrom(process.cwd())
+    const dir = lane.path
+    const branch = lane.branch ?? name
+    if (isUnder(process.cwd(), dir)) fail(`${name} is the lane you are standing in.\n\n  cd ${mainRepo} first — removing it from inside takes the ground with it.`)
+    if (inRebase(dir)) fail(`${name} is part-way through a rebase: lane rebase ${name} --abort (or --continue) first.`)
+    const changed = changesOf(dir, config)
+    if (changed.length) {
+        fail(`${name} has ${changed.length} uncommitted ${changed.length === 1 ? 'change' : 'changes'}, which would go with its folder:\n\n` +
+            changed.slice(0, 10).map((change) => `  ${change.status === '?' ? '??' : change.status.padStart(2)} ${change.path}`).join('\n') +
+            `\n\n  Commit them, or lane discard ${name} -- <file>… them, first.`)
+    }
+    const own = Number(gitQuiet(['rev-list', '--count', `${config.integrationBranch}..${branch}`], mainRepo).out || 0)
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], mainRepo)
+    const unpushed = upstream.ok ? Number(gitQuiet(['rev-list', '--count', `${upstream.out}..${branch}`], mainRepo).out || 0) : own
+    const where = !own ? 'it has no commits of its own'
+        : !upstream.ok ? `its ${own} ${own === 1 ? 'commit is' : 'commits are'} in the branch ${branch} here and nowhere else: it was never pushed`
+            : unpushed ? `${upstream.out} has some of it; ${unpushed} ${unpushed === 1 ? 'commit is' : 'commits are'} only in the branch here`
+                : `${upstream.out} has all of it as well`
+    const port = portOf(lane, config)
+    const holders = port ? listenersOn(port) : []
+    if (options.dryRun) {
+        if (holders.length) log(`${name}: would stop ${holders.length} process on ${port}`)
+        log(`${name}: would remove ${dir}, and keep its branch ${branch} (${where})`)
+        return
+    }
+    for (const pid of holders) {
+        try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
+    }
+    if (holders.length) log(`${name}: stopped ${holders.length} process on ${port}`)
+    const removed = spawnSync('git', ['worktree', 'remove', '--force', dir], { cwd: mainRepo, encoding: 'utf8' })
+    if (removed.status !== 0) fail(`could not remove ${dir}: ${(removed.stderr ?? '').trim().split('\n')[0]}`)
+    if (fs.existsSync(dir)) fail(`${dir} is still there after git worktree remove; nothing else was done.`)
+    gitQuiet(['config', '--unset', ASIDE(branch)], mainRepo)
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}DROPPED${OFF}  ·  ${name}  ·  folder removed, branch ${branch} kept\n${rule}\n`)
+    log(`${where}`)
+    log(`lane new ${name} --existing brings it back; git branch -D ${branch} deletes the branch, when you are sure`)
+}
+
+/**
  * Push a lane's branch to origin.
  *
  * A BRANCH REBASED AFTER IT WAS PUSHED is refused until asked again with
@@ -753,7 +835,7 @@ const pull = (config) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull, commit: commitIn, uncommit, discard, resolve }
+const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -762,7 +844,7 @@ const main = () => {
     // is started before this one's is looked for: /work above the checkouts has none.
     if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -770,6 +852,7 @@ const main = () => {
         base: argv.includes('--base') ? argv[argv.indexOf('--base') + 1] : undefined,
         provision: !argv.includes('--no-provision'),
         install: argv.includes('--install'),
+        existing: argv.includes('--existing'),
         seed: !argv.includes('--no-seed'),
         dryRun: argv.includes('--dry-run'),
         sweep: !argv.includes('--no-sweep'),
@@ -810,6 +893,9 @@ const main = () => {
     if (command === 'uncommit') return uncommit(config, name, options)
     if (command === 'discard') return discard(config, name, options)
     if (command === 'resolve') return resolve(config, name, options)
+    if (command === 'aside') return aside(config, name, options)
+    if (command === 'resume') return resume(config, name, options)
+    if (command === 'drop') return drop(config, name, options)
     return sweep(config, name, options)
 }
 
