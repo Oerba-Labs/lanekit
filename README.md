@@ -11,12 +11,12 @@ process, a file or a database row, and each lands back on `main` only once its t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-dark.png">
-  <img alt="The LaneKit page: the landing order at the top, then two lanes drawn above the commit of main they started from. dark-mode lists its two uncommitted files with Commit… and Amend beside them; midi-export has passed its gate, and the pointer on it shows its buttons: Gate, Land…, Push." src="docs/images/lanes-light.png">
+  <img alt="The LaneKit page, drawn the way Sapling's Interactive Smartlog draws a log: main as a line with its commits as dots, and two lanes, each on a line of its own that curves into main at the commit it started from. dark-mode lists its two uncommitted files with Commit… and Amend under them; midi-export has passed its gate, and the pointer on it shows its buttons: Gate, Land…, Push. Above them, the landing order on one line." src="docs/images/lanes-light.png">
 </picture>
 
-<sub>`lane web`: every lane of every repository on one page, drawn above the commit it started
-from, with what each needs next. A lane's buttons show when the pointer is on it, as here on
-midi-export.</sub>
+<sub>`lane web`: every lane of every repository on one page, each on a line of its own that
+curves into main where it started, as Sapling's Interactive Smartlog draws a stack. A lane's
+buttons show when the pointer is on it, as here on midi-export.</sub>
 
 ## The idea, in one picture
 
@@ -191,14 +191,17 @@ node ~/.lanekit/dev/lane.mjs web --scan ~/code
 
 The page in the picture above, for every repository in a folder:
 
-- **Each repository** opens with its **landing order**: the lanes in the order to land them (of any
-  that collide, the costlier first), what each needs, and **Land next** for the first when its gate
-  names its commit. Two lanes that change the same files are joined by a bracket in the margin.
-- **Each lane** is drawn above the commit it started from, with its commits, what is uncommitted,
-  its port and whether anything serves on it, its last gate, and its pull request when `gh` is
-  signed in. While a press runs in it, it says so live: *Gating · running the tests… · 12 s*. A
-  failed gate shows the failing step and its last lines, kept with the run, so it is still there
-  tomorrow.
+- **Each repository** opens with its **landing order**, on one line: the lanes in the order to land
+  them (of any that collide, the costlier first), each with a dot for what it needs, and **Land
+  next** for the first when its gate names its commit. Two lanes that change the same files are
+  joined by a bracket in the margin.
+- **Each lane** is drawn as Interactive Smartlog draws a stack: its name as a tag, its state, its
+  uncommitted files, and its commits as dots on a line of its own, which curves into main's line at
+  the commit it started from. A commit is its words and its age (*22m*, *3d*); its hash is in its
+  tooltip. Under the name, quietly: its last gate, whether it is pushed, its pull request when `gh`
+  is signed in, and what serves on its port while anything does. While a press runs in it, it says
+  so live: *Gating · running the tests… · 12 s*. A failed gate shows the failing step and its last
+  lines, kept with the run, so it is still there tomorrow.
 - **Its buttons show when the pointer or the keyboard is on it**, the way Sapling's Interactive
   Smartlog does, so a page of lanes reads calmly until you reach for one. They are lane's own
   commands, run as a terminal would run them, with their output underneath: **Gate**, **Land**,
@@ -231,7 +234,7 @@ Smartlog sits in the editor. There its clicks drive the editor:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanekit-sidebar-dark.png">
-  <img alt="LaneKit in the editor's side bar: the landing order, then dark-mode marked You are here with its uncommitted files, midi-export ready to land, and main's newest commit under the pointer offering New lane here." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
+  <img alt="LaneKit in the editor's side bar: the landing order on one line, then dark-mode marked You are here, its line in blue, with its uncommitted files; midi-export ready to land; both curving into main, whose newest commit is under the pointer, offering New lane here." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
 </picture>
 
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
@@ -260,7 +263,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.4.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.5.0.vsix
 ```
 
 <br clear="right">
