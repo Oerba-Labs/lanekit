@@ -491,24 +491,27 @@ const drawAgents = () => {
         const repo = current?.repos.find((candidate) => candidate.id === row.dataset.agents.slice(0, at))
         if (repo) row.replaceChildren(...agentsOf(repo.id, row.dataset.agents.slice(at + 1) || null).map((agent) => agentChip(repo, agent)))
     }
+    markPointer()
 }
 
 /**
  * Goto, ISL's way, in the editor: where you are moves to this lane (or, with no lane, to the main checkout). The files
- * open from elsewhere reopen from it, the terminal in use follows, and the Explorer shows its folder; no window opens.
- * Not offered where you are.
+ * open from elsewhere reopen from it, and the terminal in use follows and takes the focus, or one opens there; no
+ * window opens. It is also how a lane's terminal is reached (the owner, 1 Oct: Terminal and Goto did the same thing),
+ * so it is offered where you are too, where it brings your terminal there forward.
  */
-const gotoButton = (repo, lane, extra = {}) => host.inEditor && !isHere(repo, lane) && (!lane || lane.exists)
+const gotoButton = (repo, lane, extra = {}) => host.inEditor && (!lane || lane.exists)
     ? iconButton('goto', 'Goto', {
         ...extra,
-        title: lane ? `Move here: the files you have open reopen from ${lane.name}, your terminal follows, and the Explorer shows its folder` : `Back to ${repo.id}'s main checkout: the files you have open reopen from it, and your terminal follows`,
+        title: isHere(repo, lane) ? `You are here: your terminal in ${lane ? lane.name : `${repo.id}'s main checkout`}, in front`
+            : lane ? `Move here: the files you have open reopen from ${lane.name}, and your terminal follows` : `Back to ${repo.id}'s main checkout: the files you have open reopen from it, and your terminal follows`,
         onclick: (event) => { event.stopPropagation(); openIn('goto', { repo: repo.path, lane: lane?.name }) }
     })
     : null
 
 const openLinks = (repo, lane) => {
     if (host.inEditor) {
-        // In the editor: its changes as diffs, a terminal or an agent in it, and Goto.
+        // In the editor: its changes as diffs, an agent in it, and Goto, which is also the way to its terminal.
         if (!lane.exists) return []
         const holds = lane.kind === 'working' || lane.dirty > 0
         return [
@@ -516,10 +519,6 @@ const openLinks = (repo, lane) => {
                 title: `Everything ${lane.name} holds that ${repo.integrationBranch} does not, committed or not, side by side`,
                 onclick: () => openIn('changes', { repo: repo.path, lane: lane.name })
             }) : null,
-            iconButton('terminal', 'Terminal', {
-                title: `A terminal in ${lane.path}`,
-                onclick: () => openIn('terminal', { repo: repo.path, lane: lane.name })
-            }),
             iconButton('agent', 'Agent', {
                 title: `Start Claude Code or OpenCode in ${lane.name}, in a terminal named for it and in its colour`,
                 onclick: () => openIn('agent', { repo: repo.path, lane: lane.name })
@@ -1576,10 +1575,7 @@ const headOf = (repo) => {
                 onclick: () => openOwnTab(repo.id)
             }, true) : null,
             pullButton(repo),
-            host.inEditor ? iconButton('terminal', 'Terminal', {
-                title: `A terminal in ${repo.path}`,
-                onclick: () => openIn('terminal', { repo: repo.path })
-            }) : null,
+            gotoButton(repo, null),
             iconButton('fetch', 'Fetch', {
                 disabled: busyIn(repo.id),
                 title: 'git fetch --prune: what is pushed, and what others pushed',
@@ -1633,7 +1629,12 @@ const logOf = (repo) => {
     const newestFirst = (a, b) => (b.head?.at ?? 0) - (a.head?.at ?? 0)
     const rows = []
     if (!live.length) {
-        rows.push(el('li', { class: 'empty-lanes', text: 'No lanes yet. A lane is a folder of its own, on its own branch and port: hover a commit of main below and choose New lane here.' }))
+        rows.push(el('li', { class: 'empty-lanes' },
+            el('span', { text: 'No lanes yet. A lane is a folder of its own, on its own branch and port.' }),
+            repo.spine?.[0] ? iconButton('plus', 'New lane', {
+                title: `A lane from ${repo.integrationBranch} as it is now; or hover any commit of ${repo.integrationBranch} below for one from there`,
+                onclick: () => startNaming(repo, repo.spine[0])
+            }) : null))
     }
     const spine = spineOf(repo, live)
     // Origin ahead of main, with commits this log does not hold: a dashed row above main's newest says so, with Pull.
@@ -1900,6 +1901,27 @@ const sectionFor = (repo) => {
     return kept
 }
 
+// A page drawn again under a pointer that has not moved is not hovered until a frame later (Chrome, and so the
+// editor's webviews): what shows on hover — a lane's toolbar, a commit's commands — went for that frame at every
+// redraw, several times a press (the owner, 1 Oct: it flickers). So what is under the pointer is marked as part of
+// the redraw, as :hover would mark it, and the marks go when the pointer next moves and :hover has it again.
+let pointerAt = null
+let pointerMarked = false
+const unmarkPointer = () => {
+    if (!pointerMarked) return
+    pointerMarked = false
+    for (const node of document.querySelectorAll('.pointer')) node.classList.remove('pointer')
+}
+document.addEventListener('pointermove', (event) => { pointerAt = { x: event.clientX, y: event.clientY }; unmarkPointer() }, { passive: true })
+document.addEventListener('pointerout', (event) => { if (!event.relatedTarget) { pointerAt = null; unmarkPointer() } })
+const markPointer = () => {
+    if (!pointerAt) return
+    for (let node = document.elementFromPoint(pointerAt.x, pointerAt.y); node && node !== document.body; node = node.parentElement) {
+        node.classList.add('pointer')
+        pointerMarked = true
+    }
+}
+
 /**
  * Draw what the last answer said. Only when it changed, or every half minute for the
  * "3 min ago"s: a redraw under a pointer halfway through a click loses the click.
@@ -1957,6 +1979,7 @@ const draw = (force = false) => {
         if (again) { again.focus({ preventScroll: true }); try { again.setSelectionRange(...caret) } catch { /* a field with no caret */ } }
     }
     drawCollisions()
+    markPointer()
 }
 
 // ---------------------------------------------------------------------------
@@ -1966,7 +1989,7 @@ const draw = (force = false) => {
 const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
-    ...(host.inEditor ? [['t', 'a terminal in it'], ['a', 'start an agent in it'], ['o', 'go to it: the files and the terminal you have open move to it']] : []),
+    ...(host.inEditor ? [['o', 'go to it: the files you have open and your terminal move to it'], ['a', 'start an agent in it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
     ['[  ]', 'the repository before, or the next, All among them'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
@@ -2029,9 +2052,8 @@ document.addEventListener('keydown', (event) => {
         l: () => check(repo, lane, 'land'),
         r: () => lane.behind > 0 && confirm('rebase'),
         p: () => lane.upstream?.behind > 0 ? confirm('push-force') : press({ repo: repo.id, verb: 'push', lane: lane.name }),
-        t: () => host.inEditor && openIn('terminal', { repo: repo.path, lane: lane.name }),
         a: () => host.inEditor && lane.exists && openIn('agent', { repo: repo.path, lane: lane.name }),
-        o: () => host.inEditor && !isHere(repo, lane) && openIn('goto', { repo: repo.path, lane: lane.name })
+        o: () => host.inEditor && lane.exists && openIn('goto', { repo: repo.path, lane: lane.name })
     }[key]
     if (act) { act(); done() }
 })

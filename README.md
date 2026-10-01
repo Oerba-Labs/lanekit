@@ -267,8 +267,8 @@ The page in the picture above, for every repository in a folder:
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
-  rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it, `t` opens a terminal in it and `a` an agent (in
-  the editor), `f` fetches, `n` names a new lane from the lane's
+  rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it and `a` starts an agent in it (in the
+  editor), `f` fetches, `n` names a new lane from the lane's
   newest commit (or main's), `[` and `]` show the repository before or the next, `Esc` closes the
   details, `?` lists them; in the message form,
   `⌘ Enter` commits.
@@ -301,32 +301,35 @@ in the picture. There its clicks drive the editor:
 - in the side bar, where there is no room for a toolbar, the pointer on a lane shows the next
   thing to do and a **⋯** that opens the rest;
 - **Goto** moves you to a lane, as Interactive Smartlog's Goto moves your working copy: each file you
-  have open from another checkout reopens from that lane, where it was, and the Explorer shows its
-  folder; a file with unsaved changes stays where it is, and nothing on disk changes. The terminal
-  you were using follows: a shell waiting at its prompt in another checkout is sent `cd` to the
-  same folder in the lane; one running something (a server, an agent) is never typed into, and the
-  terminal you last used in the lane comes forward instead, or one opens there. It is on the
-  lane's toolbar, on its newest commit (and main's) under the pointer, in the details, and `o`;
-- **Terminal** opens a terminal in a lane, named for it and in a colour of its own that every
-  terminal of that lane shares, or brings back the one it opened before while it waits at its
-  prompt. **Agent** starts Claude Code or OpenCode in the lane, in a terminal named for both
+  have open from another checkout reopens from that lane, where it was; a file with unsaved changes
+  stays where it is, and nothing on disk changes. Your terminal follows and takes the focus: a
+  shell waiting at its prompt in another checkout is sent `cd` to the same folder in the lane; one
+  running something (a server, an agent) is never typed into, and the terminal you last used in
+  the lane comes forward instead, or one opens there. Goto is also the way to a lane's terminal,
+  so it is on every lane, the one you are in included, and on the repository's heading for its
+  main checkout; it is on the lane's toolbar, on its newest commit (and main's) under the pointer,
+  in the details, and `o`. A terminal LaneKit opens in a lane is named for it and wears a colour of
+  its own that all of the lane's terminals share;
+- **Agent** starts Claude Code or OpenCode in the lane, in a terminal named for both
   (`midi-export · Claude`), so the terminal list says which agent works where;
 - **the agents at work** are drawn on the lane each works in, Claude Code's and OpenCode's alike:
   **Thinking**, **Running** a tool, **Needs you** (a permission or a question, and what it asks to
   use), **Done** or **Failed**, since when; a click on one brings forward its terminal. One coming
   to need you is said in a notification with **Show**, unless its terminal is the one in front, and
-  the status bar counts the agents and those waiting on you, a click listing them all. Each agent
-  says this itself, into the main checkout's `.lanekit/agents/`: its state, the name of its tool,
-  its folder and its process, never what the tool was given or what anybody said. An agent that
-  ends, or dies, drops off. It says so through a hook in your Claude Code settings and a plugin among
-  your OpenCode plugins, installed once a machine rather than once a repository, so nothing is
-  committed: the extension asks the first time it finds lanes on a machine (`lanekit.reportAgents`
-  answers instead, `always` or `never`), or run `node ~/.lanekit/bin/agent-reports.mjs`. Outside a
-  repository with lanes an agent says nothing;
+  the status bar counts the agents and those waiting on you, a click listing them all. An agent in
+  a repository without lanes, or in no repository, is counted and said too, named by its folder.
+  Each agent says this itself, into your own `~/.local/state/lanekit/agents/`, nothing in any
+  repository: its state, the name of its tool, its folder, its machine and its process, never what
+  the tool was given or what anybody said. An agent that ends, or dies, drops off. It says so
+  through a hook in your Claude Code settings and a plugin among your OpenCode plugins, installed
+  once a machine: the extension asks the first time it finds lanes on a machine
+  (`lanekit.reportAgents` answers instead, `always` or `never`), or run
+  `node ~/.lanekit/bin/agent-reports.mjs`;
+- a repository with no lanes yet says so where its lanes would be, with **New lane** beside it;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
-  land"); a click opens that lane's menu: Goto, Changes, Terminal, Start agent, Gate, Land, Rebase, Push, **New
+  land"); a click opens that lane's menu: Goto, Changes, Start agent, Gate, Land, Rebase, Push, **New
   lane from here** (on top of this one), or the lane in a new window of its own;
 - the palette's **LaneKit: …** commands act on the lane in front of you, with the page's own
   checks, and a press that ends while LaneKit is out of sight says how it ended;
@@ -344,7 +347,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.13.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.14.0.vsix
 ```
 
 <br clear="right">

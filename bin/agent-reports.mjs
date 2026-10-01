@@ -17,7 +17,8 @@
  *
  * WHAT IT WILL NOT DO. Replace a hook or a plugin that is not LaneKit's, or touch settings that are not
  * valid JSON: it says so and leaves them. LaneKit's own are brought up to date where they name another
- * lanekit. It reports nothing by itself: an agent outside a repository with lanes says nothing.
+ * lanekit. It reports nothing by itself: each agent reports, into the person's own
+ * ~/.local/state/lanekit/agents/, once it is started.
  */
 
 import path from 'node:path'

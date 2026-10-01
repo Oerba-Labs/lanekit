@@ -17,6 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
 
+import { agentsDir } from '../lib/agents.mjs'
 import { activate, colourOf, pageHtml, SCHEME, wordOf } from '../vscode/host.mjs'
 import { build } from '../vscode/pack.mjs'
 
@@ -227,6 +228,7 @@ let working
 let first
 let editor
 let host
+let READ_AGENTS
 
 before(async () => {
     scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lanekit-vscode-')))
@@ -256,6 +258,9 @@ before(async () => {
     fs.writeFileSync(path.join(working, 'app.txt'), 'one\ntwo\n')
 
     // The editor opened on the lane itself: its repository is still found.
+    // Reports the editor below reads, in its scratch home; and anything written by a default, in scratch too.
+    process.env.XDG_STATE_HOME = path.join(scratch, 'state')
+    READ_AGENTS = agentsDir({ home: path.join(scratch, 'home-never'), env: {} })
     editor = standIn([working])
     // Never asked here whether to add the agents' reporters: the test of that asks in a home of its own.
     editor.config.reportAgents = 'never'
@@ -337,10 +342,14 @@ test('conflicts are opened only where git says there are some', async () => {
     assert.match(reply.error, /no conflicts left/)
 })
 
-test('a terminal opens in the lane', async () => {
-    const reply = await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
-    assert.equal(reply.ok, true)
+test('Goto is the way to a lane\'s terminal: with none open, one opens there, and takes the focus', async () => {
+    const reply = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
+    assert.equal(reply.ok, true, reply.error)
+    assert.equal(reply.value.terminal, 'opened')
     assert.equal(editor.seen.terminals.at(-1).cwd, working)
+    assert.deepEqual(editor.seen.made.at(-1).shown, { preserveFocus: false })
+    const gone = await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
+    assert.equal(gone.ok, false, 'Terminal is Goto now, and asked for by itself is refused')
 })
 
 test('anything the page did not show is refused, and said', async () => {
@@ -533,7 +542,7 @@ test('Goto moves the files you have open to a lane, leaves one with unsaved chan
     assert.deepEqual(reply.value.missing, ['main-only.txt'], 'a file the lane lacks is left open')
     assert.deepEqual(shown.map(([file]) => file), [path.join(working, 'app.txt')])
     assert.deepEqual(closed, [tabs[0]], 'the old tab closes, the others stay')
-    assert.ok(editor.seen.executed.some(([command, uri]) => command === 'revealInExplorer' && uri.path === working), 'the Explorer shows the lane')
+    assert.ok(!editor.seen.executed.some(([command]) => command === 'revealInExplorer'), 'the side bar is not opened on the Explorer: it moved the page')
     assert.ok(!editor.seen.executed.some(([command]) => command === 'vscode.openFolder'), 'no window is opened')
     assert.match(status.join(' '), /you are in working now/)
     assert.ok(editor.seen.said.some((line) => /unsaved changes/.test(line)))
@@ -583,13 +592,15 @@ test('with gateOnCommit, a commit landing in a lane gates it by itself', async (
 
 test('the status bar\'s menu offers what can be done with the lane in front, and does the one picked', async () => {
     editor.seen.picks.length = 0
-    editor.answers.pick = 'Terminal'
+    editor.answers.pick = 'Goto'
+    for (const made of [...editor.vscode.window.terminals]) editor.closeTerminal(made)
     const terminals = editor.seen.terminals.length
     await editor.seen.commands.get('lanekit.laneMenu')({ repo: 'demo', lane: 'working' })
     const labels = editor.seen.picks.at(-1).map((item) => item.label)
-    for (const want of ['Show in LaneKit', 'Terminal', 'Start agent', 'New lane from here', 'Open in a new window']) {
+    for (const want of ['Show in LaneKit', 'Goto', 'Start agent', 'New lane from here', 'Open in a new window']) {
         assert.ok(labels.some((label) => label.includes(want)), `${want} in ${labels.join(', ')}`)
     }
+    assert.ok(!labels.some((label) => label.includes('Terminal')), 'no Terminal beside Goto')
     assert.equal(editor.seen.terminals.length, terminals + 1)
     assert.equal(editor.seen.terminals.at(-1).cwd, working)
     editor.answers.pick = undefined
@@ -682,7 +693,7 @@ test('Goto types nothing into a terminal running something, or one it cannot rea
     assert.equal(lanes.name, 'working')
     assert.equal(lanes.creationOptions.color.id, colourOf('working'), 'in the lane\'s colour')
     assert.equal(lanes.creationOptions.iconPath.id, 'git-branch')
-    assert.deepEqual(lanes.shown, { preserveFocus: true }, 'shown without taking the focus')
+    assert.deepEqual(lanes.shown, { preserveFocus: false }, 'shown, with the focus')
     // Once one is there, it comes forward rather than another.
     editor.useTerminal(busy)
     const shown = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
@@ -694,7 +705,7 @@ test('Goto types nothing into a terminal running something, or one it cannot rea
     editor.useTerminal(busy)
     lanes.shown = null
     await editor.ask('open', { what: 'goto', repo, lane: 'working' })
-    assert.deepEqual(second.shown, { preserveFocus: true })
+    assert.deepEqual(second.shown, { preserveFocus: false })
     assert.equal(lanes.shown, null)
     // Its command ended: at its prompt again, so it is moved.
     editor.emit('end', { terminal: busy })
@@ -705,12 +716,13 @@ test('Goto types nothing into a terminal running something, or one it cannot rea
     editor.useTerminal(blind)
     const unread = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
     assert.equal(unread.value.terminal, 'shown')
-    // No terminal at all: none opens.
+    // No terminal at all: one opens.
     closeAllTerminals()
     const before = editor.seen.terminals.length
     const none = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
-    assert.equal(none.value.terminal, null)
-    assert.equal(editor.seen.terminals.length, before)
+    assert.equal(none.value.terminal, 'opened')
+    assert.equal(editor.seen.terminals.length, before + 1)
+    closeAllTerminals()
 })
 
 test('a terminal that was running something before LaneKit started is not taken for one at its prompt', async () => {
@@ -721,23 +733,6 @@ test('a terminal that was running something before LaneKit started is not taken 
     const reply = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
     assert.equal(reply.value.terminal, 'opened')
     assert.deepEqual(old.commands, [])
-    closeAllTerminals()
-})
-
-test('Terminal brings back the lane\'s own while it waits at its prompt, and opens another while it is busy', async () => {
-    closeAllTerminals()
-    const before = editor.seen.terminals.length
-    await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
-    const own = editor.seen.made.at(-1)
-    own.shellIntegration = { cwd: editor.vscode.Uri.file(working), executeCommand: async () => {} }
-    editor.emit('integration', { terminal: own, shellIntegration: own.shellIntegration })
-    own.shown = null
-    await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
-    assert.equal(editor.seen.terminals.length, before + 1, 'the same one again')
-    assert.deepEqual(own.shown, { preserveFocus: false })
-    editor.emit('start', { terminal: own })
-    await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
-    assert.equal(editor.seen.terminals.length, before + 2, 'a second while the first is busy')
     closeAllTerminals()
 })
 
@@ -836,7 +831,7 @@ test('an agent at work is told to the pages and the status bar, said once when i
     // Claude Code under a terminal of this window: the terminal's shell is among the processes above the hook.
     const shell = editor.openTerminal(working)
     const chain = [{ pid: 4_194_101, name: 'node' }, { pid: process.pid, name: 'claude' }, { pid: await shell.processId, name: 'bash' }]
-    const say = (hook_event_name, extra = {}) => reportClaude(JSON.stringify({ session_id: 'vs-1', cwd: working, hook_event_name, ...extra }), { chain })
+    const say = (hook_event_name, extra = {}) => reportClaude(JSON.stringify({ session_id: 'vs-1', cwd: working, hook_event_name, ...extra }), { chain, dir: READ_AGENTS })
     say('UserPromptSubmit')
     editor.seen.said.length = 0
     const reply = await editor.ask('state')
@@ -934,4 +929,32 @@ test('the agents\' reporters are offered once a machine: added on Add, not asked
     fs.rmSync(path.join(home, '.config'), { recursive: true })
     await open(undefined, new Map(), { setting: 'always', wait: () => fs.existsSync(pluginFile) })
     assert.ok(fs.existsSync(pluginFile), 'always: added without asking')
+})
+
+test('an agent in a repository without lanes is counted, named by its folder, and said when it needs you', async () => {
+    const { reportClaude } = await import('../lib/agents.mjs')
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
+    const plain = path.join(scratch, 'plain-repo')
+    fs.mkdirSync(plain, { recursive: true })
+    git(plain, 'init', '-q', '-b', 'main')
+    const chain = [{ pid: 4_194_101, name: 'node' }, { pid: process.pid, name: 'claude' }]
+    const say = (hook_event_name, extra = {}) => reportClaude(JSON.stringify({ session_id: 'vs-2', cwd: plain, hook_event_name, ...extra }), { chain, dir: READ_AGENTS })
+    say('UserPromptSubmit')
+    editor.seen.said.length = 0
+    const reply = await editor.ask('state')
+    const mine = reply.value.agents.find((agent) => agent.key === 'claude-vs-2')
+    assert.deepEqual([mine.repo, mine.lane, mine.where], [null, null, 'plain-repo'])
+    assert.equal(editor.agentBar.text, '$(sparkle) 1 agent')
+    say('PermissionRequest', { tool_name: 'Bash', tool_use_id: 'p1' })
+    await editor.ask('state')
+    await settle()
+    assert.deepEqual(editor.seen.said, ['LaneKit: plain-repo · Claude needs you: it asks to use Bash.'])
+    editor.answers.pick = 'plain-repo · Claude'
+    await editor.seen.commands.get('lanekit.agents')()
+    assert.match(editor.seen.picks.at(-1)[0].detail, /plain-repo, which has no lanes$/)
+    assert.match(editor.seen.said.at(-1), /plain-repo · Claude runs in a terminal outside this window/, 'no terminal of this window: said, and no lanes page to show')
+    editor.answers.pick = undefined
+    say('SessionEnd')
+    await editor.ask('state')
+    assert.equal(editor.agentBar.shown, false)
 })

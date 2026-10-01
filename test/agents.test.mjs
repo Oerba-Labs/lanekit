@@ -1,8 +1,9 @@
 /**
  * The agents' reports (lib/agents.mjs), asked what they promise: Claude Code's hook events and
  * OpenCode's taken to one state each, a late event never undoing a later one, a report written into
- * the main checkout whichever lane the agent works in and read back against that lane, an agent no
- * longer running left unread and then cleared away, nothing said outside a repository with lanes,
+ * the person's own state folder and read back against the lane it works in, an agent in a repository
+ * without lanes named by its folder, another machine's reports left alone, an agent no longer running
+ * left unread and then cleared away,
  * `lane report claude` silent on stdout and never failing, OpenCode's plugin finding lanekit, and the
  * reporters installed once a machine beside what is there, without replacing anything not LaneKit's.
  *
@@ -20,7 +21,7 @@ import { pathToFileURL } from 'node:url'
 import { after, before, test } from 'node:test'
 
 import {
-    agentsDirOf, agentsIn, ancestry, CLAUDE_EVENTS, claudeHooks, claudeStep, installForUser, opencodePlugin, opencodeReporter,
+    agentsDir, agentsIn, ancestry, CLAUDE_EVENTS, claudeHooks, claudeStep, installForUser, opencodePlugin, opencodeReporter,
     readReports, reportClaude, reportersOn, statOf, withClaudeHooks
 } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
@@ -45,9 +46,13 @@ let scratch
 let work
 let repo
 let laneDir
+let AGENTS
 
 before(() => {
     scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lanekit-agents-')))
+    // Every report this test writes, by any path (a hook, the plugin, a default), goes to a scratch state folder.
+    process.env.XDG_STATE_HOME = env.XDG_STATE_HOME = path.join(scratch, 'state')
+    AGENTS = agentsDir()
     work = path.join(scratch, 'work')
     repo = path.join(work, 'demo')
     fs.mkdirSync(repo, { recursive: true })
@@ -108,13 +113,14 @@ test('a hook finishing late never undoes a later one', () => {
     assert.equal(step(after, event('Stop'), 4000), null, 'an event older than the report is dropped')
 })
 
-test('a report goes to the main checkout from a lane, is read against that lane, and goes when the session ends', async () => {
+test('a report goes to the person\'s own state folder, is read against the lane it works in, and goes when the session ends', async () => {
     const written = reportClaude(JSON.stringify(event('PreToolUse', { tool_name: 'Edit', tool_use_id: 'e1' })), { chain: chainTo(RUNNING) })
     assert.equal(written.pid, RUNNING, 'the agent is the first process above the hook that is not a shell')
     assert.deepEqual(written.pids, [RUNNING, 4_194_103])
-    const file = path.join(agentsDirOf(repo), 'claude-abc-123.json')
-    assert.ok(fs.existsSync(file), 'in the main checkout\'s .lanekit/agents')
-    assert.ok(!fs.existsSync(path.join(laneDir, '.lanekit', 'agents')), 'not the lane\'s')
+    const file = path.join(AGENTS, 'claude-abc-123.json')
+    assert.ok(fs.existsSync(file), 'in the person\'s ~/.local/state/lanekit/agents')
+    assert.equal(written.host, os.hostname(), 'named for the machine it was written on')
+    assert.ok(!fs.existsSync(path.join(laneDir, '.lanekit')) && !fs.existsSync(path.join(repo, '.lanekit', 'agents')), 'nothing in the repository')
     const service = createService({ dirs: [work], packageRoot: KIT })
     const state = await service.state()
     assert.deepEqual(state.agents.map((agent) => [agent.repo, agent.lane, agent.agent, agent.state, agent.tool]), [['demo', 'midi-export', 'claude', 'running', 'Edit']])
@@ -126,12 +132,12 @@ test('a report goes to the main checkout from a lane, is read against that lane,
 
 test('an agent no longer running is not read, and the next to start clears it away', () => {
     reportClaude(JSON.stringify({ ...event('UserPromptSubmit'), session_id: 'dead-one' }), { chain: chainTo(GONE) })
-    const file = path.join(agentsDirOf(repo), 'claude-dead-one.json')
+    const file = path.join(AGENTS, 'claude-dead-one.json')
     assert.ok(fs.existsSync(file))
-    assert.deepEqual(readReports(repo).map((report) => report.key), [], 'not read')
+    assert.deepEqual(readReports().map((report) => report.key), [], 'not read')
     reportClaude(JSON.stringify({ ...event('SessionStart'), session_id: 'live-one' }), { chain: chainTo(RUNNING) })
     assert.ok(!fs.existsSync(file), 'cleared when another starts')
-    assert.deepEqual(readReports(repo).map((report) => report.key), ['claude-live-one'])
+    assert.deepEqual(readReports().map((report) => report.key), ['claude-live-one'])
     reportClaude(JSON.stringify({ ...event('SessionEnd'), session_id: 'live-one' }), { chain: chainTo(RUNNING) })
 })
 
@@ -147,11 +153,12 @@ test('a process\'s name and parent are read from Linux\'s /proc as it writes the
 })
 
 test('a report file is read for what it may say, and nothing else', () => {
-    const dir = agentsDirOf(repo)
-    fs.writeFileSync(path.join(dir, 'claude-odd.json'), JSON.stringify({ key: 'claude-odd', agent: 'claude', state: 'running', tool: 'x'.repeat(500), pid: RUNNING, at: 1, extra: '<script>', pids: ['1', RUNNING] }))
-    fs.writeFileSync(path.join(dir, 'claude-bad.json'), JSON.stringify({ key: 'claude-bad', agent: 'claude', state: 'exploding', pid: RUNNING }))
+    const dir = AGENTS
+    const host = os.hostname()
+    fs.writeFileSync(path.join(dir, 'claude-odd.json'), JSON.stringify({ key: 'claude-odd', agent: 'claude', host, state: 'running', tool: 'x'.repeat(500), pid: RUNNING, at: 1, extra: '<script>', pids: ['1', RUNNING] }))
+    fs.writeFileSync(path.join(dir, 'claude-bad.json'), JSON.stringify({ key: 'claude-bad', agent: 'claude', host, state: 'exploding', pid: RUNNING }))
     fs.writeFileSync(path.join(dir, 'not-json.json'), '{')
-    const read = readReports(repo)
+    const read = readReports()
     assert.deepEqual(read.map((report) => report.key), ['claude-odd'])
     assert.equal(read[0].tool.length, 40)
     assert.equal(read[0].extra, undefined)
@@ -164,15 +171,17 @@ test('lane report claude says nothing on stdout and never fails, whatever it is 
     const good = shim(JSON.stringify({ ...event('SessionStart'), session_id: 'via-lane' }))
     assert.equal(good.status, 0, good.stderr)
     assert.equal(good.stdout, '', 'stdout after SessionStart is words for the model')
-    assert.ok(fs.existsSync(path.join(agentsDirOf(repo), 'claude-via-lane.json')))
+    assert.ok(fs.existsSync(path.join(AGENTS, 'claude-via-lane.json')))
     const ended = shim(JSON.stringify({ ...event('SessionEnd'), session_id: 'via-lane' }))
     assert.equal(ended.status, 0)
-    assert.ok(!fs.existsSync(path.join(agentsDirOf(repo), 'claude-via-lane.json')))
+    assert.ok(!fs.existsSync(path.join(AGENTS, 'claude-via-lane.json')))
     const junk = shim('not json at all')
     assert.equal(junk.status, 0)
     assert.equal(junk.stdout, '')
-    const outside = shim(JSON.stringify({ ...event('Stop'), cwd: scratch }))
-    assert.equal(outside.status, 0, 'outside a repository: nothing to say, and no failure')
+    const outside = shim(JSON.stringify({ ...event('Stop'), session_id: 'outside', cwd: scratch }))
+    assert.equal(outside.status, 0, 'outside a repository too')
+    assert.ok(fs.existsSync(path.join(AGENTS, 'claude-outside.json')))
+    shim(JSON.stringify({ ...event('SessionEnd'), session_id: 'outside', cwd: scratch }))
     const other = spawnSync(process.execPath, [path.join(KIT, 'dev', 'lane.mjs'), 'report', 'codex'], { cwd: laneDir, env, input: '{}', encoding: 'utf8' })
     assert.equal(other.status, 0)
     assert.match(other.stderr, /knows claude/)
@@ -181,7 +190,7 @@ test('lane report claude says nothing on stdout and never fails, whatever it is 
 test('OpenCode\'s events come to one state for the process, written only when it changes', async () => {
     const times = [1000]
     const hooks = await opencodeReporter({ directory: laneDir, worktree: laneDir }, { now: () => times.at(-1), pid: RUNNING, chain: [{ pid: RUNNING, name: 'opencode' }, { pid: 4_194_103, name: 'zsh' }] })
-    const file = path.join(agentsDirOf(repo), `opencode-${RUNNING}.json`)
+    const file = path.join(AGENTS, `opencode-${RUNNING}.json`)
     const read = () => JSON.parse(fs.readFileSync(file, 'utf8'))
     assert.equal(read().state, 'ready')
     assert.deepEqual(read().pids, [RUNNING, 4_194_103])
@@ -231,21 +240,43 @@ test('OpenCode\'s plugin finds this lanekit, hands over to it, and does nothing 
     const hooks = await LaneKitReport({ directory: laneDir, worktree: laneDir })
     assert.equal(typeof hooks.event, 'function')
     assert.equal(typeof hooks['tool.execute.before'], 'function')
-    const file = path.join(agentsDirOf(repo), `opencode-${process.pid}.json`)
+    const file = path.join(AGENTS, `opencode-${process.pid}.json`)
     assert.ok(fs.existsSync(file))
     fs.rmSync(file)
     const elsewhere = path.join(scratch, 'elsewhere')
     fs.mkdirSync(elsewhere, { recursive: true })
-    assert.deepEqual(await LaneKitReport({ directory: elsewhere, worktree: elsewhere }), {}, 'outside a repository: no hooks, and no failure')
+    const there = await LaneKitReport({ directory: elsewhere, worktree: elsewhere })
+    assert.equal(typeof there.event, 'function', 'outside a repository too')
+    fs.rmSync(path.join(AGENTS, `opencode-${process.pid}.json`))
 })
 
-test('an agent in a repository without lanes says nothing, and gives it no .lanekit folder', async () => {
+test('an agent in a repository without lanes is named by it, and the repository is given no file', async () => {
     const plain = path.join(scratch, 'plain')
-    fs.mkdirSync(plain, { recursive: true })
+    fs.mkdirSync(path.join(plain, 'src'), { recursive: true })
     git(plain, 'init', '-q', '-b', 'main')
-    assert.equal(reportClaude(JSON.stringify({ ...event('SessionStart'), cwd: plain }), { chain: chainTo(RUNNING) }), null)
-    assert.deepEqual(await opencodeReporter({ directory: plain, worktree: plain }, { pid: RUNNING, chain: [] }), {})
-    assert.ok(!fs.existsSync(path.join(plain, '.lanekit')))
+    reportClaude(JSON.stringify({ ...event('SessionStart'), session_id: 'no-lanes', cwd: path.join(plain, 'src') }), { chain: chainTo(RUNNING) })
+    const repos = [{ id: 'demo', path: repo, lanes: [{ name: 'midi-export', path: laneDir, exists: true }] }]
+    const found = agentsIn(repos).find((agent) => agent.session === 'no-lanes')
+    assert.deepEqual([found.repo, found.lane, found.where], [null, null, 'plain'], 'the repository it is in, by name')
+    assert.deepEqual(fs.readdirSync(plain).sort(), ['.git', 'src'], 'nothing written into it')
+    reportClaude(JSON.stringify({ ...event('SessionEnd'), session_id: 'no-lanes', cwd: plain }), { chain: chainTo(RUNNING) })
+    const hooks = await opencodeReporter({ directory: scratch, worktree: scratch }, { pid: RUNNING, chain: [] })
+    assert.equal(typeof hooks.event, 'function', 'and in a folder in no repository at all, OpenCode reports too')
+    assert.equal(agentsIn([]).find((agent) => agent.agent === 'opencode').where, path.basename(scratch))
+    fs.rmSync(path.join(AGENTS, `opencode-${RUNNING}.json`))
+})
+
+test('another machine\'s reports in a shared home are not read, and are cleared away after some days', () => {
+    const theirs = (key, at) => fs.writeFileSync(path.join(AGENTS, `${key}.json`), JSON.stringify({ key, agent: 'claude', host: 'another-workspace', state: 'thinking', cwd: laneDir, at, pid: RUNNING, pids: [RUNNING] }))
+    theirs('claude-theirs-new', Date.now())
+    theirs('claude-theirs-old', Date.now() - 4 * 24 * 60 * 60 * 1000)
+    assert.deepEqual(readReports().map((report) => report.key), [], 'its process ids mean nothing here, however alive one looks')
+    reportClaude(JSON.stringify({ ...event('SessionStart'), session_id: 'mine' }), { chain: chainTo(RUNNING) })
+    assert.ok(fs.existsSync(path.join(AGENTS, 'claude-theirs-new.json')), 'a recent one is left for its own machine')
+    assert.ok(!fs.existsSync(path.join(AGENTS, 'claude-theirs-old.json')), 'an old one is cleared')
+    assert.equal(readReports({ host: 'another-workspace' }).length, 1, 'and read where it was written')
+    fs.rmSync(path.join(AGENTS, 'claude-theirs-new.json'))
+    reportClaude(JSON.stringify({ ...event('SessionEnd'), session_id: 'mine' }), { chain: chainTo(RUNNING) })
 })
 
 test('Claude Code\'s hooks are added beside the ones there, once, in the background but for SessionEnd, and never fail it', () => {
@@ -274,9 +305,9 @@ test('the hook Claude Code is given runs the reporter, from any folder', () => {
     const ran = spawnSync('sh', ['-c', command], { cwd: scratch, env, input: JSON.stringify({ ...event('SessionStart'), session_id: 'by-hook' }), encoding: 'utf8' })
     assert.equal(ran.status, 0, ran.stderr)
     assert.equal(ran.stdout, '')
-    assert.ok(fs.existsSync(path.join(agentsDirOf(repo), 'claude-by-hook.json')))
+    assert.ok(fs.existsSync(path.join(AGENTS, 'claude-by-hook.json')))
     spawnSync('sh', ['-c', command], { cwd: scratch, env, input: JSON.stringify({ ...event('SessionEnd'), session_id: 'by-hook' }), encoding: 'utf8' })
-    assert.ok(!fs.existsSync(path.join(agentsDirOf(repo), 'claude-by-hook.json')))
+    assert.ok(!fs.existsSync(path.join(AGENTS, 'claude-by-hook.json')))
 })
 
 test('the reporters are installed once a machine, where Claude Code and OpenCode look, and nothing not LaneKit\'s is replaced', () => {
