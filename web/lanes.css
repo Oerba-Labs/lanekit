@@ -238,6 +238,12 @@ html[data-surface="sidebar"] .subject { max-width: none; }
 /* Where the editor is: its line in the accent, as ISL draws the stack you are on. */
 .lane.is-here::before { background: var(--accent); }
 .lane.is-here > svg.fork path { stroke: var(--accent); }
+/* A lane whose agent waits on you: its line in amber, over where the editor is, and the words beside its name. */
+.lane.wants-you::before { background: var(--warn); }
+.lane.wants-you > svg.fork path { stroke: var(--warn); }
+.wants-badge { flex: none; padding: 0 8px; border-radius: 999px; font-size: var(--s11); font-weight: 600; line-height: 1.7;
+  color: var(--warn); background: var(--warn-wash); }
+.wants-badge:empty { display: none; }
 .lane-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
 .tag.lane-name { font-weight: 600; font-size: var(--s13); }
 .lane .facts { margin: 2px 0 0; gap: 2px 14px; font-size: var(--s12); }
@@ -349,7 +355,13 @@ html:not([data-surface="sidebar"]) .lane > .lane-head > .hover-actions {
   flex-wrap: nowrap; padding-left: 24px;
   background: linear-gradient(to right, transparent, var(--bg) 20px);
 }
-.lane:hover .hover-actions, .lane.pointer .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions { visibility: visible; opacity: 1; }
+.lane:hover .hover-actions, .lane.pointer .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions, .lane.more-open .hover-actions { visibility: visible; opacity: 1; }
+/* A lane's ⋯ in a tab: what is done now and then (push, set aside, drop), in a small menu under it. */
+.more-wrap { position: relative; display: inline-flex; }
+.more-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 6; display: flex; flex-direction: column; gap: 2px;
+  min-width: 140px; padding: 4px; border: 1px solid var(--vscode-menu-border, var(--line)); border-radius: 6px;
+  background: var(--vscode-menu-background, var(--bg)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16); }
+.more-menu .btn { justify-content: flex-start; width: 100%; border-color: transparent; }
 .lane .corner { display: none; }
 html[data-surface="sidebar"] .lane .hover-actions { display: none; }
 html[data-surface="sidebar"] .lane.tools-open .hover-actions { display: flex; visibility: visible; opacity: 1; }

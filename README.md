@@ -253,7 +253,12 @@ The page in the picture above, for every repository in a folder:
   request** (one pushed without one), **Pull** (main behind origin) and **Fetch**. Land and Sweep
   check first with `--dry-run` and ask; a push that would replace origin's copy of a rebased branch
   asks too. A rebase that conflicts stops with the files named, and waits for **Continue** or
-  **Abort**.
+  **Abort**. The one thing to do next is solid (**Gate** when it needs a gate, **Land** when it is
+  ready, **Rebase** when it conflicts with main); what is done now and then, **Push**, **Pull
+  request**, **Set aside** and **Drop**, sits behind **⋯** at the toolbar's end.
+- **Its state is said once**, beside its name ("Needs a gate", "Ready to land"), with the gate's
+  last result under it only where there is one. A lane whose agent waits on you says so there too
+  ("Claude needs you"), and its line turns amber, so a glance down the page finds it.
 - **A new lane starts from a commit.** Point at any commit, of main or of a lane, choose **New lane
   here**, and type its name in that row: the lane starts from that commit, on top of it.
 - **A lane can be dragged onto a commit of main** to rebase it there: while it is dragged, a ghost
@@ -304,7 +309,8 @@ in the picture. There its clicks drive the editor:
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
   holds that the integration branch does not, committed or not, against its files as they are,
   so you can edit them in the diff; an uncommitted file opens its own difference;
-- the lane the file in front of you is in says **You are here**;
+- the lane the file in front of you is in says **You are here**; a click on a lane's name is
+  **Goto**;
 - **a repository in a tab of its own**: each tab is titled with the repository its switcher shows
   (*api · LaneKit*), and a Cmd- or middle-click on one in the switcher, the ↗ beside its **Fetch**, the
   status bar's menu, or **LaneKit: Show a Repository in a Tab of Its Own…** opens one for that
@@ -359,7 +365,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.14.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.15.0.vsix
 ```
 
 <br clear="right">

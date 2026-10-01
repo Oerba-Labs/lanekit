@@ -186,7 +186,8 @@ let lastDrawn = ''
 let lastDrawnAt = 0
 /** Keep a part of what this page remembers across a reload of its tab: the editor keeps one value for the whole page. */
 const keep = (part) => host.remember({ ...(host.recall() ?? {}), ...part })
-const expanded = new Set(host.recall()?.expanded ?? [])   // `${repo}/${lane}` showing every commit, `…:files` showing files
+// `${repo}/${lane}` showing every commit, `…:files` showing files; never a lane's ⋯ menu left open by a page before.
+const expanded = new Set((host.recall()?.expanded ?? []).filter((key) => !key.endsWith(':more')))
 const toggle = (key) => {
     if (expanded.has(key)) expanded.delete(key); else expanded.add(key)
     keep({ expanded: [...expanded] })
@@ -428,9 +429,10 @@ const statusOf = (lane) => {
     }
 }
 
+/** A lane's last gate, where there is one. None is not said: the lane's state says what it needs instead. */
 const gateOf = (lane) => {
     const gate = lane.gate
-    if (!gate) return state('quiet', 'Not gated yet', 'small')
+    if (!gate) return null
     const when = gate.at ? ` · ${ago(gate.at)}` : ''
     let node
     if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Gate passed · tier ${gate.tier}${when}`, 'small')
@@ -488,6 +490,35 @@ const agentChip = (repo, agent) => {
     return opens(chip, `${about}. Click for its terminal`, () => openIn('agent-terminal', { repo: repo.path, key: agent.key }))
 }
 
+const wantsOf = (repoId, laneName) => agentsOf(repoId, laneName).filter((agent) => agent.state === 'needs-you')
+/** A lane whose agent waits on you, said beside its name, where a glance down the page finds it: always there, and
+    empty (and so not drawn) while nobody waits, so the next word from an agent is drawn into it. */
+const wantsWords = (repoId, laneName) => {
+    const wanting = wantsOf(repoId, laneName)
+    if (!wanting.length) return ''
+    return wanting.length === 1 ? `${AGENT_NAMES[wanting[0].agent] ?? wanting[0].agent} needs you` : `${wanting.length} agents need you`
+}
+const wantsBadge = (repoId, laneName) => el('span', { class: 'wants-badge', 'data-wants': `${repoId}/${laneName}`, text: wantsWords(repoId, laneName) })
+
+/** Every lane's ⋯ menu closed; whether one was open. A click anywhere else, or Escape, closes them. */
+const closeMenus = () => {
+    const open = [...expanded].filter((key) => key.endsWith(':more'))
+    for (const key of open) expanded.delete(key)
+    if (open.length) host.remember({ expanded: [...expanded] })
+    return open.length > 0
+}
+document.addEventListener('click', (event) => { if (!event.target.closest?.('.more-wrap') && closeMenus()) draw(true) })
+// Escape closes one wherever the keyboard is, its own ⋯ button included.
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && closeMenus()) { event.preventDefault(); draw(true) } })
+
+/** A lane's name; in the editor a click on it is Goto, the thing most often done with a lane (the owner, 1 Oct). */
+const laneName = (repo, lane) => {
+    const name = el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) })
+    if (!host.inEditor || !lane.exists) return name
+    return opens(name, `${portOf(lane)}. Click to go to it: the files you have open and your terminal move to ${lane.name}`,
+        () => openIn('goto', { repo: repo.path, lane: lane.name }))
+}
+
 /** A lane's agents (or the main checkout's, with no lane), on a line of their own: there and empty when there are none,
     so the next word from an agent is drawn into it. */
 const agentsRow = (repo, laneName) => el('div', { class: 'agents', 'data-agents': `${repo.id}/${laneName ?? ''}` },
@@ -500,6 +531,12 @@ const drawAgents = () => {
         const at = row.dataset.agents.indexOf('/')
         const repo = current?.repos.find((candidate) => candidate.id === row.dataset.agents.slice(0, at))
         if (repo) row.replaceChildren(...agentsOf(repo.id, row.dataset.agents.slice(at + 1) || null).map((agent) => agentChip(repo, agent)))
+    }
+    for (const badge of document.querySelectorAll('.wants-badge[data-wants]')) {
+        const at = badge.dataset.wants.indexOf('/')
+        const words = wantsWords(badge.dataset.wants.slice(0, at), badge.dataset.wants.slice(at + 1))
+        badge.textContent = words
+        badge.closest('li.lane')?.classList.toggle('wants-you', Boolean(words))
     }
     markPointer()
 }
@@ -1366,6 +1403,7 @@ const laneCard = (repo, lane, forked = true) => {
     }
     if (working && !lane.operation) {
         buttons.push(iconButton('gate', 'Gate', {
+            class: `btn${lane.queue?.verdict === 'gate now' ? ' primary' : ''}`,
             disabled: busy || lane.dirty > 0 || Boolean(lane.operation),
             title: lane.dirty ? 'Commit first: a gate result names a commit, and uncommitted changes are in none' : 'Rebase onto the integration branch and run the tier this lane earns',
             onclick: () => { pending.set(key, { verb: 'gate', stage: 'confirm' }); draw(true) }
@@ -1378,22 +1416,25 @@ const laneCard = (repo, lane, forked = true) => {
     }
     if ((working || lane.kind === 'fresh') && !lane.operation && lane.behind > 0) {
         buttons.push(iconButton('rebase', 'Rebase', {
+            class: `btn${lane.queue?.verdict === 'rebase first' ? ' primary' : ''}`,
             disabled: busy || lane.dirty > 0,
             title: lane.dirty ? 'Commit first: a rebase replays commits, and uncommitted changes are in none' : `Replay it on ${repo.integrationBranch} as it is now: ${lane.behind} behind`,
             onclick: ask('rebase')
         }))
     }
+    // What is done now and then, rather than at every step, sits behind ⋯ in a tab: pushing, and putting a lane away.
+    const more = []
     if (lane.kind === 'working' && !lane.operation) {
         const up = lane.upstream
         if (!up || up.ahead > 0) {
             const rewrite = Boolean(up && up.behind > 0)
-            buttons.push(iconButton('push', rewrite ? 'Push…' : 'Push', {
+            more.push(iconButton('push', rewrite ? 'Push…' : 'Push', {
                 disabled: busy,
                 title: rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time',
                 onclick: rewrite ? ask('push-force') : () => press({ repo: repo.id, verb: 'push', lane: lane.name })
             }))
         } else if (!lane.pull && repo.github?.state === 'ok') {
-            buttons.push(iconButton('pr', 'Pull request', {
+            more.push(iconButton('pr', 'Pull request', {
                 disabled: busy,
                 title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}, from its commits' own words`,
                 onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name })
@@ -1404,10 +1445,35 @@ const laneCard = (repo, lane, forked = true) => {
     buttons.push(...openLinks(repo, lane).filter(Boolean))
     // A lane not being worked on: set aside (nothing removed), or dropped (its folder removed, its branch kept), after a check.
     if ((lane.kind === 'working' || lane.kind === 'fresh') && lane.exists && !lane.operation) {
-        buttons.push(iconButton('aside', 'Set aside', { class: 'btn quiet', disabled: busy, title: 'Out of the landing order and the log, listed apart; nothing removed', onclick: () => press({ repo: repo.id, verb: 'aside', lane: lane.name }) }))
-        buttons.push(iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }))
+        more.push(iconButton('aside', 'Set aside', { class: 'btn quiet', disabled: busy, title: 'Out of the landing order and the log, listed apart; nothing removed', onclick: () => press({ repo: repo.id, verb: 'aside', lane: lane.name }) }))
+        more.push(iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }))
     }
-    if (lane.pending) buttons.length = 0
+    if (lane.pending) { buttons.length = 0; more.length = 0 }
+    // The side bar opens every button in the card behind its own ⋯ (below); a tab keeps the rest in a menu of its own.
+    if (IN_SIDEBAR) buttons.push(...more.splice(0))
+    const moreKey = `${key}:more`
+    const moreOpen = more.length > 0 && expanded.has(moreKey)
+    const moreMenu = more.length
+        ? el('div', { class: 'more-wrap' },
+            el('button', {
+                type: 'button', class: 'btn quiet more', text: '⋯', 'aria-expanded': String(moreOpen), 'aria-haspopup': 'menu',
+                'aria-label': `More for ${lane.name}`, title: more.map((button) => button.textContent).join(', '),
+                onclick: (event) => {
+                    event.stopPropagation()
+                    // One menu open at a time: this one opens, or closes, and any other closes.
+                    const wasOpen = expanded.has(moreKey)
+                    closeMenus()
+                    if (!wasOpen) toggle(moreKey); else draw(true)
+                }
+            }),
+            moreOpen ? el('div', { class: 'more-menu', role: 'menu' }, more.map((button) => {
+                button.setAttribute('role', 'menuitem')
+                button.classList.add('quiet')   // every item alike in a menu: none is the next step
+                // Chosen: the menu closes, whatever the press then draws.
+                button.addEventListener('click', () => { if (closeMenus()) queueMicrotask(() => draw(true)) })
+                return button
+            })) : null)
+        : null
 
     const files = lane.queue?.files ?? []
     const filesKey = `${key}:files`
@@ -1492,17 +1558,18 @@ const laneCard = (repo, lane, forked = true) => {
     const said = state(tone, word)
     if (detail) said.title = detail
     const card = el('li', {
-        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${isHere(repo, lane) ? ' is-here' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}`,
+        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${isHere(repo, lane) ? ' is-here' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}`,
         'data-key': key, tabindex: '0', draggable: draggable ? 'true' : null,
         title: draggable ? 'Drag it onto a commit of main to rebase it there' : null
     },
         el('div', { class: 'lane-head' },
             isHere(repo, lane) ? herePill() : null,
-            el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) }),
+            laneName(repo, lane),
             said,
+            wantsBadge(repo.id, lane.name),
             el('span', { class: 'grow' }),
             corner,
-            el('div', { class: 'actions hover-actions' }, next ? buttons.filter((button) => button !== next) : buttons)),
+            el('div', { class: 'actions hover-actions' }, next ? buttons.filter((button) => button !== next) : buttons, moreMenu)),
         agentsRow(repo, lane.name),
         facts,
         collisions,
