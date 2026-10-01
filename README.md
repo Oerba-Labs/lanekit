@@ -11,7 +11,7 @@ process, a file or a database row, and each lands back on `main` only once its t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-dark.png">
-  <img alt="The LaneKit page, drawn the way Sapling's Interactive Smartlog draws a log: main as a line with its commits as dots, and two lanes, each on a line of its own that curves into main at the commit it started from. dark-mode lists its two uncommitted files with Commit… and Amend under them; midi-export has passed its gate, and the pointer on it shows its buttons: Gate, Land…, Push. Above them, the landing order on one line." src="docs/images/lanes-light.png">
+  <img alt="The LaneKit page in two halves, as Sapling's Interactive Smartlog is: on the left, main as a line of dots and two lanes, each on a line of its own that curves into main where it started; dark-mode's uncommitted files ticked, with Commit… and Amend under them; midi-export ready to land, its pull request's badges under its newest commit, which is chosen. On the right, that commit's details: its words, its lane, hash, author and age, Edit message, Uncommit, New lane here, Copy hash, and its files. Along the bottom, the command bar: the gate that ran, and its output a click away." src="docs/images/lanes-light.png">
 </picture>
 
 <sub>`lane web`: every lane of every repository on one page, each on a line of its own that
@@ -202,6 +202,18 @@ The page in the picture above, for every repository in a folder:
   is signed in, and what serves on its port while anything does. While a press runs in it, it says
   so live: *Gating · running the tests… · 12 s*. A failed gate shows the failing step and its last
   lines, kept with the run, so it is still there tomorrow.
+- **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
+  does: its whole message, its lane, hash, author and age, the files it changed (each opens its
+  difference in the editor), and what can be done with it: **View changes**, **New lane here**,
+  **Copy hash**, and on a lane's newest commit **Edit message** and **Uncommit**. In the side bar
+  the details open under the row instead. A double click opens a commit's changes straight away.
+- **The command bar along the bottom** says what is running, with its step and a clock, how the
+  last command went (✓ or ✗, as you would type it), and what waits its turn: a press made while
+  its repository is busy joins a line, is checked again when its turn comes, and can be cancelled
+  with its ×. The output opens with a click, and by itself when something you pressed fails.
+- **What a press will do is drawn at once**, before it has: a commit appears in its lane, dashed,
+  as its files leave the list; a rebased lane moves above its new commit; a new lane appears where
+  it will start. The next reading after it ends says what really happened.
 - **Its buttons show when the pointer or the keyboard is on it**, the way Sapling's Interactive
   Smartlog does, so a page of lanes reads calmly until you reach for one. They are lane's own
   commands, run as a terminal would run them, with their output underneath: **Gate**, **Land**,
@@ -212,15 +224,26 @@ The page in the picture above, for every repository in a folder:
   **Abort**.
 - **A new lane starts from a commit.** Point at any commit, of main or of a lane, choose **New lane
   here**, and type its name in that row: the lane starts from that commit, on top of it.
-- **A lane can be dragged onto a commit of main** to rebase it there, after it says what will
-  happen. A lane with uncommitted work, or in the middle of something, stays where it is.
-- **What is uncommitted is listed under the lane**, each file with what happened to it (M, A, D,
-  U), and **Commit…** and **Amend** beside them: every file, with a message.
+- **A lane can be dragged onto a commit of main** to rebase it there: while it is dragged, a ghost
+  of it is drawn where it would start, and the drop asks first. A lane with uncommitted work, or
+  in the middle of something, stays where it is.
+- **What is uncommitted is a node of its own on the lane's line**: each file ticked, in the colour
+  of what happened to it (M, A, D, U), with **Select all**, **Deselect all** and **Discard…** above
+  (Discard asks, and throws away only the ticked files), and **+ Commit…** and **↓ Amend** under
+  them, which open the message form for the ticked files: **Commit** or **Amend**, a title, and a
+  description. Amend and Edit message start from the newest commit's own words.
+- **A rebase stopped on a conflict** lists its files, each with **✓ Resolved**, which LaneKit
+  refuses while a conflict marker is left in the file; then **Continue** carries on.
+- **A pull request has badges** under its lane's newest commit: its checks (✓, ✗ or •), Open,
+  Draft, Merged or Closed, its review, its comments, and its number, each a link to it.
+- **Origin's main** wears a tag where it is; when origin has commits main lacks, a dashed row above
+  main's newest says how many, with **Pull**. Main's line ends dashed where its history goes on.
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
-  rebases, `p` pushes, `c` commits, `f` fetches, `n` names a new lane from the lane's newest commit
-  (or main's), `?` lists them.
+  rebases, `p` pushes, `c` commits, `u` uncommits, `f` fetches, `n` names a new lane from the lane's
+  newest commit (or main's), `Esc` closes the details, `?` lists them; in the message form,
+  `⌘ Enter` commits.
 
 It listens on the loopback only. `--ssh-host <host>` adds a link that opens a lane in VS Code over
 Remote-SSH, and `--browser-editor <prefix>` one to a browser editor.
@@ -235,7 +258,7 @@ in the picture. There its clicks drive the editor:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanekit-sidebar-dark.png">
-  <img alt="LaneKit in the editor's side bar: the landing order on one line, then dark-mode marked You are here, its line in blue, with its uncommitted files; midi-export ready to land; both curving into main, whose newest commit is under the pointer, offering New lane here." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
+  <img alt="LaneKit in the editor's side bar: the landing order on one line, then dark-mode marked You are here, its line in blue, with its uncommitted files ticked; midi-export ready to land, with its pull request's badges; both curving into main, whose newest commit is under the pointer, offering New lane here and Copy. The command bar along the bottom." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
 </picture>
 
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
@@ -266,7 +289,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.6.1.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.7.0.vsix
 ```
 
 <br clear="right">
@@ -283,6 +306,10 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.6.1.vsix
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased
 ./<project> lane pr <name>       open a pull request for a pushed lane, through gh
 ./<project> lane pull            fast-forward main to origin, as of the last fetch
+./<project> lane commit <name>   commit what is uncommitted: -m <message>, --amend, --reword, -- <file>…
+./<project> lane uncommit <name> take the newest commit back out, its changes left uncommitted
+./<project> lane discard <name> -- <file>…   throw away what is uncommitted in those files
+./<project> lane resolve <name> -- <file>…   mark conflicted files resolved, once no marker is left
 ./<project> lane sweep [name]    remove lanes whose branch has landed
 ./<project> lane web             a page of every lane (in your editor: LaneKit's side bar)
 ./<project> check                what the gate runs

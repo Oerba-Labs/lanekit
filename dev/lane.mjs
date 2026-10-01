@@ -581,6 +581,17 @@ const commitIn = (config, name, options) => {
     if (!options.amend && !message) fail('a commit needs a message: -m "what it does"')
     const own = Number(gitQuiet(['rev-list', '--count', `${config.integrationBranch}..HEAD`], dir).out || 0)
     if (options.amend && !own) fail(`${name} has no commit of its own to amend: its newest commit is ${config.integrationBranch}'s.`)
+    // A new message for the newest commit and nothing else, whatever is uncommitted: git commit --amend --only.
+    if (options.reword) {
+        if (!own) fail(`${name} has no commit of its own to reword: its newest commit is ${config.integrationBranch}'s.`)
+        if (!message) fail('a reword needs the new message: -m "what it does"')
+        if ((options.paths ?? []).length) fail('a reword changes the message only: name no files')
+        const reworded = spawnSync('git', ['commit', '-q', '--amend', '--only', '-m', message], { cwd: dir, stdio: 'inherit', env: { ...process.env, GIT_EDITOR: 'true' } })
+        if (reworded.status !== 0) fail('git commit did not finish (above).')
+        const rule = '─'.repeat(64)
+        console.log(`\n${rule}\n  ${GREEN}REWORDED${OFF}  ·  ${name}  ·  ${gitQuiet(['log', '-1', '--format=%h %s'], dir).out}\n${rule}\n`)
+        return
+    }
     const changed = changesOf(dir, config)
     const paths = options.paths ?? []
     const stray = paths.filter((file) => !changed.some((change) => change.path === file))
@@ -751,7 +762,7 @@ const main = () => {
     // is started before this one's is looked for: /work above the checkouts has none.
     if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|web> [name] [--base <ref>] [--install] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -768,6 +779,7 @@ const main = () => {
         forceWithLease: argv.includes('--force-with-lease'),
         onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
         amend: argv.includes('--amend'),
+        reword: argv.includes('--reword'),
         message: argv.includes('-m') ? argv[argv.indexOf('-m') + 1] : undefined,
         // The files a commit, a discard or a resolve is about: everything after `--`.
         paths: argv.includes('--') ? argv.slice(argv.indexOf('--') + 1) : []

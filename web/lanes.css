@@ -71,12 +71,12 @@ body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high
   --s14: var(--vscode-font-size, 13px);
 }
 body.in-editor .btn.primary { background: var(--vscode-button-background, var(--accent)); border-color: var(--vscode-button-background, var(--accent)); }
-body.in-editor .btn:not(.primary):not(.link):not(.quiet) {
+body.in-editor .btn:not(.primary):not(.link):not(.quiet):not(.danger) {
   background: var(--vscode-button-secondaryBackground, var(--bg));
   color: var(--vscode-button-secondaryForeground, var(--ink));
   border-color: var(--vscode-button-border, var(--line));
 }
-body.in-editor .btn:not(.primary):not(.link):not(.quiet):hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--soft)); }
+body.in-editor .btn:not(.primary):not(.link):not(.quiet):not(.danger):hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--soft)); }
 /* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
 body.in-editor .product { display: none; }
 body.in-editor .bar { padding-top: 8px; padding-bottom: 8px; }
@@ -117,6 +117,7 @@ a:hover { text-decoration: underline; }
   background: var(--risk-wash); color: var(--risk);
   font-size: var(--s13);
 }
+.notice.ok { background: var(--accent-wash); color: var(--ink); }
 
 .pane { padding: 24px 24px 160px; }
 
@@ -181,12 +182,12 @@ a.btn { display: inline-block; text-decoration: none; }
 .commit {
   position: relative;
   display: flex; gap: 10px; align-items: baseline;
-  padding: 5px 0 5px calc(var(--spine) + 20px);
+  padding: 6px 0 6px calc(var(--spine) + 20px);
   font-size: var(--s13);
   min-width: 0;
 }
 .commit::before {
-  content: ""; position: absolute; left: calc(var(--spine) - 5px); top: 10px;
+  content: ""; position: absolute; left: calc(var(--spine) - 5px); top: 11px;
   width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
 }
 .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -225,10 +226,10 @@ a.btn { display: inline-block; text-decoration: none; }
 .stack-commit {
   position: relative;
   display: flex; gap: 10px; align-items: baseline;
-  padding: 4px 0; font-size: var(--s13); min-width: 0;
+  padding: 5px 0; font-size: var(--s13); min-width: 0;
 }
 .stack-commit::before {
-  content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 9px;
+  content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 10px;
   width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
 }
 .lane.is-here .stack-commit:first-child::before { background: var(--bg); border: 2px solid var(--accent); }
@@ -311,6 +312,14 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
  * with no pointer to hover shows them always.
  */
 .lane .hover-actions { visibility: hidden; opacity: 0; transition: opacity 0.12s ease; }
+/* Floated over the right of the head, not in its flow: when the column is narrow (the details pane open) a toolbar
+   that wrapped would leave an empty line under every lane's name at rest. */
+.lane > .lane-head { position: relative; }
+html:not([data-surface="sidebar"]) .lane > .lane-head > .hover-actions {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 2;
+  flex-wrap: nowrap; padding-left: 24px;
+  background: linear-gradient(to right, transparent, var(--bg) 20px);
+}
 .lane:hover .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions { visibility: visible; opacity: 1; }
 .lane .corner { display: none; }
 html[data-surface="sidebar"] .lane .hover-actions { display: none; }
@@ -437,3 +446,168 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
   .pane { padding: 16px 16px 160px; }
   .job-out { padding: 12px 16px; }
 }
+
+/*
+ * ---- ISL's other half ------------------------------------------------------
+ * A commit chosen, and the details pane beside the log; the command bar along the bottom; what a press will do,
+ * drawn before it has; a lane dragged, drawn where it would start; a pull request's badges; and the working copy
+ * as a node of its own. In the side bar the details open under their row instead of beside the log.
+ */
+.split { display: flex; align-items: flex-start; min-width: 0; }
+.split > .pane { flex: 1 1 auto; min-width: 0; }
+.details {
+  flex: 0 0 360px; max-width: 42%;
+  position: sticky; top: 45px; align-self: flex-start;
+  max-height: calc(100vh - 45px - 36px); overflow: auto;
+  padding: 18px 20px 24px; border-left: 1px solid var(--line); background: var(--bg);
+  font-size: var(--s13);
+}
+.details[hidden] { display: none; }
+.details-head { display: flex; align-items: flex-start; gap: 8px; }
+.details-head h3 { margin: 0; flex: 1 1 auto; font-size: var(--s14); font-weight: 600; line-height: 1.35; text-wrap: balance; overflow-wrap: anywhere; }
+.details .close { padding: 0 6px; font-size: 16px; line-height: 1.2; }
+.details-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 8px 0 0; color: var(--muted); font-size: var(--s12); }
+.details-body { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.details-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
+.section-title { display: flex; align-items: center; gap: 8px; margin: 18px 0 6px; font-size: var(--s11); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.section-title .count { padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.small { font-size: var(--s12); }
+@media (max-width: 760px) {
+  .split { flex-direction: column; align-items: stretch; }
+  .details { flex-basis: auto; max-width: none; width: 100%; position: static; max-height: none; border-left: 0; border-top: 1px solid var(--line); }
+}
+html[data-surface="sidebar"] .details { display: none; }
+/* In the side bar: under the row it is about, set in a little from the line. */
+.log > li.details-inline, .stack > li.details-inline {
+  margin: 2px 0 8px calc(var(--spine) + 20px); padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--soft); font-size: var(--s12);
+}
+.stack > li.details-inline { margin-left: 0; }
+.details-inline .details-head h3 { font-size: var(--s13); }
+
+/* A commit chosen: a wash, as ISL marks the one it shows. */
+.selectable { cursor: pointer; border-radius: 4px; }
+.selectable:hover { background: var(--vscode-list-hoverBackground, var(--soft)); }
+.selectable:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; }
+.selected, .selected:hover { background: var(--vscode-list-activeSelectionBackground, var(--accent-wash)); color: var(--vscode-list-activeSelectionForeground, inherit); }
+.selected .when { color: inherit; }
+
+/* The message form: Commit or Amend, a title, a description. */
+.message-form { display: grid; gap: 8px; margin: 12px 0 0; }
+.message-form .details-actions { margin-top: 4px; }
+.modes { display: inline-flex; justify-self: start; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.mode { font: inherit; font-size: var(--s12); padding: 3px 12px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.mode.on { background: var(--vscode-button-secondaryBackground, var(--soft)); color: var(--ink); font-weight: 600; }
+.msg-title, .msg-body {
+  font: inherit; font-size: var(--s13); padding: 6px 8px; width: 100%; min-width: 0;
+  color: var(--vscode-input-foreground, var(--ink)); background: var(--vscode-input-background, var(--bg));
+  border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 6px;
+}
+.msg-title { font-weight: 600; }
+.msg-body { resize: vertical; min-height: 72px; line-height: 1.45; }
+.msg-title:focus-visible, .msg-body:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -1px; }
+.changes.writing + .stack, .changes .message-form { margin-top: 8px; }
+
+/* The working copy as a node of its own on the lane's line, hollow, as ISL draws it. */
+.changes { position: relative; }
+.changes::before {
+  content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 4px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--warn); box-sizing: border-box;
+}
+html[data-surface="sidebar"] .changes::before { left: calc(var(--column) - var(--indent) - 4px); width: 8px; height: 8px; }
+.changes-actions.tools { gap: 2px 14px; font-size: var(--s12); }
+.changes-actions.tools .btn.link.verb { color: var(--muted); }
+.changes-actions.tools .btn.link.verb:hover:not(:disabled) { color: var(--accent); }
+.btn.link:disabled { opacity: 0.45; }
+.tick { margin: 0; width: 13px; height: 13px; flex: none; align-self: center; accent-color: var(--accent); cursor: pointer; }
+
+/* What a press will do, before it has: faint, and dashed where a commit is still to be. */
+.lane.pending > .lane-head .state::before { animation: pulse 1.2s ease-in-out infinite; }
+.stack-commit.pending { color: var(--muted); font-style: italic; }
+.stack-commit.pending::before { background: var(--bg); border: 2px dashed var(--muted); box-sizing: border-box; }
+.lane.pending .stack-commit:not(.pending), .lane.pending .facts { opacity: 0.7; }
+@media (prefers-reduced-motion: reduce) { .lane.pending > .lane-head .state::before { animation: none; } }
+
+/* A lane dragged over main's log: drawn where it would start, dashed. */
+.lane.drag-ghost { opacity: 0.6; pointer-events: auto; }
+.lane.drag-ghost::before { background: transparent; border-left: 2px dashed var(--accent); width: 0; }
+.lane.drag-ghost > svg.fork path { stroke: var(--accent); stroke-dasharray: 4 3; }
+.lane.drag-ghost .tag { background: var(--accent-wash); }
+.lane.drag-ghost .stack-commit::before { background: var(--bg); border: 2px dashed var(--accent); box-sizing: border-box; }
+
+/* Origin's copy of main: its own tag where it is, and a dashed row above main's newest when it is ahead. */
+.tag.remote { background: transparent; border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); color: var(--muted); }
+.commit.remote-ahead::before { background: var(--bg); border: 2px dashed var(--muted); box-sizing: border-box; }
+.commit.remote-ahead .btn { padding: 1px 8px; font-size: var(--s12); }
+.log > li.continues { height: 22px; }
+.log:has(> li.continues)::before { bottom: 30px; }
+.log > li.continues::before { content: ""; position: absolute; left: calc(var(--spine) - 1px); bottom: 2px; height: 26px; border-left: 2px dashed var(--rail); }
+.log > li.continues { position: relative; }
+
+/* A pull request's badges under its lane's newest commit: its checks, its state, its comments, its number. */
+.stack > li.stack-badges { padding: 0 0 4px; }
+.badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: var(--s12); color: var(--muted); }
+.facts .badges { font-size: inherit; }
+.badges a { color: inherit; }
+.badges a:hover { color: var(--accent); }
+.pr-pill { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 999px; font-weight: 600; line-height: 1.6; color: #fff; text-decoration: none; }
+.pr-pill.open { background: #1f883d; }
+.pr-pill.draft { background: #6e7781; }
+.pr-pill.merged { background: #8250df; }
+.pr-pill.closed { background: #cf222e; }
+.badges a.pr-pill, .badges a.pr-pill:hover { color: #fff; text-decoration: none; }
+.check { font-weight: 700; }
+.check.passing { color: var(--done); }
+.check.failing { color: var(--risk); }
+.check.pending { color: var(--warn); }
+.review.ok { color: var(--done); }
+.review.bad { color: var(--risk); }
+.comments { display: inline-flex; align-items: center; gap: 3px; }
+.icon { flex: none; }
+
+/* A commit's hover actions: Uncommit solid, as ISL draws it; Copy quiet. */
+.row-actions .btn.solid {
+  background: var(--vscode-button-secondaryBackground, #5f6b7a); color: var(--vscode-button-secondaryForeground, #fff);
+  border-color: transparent;
+}
+body:not(.in-editor) .row-actions .btn.solid { background: #5f6b7a; color: #fff; }
+.row-actions .btn.copy { padding-left: 6px; padding-right: 6px; }
+
+/* Conflicts, each marked resolved by a tick of its own. */
+.conflict-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.conflict-list li { display: flex; align-items: baseline; gap: 12px; padding: 2px 0; }
+.conflict-path { font-family: var(--mono); font-size: var(--s12); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn.link.verb.resolve { font-size: var(--s12); color: var(--done); }
+.btn.link.verb.resolve .glyph { color: var(--done); }
+
+/* A press that throws something away asks in red. */
+.btn.danger { background: var(--risk); border-color: var(--risk); color: #fff; }
+.btn.danger:hover:not(:disabled) { filter: brightness(1.08); background: var(--risk); }
+.confirm.danger { background: var(--risk-wash); }
+
+/* The command bar, ISL's bottom line: what runs or ran, what waits, and the output a click away. */
+.cmdbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 6px 24px; min-height: 34px;
+  background: var(--bg); border-top: 1px solid var(--line); font-size: var(--s12);
+}
+.cmdbar[hidden] { display: none; }
+.cmdbar .cmd { font-family: var(--mono); font-size: var(--s12); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdbar .cmd-step { color: var(--muted); font-family: var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdbar .live-clock, .cmdbar .when { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.cmdbar .mark { flex: none; width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid currentColor; }
+.cmdbar .mark.ok { color: var(--done); }
+.cmdbar .mark.bad { color: var(--risk); }
+.cmdbar .spin { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .cmdbar .spin { animation: none; } }
+.cmdbar .queued { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.cmdbar .queued-job { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 8px; border-radius: 999px; background: var(--soft); border: 1px solid var(--line); white-space: nowrap; }
+.cmdbar .cancel { padding: 0 4px; color: var(--muted); font-size: 13px; line-height: 1; }
+.cmdbar .cancel:hover { color: var(--risk); }
+body.has-cmdbar .job { bottom: 34px; }
+body.has-cmdbar .pane { padding-bottom: 180px; }
+html[data-surface="sidebar"] .cmdbar { padding: 4px 12px; gap: 6px; }
+html[data-surface="sidebar"] .cmdbar .cmd-step, html[data-surface="sidebar"] .cmdbar .queued { display: none; }
+@media (max-width: 640px) { .cmdbar { padding-left: 16px; padding-right: 16px; } }

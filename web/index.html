@@ -17,9 +17,13 @@
   <span class="updated" id="updated" role="status"></span>
 </header>
 <p class="notice" id="notice" role="alert" hidden></p>
-<main class="pane" id="repos">
-  <p class="muted" id="empty">Reading the lanes…</p>
-</main>
+<div class="split">
+  <main class="pane" id="repos">
+    <p class="muted" id="empty">Reading the lanes…</p>
+  </main>
+  <aside class="details" id="details" hidden aria-label="The commit or the changes chosen"></aside>
+</div>
+<footer class="cmdbar" id="cmdbar" hidden aria-label="What LaneKit is running" role="status"></footer>
 <section class="job" id="job" hidden aria-label="What the last press ran">
   <div class="job-head">
     <span class="state" id="job-state"></span>

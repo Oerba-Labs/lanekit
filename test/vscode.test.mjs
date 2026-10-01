@@ -409,6 +409,17 @@ test('the .vsix holds the loader, the manifest, its icons, a README and the lice
     assert.equal(manifest.icon, 'lanekit.png')
 })
 
+test('the page is answered a commit\'s details, and a cancel of a press that is not waiting is refused', async () => {
+    const details = await editor.ask('commit', { repo, sha: first })
+    assert.equal(details.ok, true, details.error)
+    assert.equal(details.value.subject, 'Begin')
+    assert.ok(details.value.files.some((file) => file.path === 'app.txt'))
+    const elsewhere = await editor.ask('commit', { repo: '/not/a/repository', sha: first })
+    assert.equal(elsewhere.ok, false, 'only a repository LaneKit reads')
+    const cancelled = await editor.ask('cancel', { id: 'not-a-job' })
+    assert.equal(cancelled.value, false)
+})
+
 test('a file a failure names opens at its line, and only inside the lane', async () => {
     editor.seen.executed.length = 0
     const opened = await editor.ask('open', { what: 'file-at', repo, lane: 'working', path: 'feature.txt', line: 3, column: 2 })

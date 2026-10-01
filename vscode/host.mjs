@@ -470,10 +470,12 @@ export const activate = async (context, vscode, { root }) => {
                 if (!changed) throw new Error('That is not a commit of this repository.')
                 const commit = commitNamed(repo, changed.sha)
                 const title = commit ? `${commit.short} ${commit.subject}` : changed.sha.slice(0, 7)
+                // One file of it, from the details pane, or all of them.
+                const files = asked.path ? changed.files.filter((file) => file.path === asked.path) : changed.files
                 if (!changed.parent) {
-                    return showChanges(title, changed.files.map((file) => { const after = atCommit(repo, changed.sha, file.path, repo.path); return [after, undefined, after] }))
+                    return showChanges(title, files.map((file) => { const after = atCommit(repo, changed.sha, file.path, repo.path); return [after, undefined, after] }))
                 }
-                return showChanges(title, rowsOf(repo, changed.files, { beforeSha: changed.parent, afterSha: changed.sha, checkout: repo.path }))
+                return showChanges(title, rowsOf(repo, files, { beforeSha: changed.parent, afterSha: changed.sha, checkout: repo.path }))
             }
             default:
                 throw new Error(`The page asked to open "${String(asked.what)}", which the extension does not do.`)
