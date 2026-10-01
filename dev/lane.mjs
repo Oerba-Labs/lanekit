@@ -843,6 +843,8 @@ const main = () => {
     // The page reads every repository it is pointed at, each with its own config, so it
     // is started before this one's is looked for: /work above the checkouts has none.
     if (command === 'web') return import('./web.mjs').then((web) => web.main(argv.slice(1)))
+    // An agent's hook saying what it is doing: it needs no config, and never fails the agent.
+    if (command === 'report') return import('../lib/agents.mjs').then((agents) => agents.reportMain(argv.slice(1)))
     if (!command || !(command in COMMANDS)) {
         console.error(`\n  usage: lane <new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)

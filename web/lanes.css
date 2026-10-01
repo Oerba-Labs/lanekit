@@ -433,6 +433,17 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
 .live .live-clock { font-variant-numeric: tabular-nums; }
 .live .state::before { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.25; } }
+
+/* The agents at work in a lane, on a line of their own under its name: each one's state, the tool it runs or asks
+   for, since when, and in the editor a click for its terminal. One waiting on a person is in bold. */
+.agents { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 2px; }
+.agents:empty { display: none; }
+.agent-chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--s12); color: var(--muted); }
+.agent-chip > .icon { flex: none; }
+.agent-chip .agent-name { color: var(--ink); font-weight: 500; }
+.agent-chip.needs-you .state { font-weight: 600; }
+.agent-chip.busy .state::before { animation: pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .agent-chip.busy .state::before { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .live .state::before { animation: none; } }
 /* Why a gate failed: the step, and its last lines. */
 .failure { margin: 6px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--risk-wash); font-size: var(--s12); }

@@ -26,6 +26,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { AGENT_NAMES } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
 export const VIEW = 'lanekit.lanes'
@@ -34,6 +35,7 @@ export const SCHEME = 'lanekit'
 const EVERY_VISIBLE_MS = 4000
 const EVERY_HIDDEN_MS = 20000
 const EVERY_IDLE_MS = 60000
+const AGENTS_EVERY_MS = 2000
 const NAME = /^[a-z0-9][a-z0-9-]*$/
 
 /** A lane's state in a few words, for the status bar: the page's own words, shorter. */
@@ -52,6 +54,11 @@ export const wordOf = (lane) => {
         default: return lane.queue?.verdict ?? 'not planned'
     }
 }
+
+/** What an agent is doing, in the page's words. */
+export const STATE_WORDS = { ready: 'Ready', thinking: 'Thinking', running: 'Running', 'needs-you': 'Needs you', done: 'Done', failed: 'Failed' }
+/** An agent as a person names it: where it works and what it is, as its terminal is named. */
+export const agentName = (agent) => `${agent.lane ?? agent.repo} · ${AGENT_NAMES[agent.agent] ?? agent.agent}`
 
 /** A lane's colour, the same for every terminal LaneKit opens in it: from its name, so it stays put across reloads. */
 const COLOURS = ['terminal.ansiCyan', 'terminal.ansiMagenta', 'terminal.ansiYellow', 'terminal.ansiGreen', 'terminal.ansiBlue', 'terminal.ansiRed']
@@ -284,6 +291,7 @@ export const activate = async (context, vscode, { root }) => {
             const key = JSON.stringify({ ...state, at: 0 })
             if (key !== lastSent) { lastSent = key; post({ type: 'state', state }) }
             updateBar()
+            heardAgents(state.agents ?? [])
             // Somebody is looking: each repository fetched now and then, by itself (the service keeps to five minutes).
             if (anyVisible()) service.fetchQuietly().catch(() => {})
             gateOnCommit(state)
@@ -478,6 +486,78 @@ export const activate = async (context, vscode, { root }) => {
     const TERMINAL_SAID = { moved: 'your terminal moved with you', shown: 'the terminal you used there last is in front', opened: 'a terminal opened there' }
 
     // -----------------------------------------------------------------------
+    // agents: what each is doing, its terminal, and a word when one needs you
+    // -----------------------------------------------------------------------
+
+    // Each agent reports itself into its repository (lib/agents.mjs), and the reports are read every couple of seconds,
+    // apart from the readings of git, so that one waiting on a person is said at once rather than at the next reading.
+    let agentsNow = []
+    let agentsSaid = null
+    const agentStates = new Map()   // report key -> the state last heard, to say each change once
+
+    /** An agent's terminal: the one whose shell its process runs under, among this window's terminals. */
+    const terminalOfAgent = async (agent) => {
+        for (const terminal of vscode.window.terminals ?? []) {
+            const pid = await Promise.resolve(terminal.processId).catch(() => null)
+            if (pid && agent.pids.includes(pid)) return terminal
+        }
+        return null
+    }
+    /** An agent brought forward: its terminal, with the focus, or its lane on LaneKit's page where the terminal is not this window's. */
+    const showAgent = async (agent) => {
+        const terminal = await terminalOfAgent(agent)
+        if (terminal) { terminal.show(false); return true }
+        await reveal({ repo: agent.repo, lane: agent.lane })
+        vscode.window.showInformationMessage(`LaneKit: ${agentName(agent)} runs in a terminal outside this window (another window, tmux, or a terminal of its own).`)
+        return false
+    }
+
+    const agentBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 39)
+    subscriptions.push(agentBar)
+    const updateAgentBar = () => {
+        if (!agentsNow.length) { agentBar.hide(); return }
+        const needs = agentsNow.filter((agent) => agent.state === 'needs-you')
+        agentBar.text = `$(sparkle) ${agentsNow.length} ${agentsNow.length === 1 ? 'agent' : 'agents'}${needs.length ? ` · ${needs.length} ${needs.length === 1 ? 'needs' : 'need'} you` : ''}`
+        agentBar.tooltip = agentsNow.map((agent) => `${agentName(agent)}: ${STATE_WORDS[agent.state]}${agent.tool ? ` (${agent.tool})` : ''}`).join('\n')
+        agentBar.backgroundColor = needs.length && vscode.ThemeColor ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined
+        agentBar.command = { command: 'lanekit.agents', title: 'LaneKit: the agents at work' }
+        agentBar.show()
+    }
+
+    /**
+     * What the agents are doing now. The pages are told when anything they draw changed; a person is told when an
+     * agent comes to need them, or stops on an error, unless they are looking at its terminal already.
+     */
+    const heardAgents = (agents) => {
+        agentsNow = agents
+        const drawn = JSON.stringify(agents.map(({ at, ...rest }) => rest))
+        if (drawn !== agentsSaid) { agentsSaid = drawn; post({ type: 'agents', agents }) }
+        updateAgentBar()
+        const seen = new Set()
+        for (const agent of agents) {
+            seen.add(agent.key)
+            const before = agentStates.get(agent.key)
+            agentStates.set(agent.key, agent.state)
+            if (before === agent.state || (agent.state !== 'needs-you' && agent.state !== 'failed')) continue
+            void (async () => {
+                const terminal = await terminalOfAgent(agent)
+                if (terminal && terminal === vscode.window.activeTerminal && vscode.window.state?.focused) return
+                const said = agent.state === 'needs-you'
+                    ? `LaneKit: ${agentName(agent)} needs you${agent.tool ? `: it asks to use ${agent.tool}` : ''}.`
+                    : `LaneKit: ${agentName(agent)} stopped on an error.`
+                const choice = await (agent.state === 'needs-you' ? vscode.window.showInformationMessage(said, 'Show') : vscode.window.showErrorMessage(said, 'Show'))
+                if (choice === 'Show') await showAgent(agent)
+            })()
+        }
+        for (const key of [...agentStates.keys()]) if (!seen.has(key)) agentStates.delete(key)
+    }
+    const watchAgents = () => {
+        if (disposed || !service.known().at) return
+        try { heardAgents(service.agents()) } catch (error) { output.appendLine(`Reading the agents failed: ${error.message}`) }
+    }
+    const agentsTimer = setInterval(watchAgents, AGENTS_EVERY_MS)
+
+    // -----------------------------------------------------------------------
     // what the page opens
     // -----------------------------------------------------------------------
 
@@ -606,6 +686,12 @@ export const activate = async (context, vscode, { root }) => {
                 const id = await pickAgent(lane)
                 return id ? startAgent(repo, lane, id) : false
             }
+            case 'agent-terminal': {
+                // An agent the page drew, by its report's key: only one the reports name now.
+                const agent = service.agents().find((candidate) => candidate.key === asked.key && candidate.repo === repo.id)
+                if (!agent) throw new Error('That agent has stopped, or says nothing now.')
+                return showAgent(agent)
+            }
             case 'changes': {
                 if (!lane) throw new Error('Which lane?')
                 const changes = await service.laneChanges(repo.path, lane.name)
@@ -693,6 +779,7 @@ export const activate = async (context, vscode, { root }) => {
                 const state = await service.state()
                 lastSent = JSON.stringify({ ...state, at: 0 })
                 updateBar()
+                heardAgents(state.agents ?? [])
                 return state
             }
             case 'press': {
@@ -999,6 +1086,18 @@ export const activate = async (context, vscode, { root }) => {
             const x = await laneFor(null, 'Open which lane in a new window?', () => true)
             if (x) await open({ what: 'lane', repo: x.repo.path, lane: x.lane.name })
         },
+        'lanekit.agents': async () => {
+            const agents = service.known().at ? service.agents() : []
+            if (!agents.length) { vscode.window.showInformationMessage('LaneKit: no agent is at work in a repository LaneKit reads.'); return }
+            const order = { 'needs-you': 0, failed: 1, running: 2, thinking: 2, done: 3, ready: 4 }
+            const picked = await vscode.window.showQuickPick(agents.slice().sort((a, b) => order[a.state] - order[b.state]).map((agent) => ({
+                label: agentName(agent),
+                description: `${STATE_WORDS[agent.state]}${agent.tool ? ` · ${agent.tool}` : ''}`,
+                detail: agent.lane ? `lane ${agent.lane} of ${agent.repo}` : `${agent.repo}'s main checkout`,
+                agent
+            })), { title: 'The agents at work: pick one for its terminal', matchOnDetail: true })
+            if (picked) await showAgent(picked.agent)
+        },
         'lanekit.goto': async () => {
             await readIfNever()
             const file = whereNow()
@@ -1033,6 +1132,6 @@ export const activate = async (context, vscode, { root }) => {
         panel: () => panel,
         tabs: () => tabs(),
         sidebar: () => sidebar,
-        dispose: () => { disposed = true; clearTimeout(timer); clearTimeout(jobPing); service.dispose() }
+        dispose: () => { disposed = true; clearTimeout(timer); clearTimeout(jobPing); clearInterval(agentsTimer); service.dispose() }
     }
 }

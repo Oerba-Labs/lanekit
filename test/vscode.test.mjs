@@ -49,8 +49,9 @@ const standIn = (folders) => {
     const answers = {}   // what the stand-in person picks and types, when a test says
     const seen = { picks: [], commands: new Map(), executed: [], posted: [], sidePosted: [], said: [], providers: new Map(), terminals: [], made: [], views: new Map() }
     /** A terminal as the editor hands one out: where it was opened, what was typed into it, how it was last shown. */
+    let nextPid = 70000
     const terminal = (options, extra = {}) => ({
-        name: options.name, creationOptions: options, typed: [], shown: null,
+        name: options.name, creationOptions: options, typed: [], shown: null, processId: Promise.resolve(++nextPid),
         show (preserveFocus = false) { this.shown = { preserveFocus } },
         sendText (text) { this.typed.push(text) },
         ...extra
@@ -60,7 +61,9 @@ const standIn = (folders) => {
     let receive = null
     let sideReceive = null
     let active = null
-    const bar = { text: '', tooltip: '', command: null, shown: false, show () { this.shown = true }, hide () { this.shown = false }, dispose () {} }
+    // The status bar's items, by their priority: the lane's (40), and the agents' (39) beside it.
+    const bars = new Map()
+    const statusItem = () => ({ text: '', tooltip: '', command: null, shown: false, show () { this.shown = true }, hide () { this.shown = false }, dispose () {} })
     const panel = {
         visible: true,
         webview: {
@@ -129,7 +132,8 @@ const standIn = (folders) => {
                 return made
             },
             registerWebviewPanelSerializer: (view, serializer) => { seen.serializer = serializer; return disposable },
-            createStatusBarItem: () => bar,
+            createStatusBarItem: (alignment, priority) => { const item = statusItem(); bars.set(priority, item); return item },
+            state: { focused: true },
             createTerminal: (options) => {
                 seen.terminals.push(options)
                 const made = terminal(options)
@@ -209,7 +213,9 @@ const standIn = (folders) => {
     const useTerminal = (made) => { activeTerminal = made; if (made) emit('active', made) }
     const closeTerminal = (made) => { terminals.splice(terminals.indexOf(made), 1); if (activeTerminal === made) activeTerminal = undefined; emit('close', made) }
     return {
-        vscode, seen, bar, panel, panels, makePanel, sideView, ask, askSide, sideSays, tabSays, config, answers, emit, openTerminal, useTerminal, closeTerminal,
+        vscode, seen, panel, panels, makePanel, sideView, ask, askSide, sideSays, tabSays, config, answers, emit, openTerminal, useTerminal, closeTerminal,
+        get bar () { return bars.get(40) },
+        get agentBar () { return bars.get(39) },
         setActive: (file) => { active = file ? { document: { uri: Uri.file(file) } } : null }
     }
 }
@@ -819,4 +825,66 @@ test('a tab brought back after a reload starts on the repository it last showed'
 test('a repository\'s name goes into the page as text, whatever it holds', () => {
     const html = pageHtml(path.join(KIT, 'web'), editor.panel.webview, (file) => editor.vscode.Uri.file(file), { repo: 'a"b<c>$&' })
     assert.match(html, /<html data-surface="tab" data-repo="a&quot;b&lt;c&gt;\$&amp;"/)
+})
+
+test('an agent at work is told to the pages and the status bar, said once when it needs you, and its terminal found', async () => {
+    closeAllTerminals()
+    const { reportClaude } = await import('../lib/agents.mjs')
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
+    // Claude Code under a terminal of this window: the terminal's shell is among the processes above the hook.
+    const shell = editor.openTerminal(working)
+    const chain = [{ pid: 4_194_101, name: 'node' }, { pid: process.pid, name: 'claude' }, { pid: await shell.processId, name: 'bash' }]
+    const say = (hook_event_name, extra = {}) => reportClaude(JSON.stringify({ session_id: 'vs-1', cwd: working, hook_event_name, ...extra }), { chain })
+    say('UserPromptSubmit')
+    editor.seen.said.length = 0
+    const reply = await editor.ask('state')
+    const mine = reply.value.agents.find((agent) => agent.key === 'claude-vs-1')
+    assert.deepEqual([mine.lane, mine.state], ['working', 'thinking'])
+    assert.ok(editor.seen.posted.some((m) => m.type === 'agents' && m.agents.some((agent) => agent.key === 'claude-vs-1')), 'the pages are told')
+    assert.equal(editor.agentBar.shown, true)
+    assert.equal(editor.agentBar.text, '$(sparkle) 1 agent')
+    assert.equal(editor.seen.said.length, 0, 'thinking is not news')
+
+    say('PermissionRequest', { tool_name: 'Bash', tool_use_id: 'b1' })
+    await editor.ask('state')
+    await settle()
+    assert.deepEqual(editor.seen.said, ['LaneKit: working · Claude needs you: it asks to use Bash.'])
+    assert.equal(editor.agentBar.text, '$(sparkle) 1 agent · 1 needs you')
+    assert.equal(editor.agentBar.backgroundColor.id, 'statusBarItem.warningBackground')
+    await editor.ask('state')
+    await settle()
+    assert.equal(editor.seen.said.length, 1, 'said once, not at every reading')
+
+    // From the page, its terminal: the one whose shell it runs under.
+    shell.shown = null
+    const shown = await editor.ask('open', { what: 'agent-terminal', repo, key: 'claude-vs-1' })
+    assert.equal(shown.ok, true, shown.error)
+    assert.deepEqual(shell.shown, { preserveFocus: false })
+
+    // Not said while you are looking at its terminal.
+    say('PostToolUse', { tool_name: 'Bash', tool_use_id: 'b1' })
+    await editor.ask('state')
+    editor.useTerminal(shell)
+    say('PermissionRequest', { tool_name: 'Edit', tool_use_id: 'b2' })
+    await editor.ask('state')
+    await settle()
+    assert.equal(editor.seen.said.length, 1)
+
+    // From the palette: every agent, the one needing you first, picked for its terminal.
+    editor.useTerminal(undefined)
+    shell.shown = null
+    editor.answers.pick = 'working · Claude'
+    await editor.seen.commands.get('lanekit.agents')()
+    assert.equal(editor.seen.picks.at(-1)[0].description, 'Needs you · Edit')
+    assert.deepEqual(shell.shown, { preserveFocus: false })
+    editor.answers.pick = undefined
+
+    // Ended: gone from the bar, and the page's click is refused.
+    say('SessionEnd')
+    await editor.ask('state')
+    assert.equal(editor.agentBar.shown, false)
+    const gone = await editor.ask('open', { what: 'agent-terminal', repo, key: 'claude-vs-1' })
+    assert.equal(gone.ok, false)
+    assert.match(gone.error, /stopped/)
+    closeAllTerminals()
 })

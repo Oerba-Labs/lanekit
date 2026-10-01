@@ -244,6 +244,7 @@ const took = (state) => {
     updated.classList.remove('lost')
     updated.textContent = 'Up to date'
     draw()
+    drawAgents()
 }
 
 const refresh = async () => {
@@ -266,6 +267,11 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
 
 // The editor tells the page what changed, and which lane to show when asked from outside it.
 host.on('state', (message) => took(message.state))
+host.on('agents', (message) => {
+    if (!current) return
+    current = { ...current, agents: message.agents }
+    drawAgents()
+})
 host.on('job', (message) => {
     if (message.job && current) {
         const jobs = current.jobs ?? (current.jobs = [])
@@ -448,6 +454,44 @@ const pullOf = (lane) => {
 /** What serves on a lane's port, said only while something does: an idle port is its name's title, not a line. */
 const serverOf = (lane) => (lane.port && lane.serving ? state('done', `Serving on ${lane.port}`, 'small') : null)
 const portOf = (lane) => (lane.port ? `${lane.name}: port ${lane.port}${lane.serving ? ', serving' : ', nothing serving on it'}` : `${lane.name}: no port`)
+
+// ---------------------------------------------------------------------------
+// agents: each one at work, on the lane it works in, with what it is doing
+// ---------------------------------------------------------------------------
+
+const AGENT_NAMES = { claude: 'Claude', opencode: 'OpenCode' }
+const AGENT_STATES = { ready: ['quiet', 'Ready'], thinking: ['info', 'Thinking'], running: ['info', 'Running'], 'needs-you': ['warn', 'Needs you'], done: ['done', 'Done'], failed: ['risk', 'Failed'] }
+const agentsOf = (repoId, laneName) => (current?.agents ?? []).filter((agent) => agent.repo === repoId && agent.lane === laneName)
+
+/** One agent: its name, its state (the tool it runs or asks for beside it), since when; in the editor, a click for its terminal. */
+const agentChip = (repo, agent) => {
+    const [tone, word] = AGENT_STATES[agent.state] ?? ['quiet', agent.state]
+    const name = AGENT_NAMES[agent.agent] ?? agent.agent
+    const busy = agent.state === 'thinking' || agent.state === 'running'
+    const chip = el('span', { class: `agent-chip${busy ? ' busy' : ''}${agent.state === 'needs-you' ? ' needs-you' : ''}` },
+        icon('agent'),
+        el('span', { class: 'agent-name', text: name }),
+        state(tone, agent.tool && (agent.state === 'running' || agent.state === 'needs-you') ? `${word} · ${agent.tool}` : word, 'small'),
+        el('span', { class: 'when', text: short(agent.since) }))
+    const about = `${name} in ${agent.lane ?? `${repo.id}'s main checkout`}: ${word.toLowerCase()} since ${exactly(agent.since)}`
+    if (!host.inEditor) { chip.title = about; return chip }
+    return opens(chip, `${about}. Click for its terminal`, () => openIn('agent-terminal', { repo: repo.path, key: agent.key }))
+}
+
+/** A lane's agents (or the main checkout's, with no lane), on a line of their own: there and empty when there are none,
+    so the next word from an agent is drawn into it. */
+const agentsRow = (repo, laneName) => el('div', { class: 'agents', 'data-agents': `${repo.id}/${laneName ?? ''}` },
+    agentsOf(repo.id, laneName).map((agent) => agentChip(repo, agent)))
+
+/** The agents alone, drawn again where they are: they change every few seconds while one works, and a whole page
+    drawn again under a pointer loses a click. */
+const drawAgents = () => {
+    for (const row of document.querySelectorAll('.agents[data-agents]')) {
+        const at = row.dataset.agents.indexOf('/')
+        const repo = current?.repos.find((candidate) => candidate.id === row.dataset.agents.slice(0, at))
+        if (repo) row.replaceChildren(...agentsOf(repo.id, row.dataset.agents.slice(at + 1) || null).map((agent) => agentChip(repo, agent)))
+    }
+}
 
 /**
  * Goto, ISL's way, in the editor: where you are moves to this lane (or, with no lane, to the main checkout). The files
@@ -1449,6 +1493,7 @@ const laneCard = (repo, lane, forked = true) => {
             el('span', { class: 'grow' }),
             corner,
             el('div', { class: 'actions hover-actions' }, next ? buttons.filter((button) => button !== next) : buttons)),
+        agentsRow(repo, lane.name),
         facts,
         collisions,
         confirmOf(repo, lane, key),
@@ -1566,6 +1611,8 @@ const headOf = (repo) => {
     else if (github.error) facts.push(state('warn', `GitHub: ${github.error}`, 'small'))
     if (repo.planError) facts.push(state('warn', `The queue could not be planned: ${repo.planError}`, 'small'))
     parts.push(el('div', { class: 'facts' }, facts))
+    // Agents at work in the main checkout itself, on a line of their own as a lane's are.
+    parts.push(agentsRow(repo, null))
     return parts
 }
 
@@ -1859,7 +1906,7 @@ const sectionFor = (repo) => {
  */
 const draw = (force = false) => {
     if (!current) return
-    const said = JSON.stringify({ ...current, at: 0 })
+    const said = JSON.stringify({ ...current, at: 0, agents: null })
     if (!force && said === lastDrawn && Date.now() - lastDrawnAt < REDRAW_ANYWAY_MS) return
     lastDrawn = said
     lastDrawnAt = Date.now()
