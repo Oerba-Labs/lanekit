@@ -139,9 +139,12 @@ export const build = () => {
     const readme = `# LaneKit
 
 Every lane of every repository in the folders open in this window, as a smartlog you act
-on: open a commit's or a lane's changes as diffs, a lane in its own window or a terminal
-in it, and gate, land and sweep it. The LaneKit icon in the side bar shows it, and **LaneKit: Show in an Editor Tab** gives it a tab; the status bar says which lane
-the file in front of you is in, and what it needs.
+on: open a commit's or a lane's changes as diffs; **Goto** a lane, and the files you have open
+and your terminal go with you; start Claude Code or OpenCode in it, and see which agent works
+in which lane and which of them waits on you; and gate, land and sweep it. The LaneKit icon
+opens it in an editor tab, with a switcher between repositories and a tab of its own for any
+one of them; the status bar says which lane the file in front of you is in, what it needs,
+and how many agents are at work.
 
 It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LANEKIT\`, else
 \`/opt/lanekit\`, else \`~/.lanekit\`). Apache License 2.0; the source is https://github.com/Oerba-Labs/lanekit.

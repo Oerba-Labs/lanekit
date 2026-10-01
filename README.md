@@ -11,12 +11,13 @@ process, a file or a database row, and each lands back on `main` only once its t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-dark.png">
-  <img alt="The LaneKit page in two halves, as Sapling's Interactive Smartlog is: on the left, main as a line of dots and two lanes, each on a line of its own that curves into main where it started; dark-mode's uncommitted files ticked, with Commit… and Amend under them; midi-export ready to land, its pull request's badges under its newest commit, which is chosen. On the right, that commit's details: its words, its lane, hash, author and age, Edit message, Uncommit, New lane here, Copy hash, and its files. Along the bottom, the command bar: the gate that ran, and its output a click away." src="docs/images/lanes-light.png">
+  <img alt="The LaneKit page on Piano Sheets, chosen in the switcher along the top beside All and api, whose dot says a gate is running there. It is in two halves, as Sapling's Interactive Smartlog is. On the left, the landing order in groups (Ready: midi-export; Needs a gate: page-turns; Commit first: dark-mode) with Land midi-export…, then main as a line of dots and three lanes, each on a line of its own that curves into main where it started. dark-mode's line is amber and it says Claude needs you: Claude asks to run Bash, above the lane's uncommitted files, ticked, with Commit… and Amend under them. midi-export is ready to land, Claude done in it, with its pull request's badges under its newest commit, which is chosen; the pointer on it shows Gate and Land…, solid as the next step, and its ⋯ is open on Push, Set aside and Drop…. page-turns needs a gate, with OpenCode running an edit in it. On the right, the chosen commit's details: its words, its lane, hash, author and age, Edit message, Uncommit, New lane here, Copy hash, and its files. Along the bottom, the command bar: api's gate running the tests, with its clock." src="docs/images/lanes-light.png">
 </picture>
 
 <sub>`lane web`: every lane of every repository on one page, each on a line of its own that
-curves into main where it started, as Sapling's Interactive Smartlog draws a stack. A lane's
-buttons show when the pointer is on it, as here on midi-export.</sub>
+curves into main where it started, as Sapling's Interactive Smartlog draws a stack, with the
+agent at work in each. A lane's buttons show when the pointer is on it, as here on midi-export:
+its next step solid, the rest behind ⋯.</sub>
 
 ## The idea, in one picture
 
@@ -191,6 +192,11 @@ exist in every checkout, every lane and every agent's sandbox. Two agents given 
 cannot overwrite each other's files, restart each other's servers or migrate each other's
 database, and the queue says which should land first.
 
+Each agent says what it is doing, and the page draws it on the lane it works in: thinking,
+running a tool, done, or waiting on you, which turns its lane's line amber, as dark-mode's is in
+the picture at the top. *In your editor*, below, says how the agents report, and what a click
+on one does there.
+
 ## See every lane at once
 
 ```
@@ -303,7 +309,7 @@ in the picture. There its clicks drive the editor:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanekit-sidebar-dark.png">
-  <img alt="LaneKit in the editor's side bar: the landing order in groups (Ready: midi-export; Commit first: dark-mode), then dark-mode marked You are here, its line in blue, with its uncommitted files ticked; midi-export ready to land, with its pull request's badges; both curving into main, whose newest commit is under the pointer, offering New lane here and Copy. The command bar along the bottom." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
+  <img alt="LaneKit in the editor's side bar, on Piano Sheets, with the switcher above it and Goto beside Fetch for the main checkout. The landing order in groups (Ready: midi-export; Needs a gate: page-turns; Commit first: dark-mode), then dark-mode marked You are here, its line amber because Claude needs you there, asking to run Bash, with its uncommitted files ticked; midi-export ready to land, Claude done in it, with its pull request's badges; and page-turns under the pointer, OpenCode running in it, offering Gate, its next step, and a ⋯ for the rest. All three curve into main. The command bar along the bottom." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
 </picture>
 
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
