@@ -20,8 +20,8 @@ import { pathToFileURL } from 'node:url'
 import { after, before, test } from 'node:test'
 
 import {
-    agentsDirOf, agentsIn, claudeHooks, claudeStep, installReporters, OPENCODE_PLUGIN, opencodeReporter,
-    readReports, reportClaude, withClaudeHooks
+    agentsDirOf, agentsIn, ancestry, claudeHooks, claudeStep, installReporters, OPENCODE_PLUGIN, opencodeReporter,
+    readReports, reportClaude, statOf, withClaudeHooks
 } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
@@ -133,6 +133,17 @@ test('an agent no longer running is not read, and the next to start clears it aw
     assert.ok(!fs.existsSync(file), 'cleared when another starts')
     assert.deepEqual(readReports(repo).map((report) => report.key), ['claude-live-one'])
     reportClaude(JSON.stringify({ ...event('SessionEnd'), session_id: 'live-one' }), { chain: chainTo(RUNNING) })
+})
+
+test('a process\'s name and parent are read from Linux\'s /proc as it writes them, and from ps elsewhere', () => {
+    assert.deepEqual(statOf('4242 (claude) S 4100 4242 4100 34816 4242 4194304 1234 0 0 0 5 2 0 0 20 0 9 0 812 1\n'), { name: 'claude', parent: 4100 })
+    assert.deepEqual(statOf('77 (tmux: server) S 1 77 77 0 -1 4194624'), { name: 'tmux: server', parent: 1 }, 'a name with a space')
+    assert.deepEqual(statOf('88 (odd) name)) R 12 88 88'), { name: 'odd) name)', parent: 12 }, 'and with brackets')
+    // This machine, whichever way it reads: this test's own process, under the process that started it.
+    const chain = ancestry(process.pid)
+    assert.equal(chain[0].pid, process.pid)
+    assert.equal(chain[1].pid, process.ppid)
+    assert.ok(chain[0].name.length > 0)
 })
 
 test('a report file is read for what it may say, and nothing else', () => {
