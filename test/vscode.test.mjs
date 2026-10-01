@@ -339,7 +339,8 @@ test('the LaneKit icon opens the page in a tab and closes the side bar, which ho
     assert.match(icon.webview.html, /href="command:lanekit.show"/, 'the side bar holds a link to the tab')
     assert.doesNotMatch(icon.webview.html, /<script/, 'and runs nothing')
     assert.deepEqual(icon.webview.options, { enableScripts: false, enableCommandUris: ['lanekit.show'] })
-    // Pressed again, after something else had the side bar: the tab again.
+    // Pressed again, after something else had the side bar: the tab again (VS Code saying it twice at once is one press).
+    await new Promise((resolve) => setTimeout(resolve, 450))
     editor.seen.executed.length = 0
     for (const listener of listeners) listener()
     await settle()
@@ -361,6 +362,9 @@ test('with opensIn sideBar, the status bar reveals the side bar, and its page ma
     assert.equal(editor.seen.sidePosted.filter((m) => m.type === 'focus').length, 0, 'not before the page listens')
     await editor.sideSays({ type: 'ready' })
     assert.deepEqual(editor.seen.sidePosted.filter((m) => m.type === 'focus'), [{ type: 'focus', repo: 'demo', lane: 'working' }])
+    const first = editor.seen.sidePosted.find((m) => m.type === 'state')
+    assert.ok(first, 'a page just made is sent what was last read, without waiting for a read')
+    assert.deepEqual(first.state.repos.map((r) => r.id), ['demo'])
 })
 
 test('each page is answered alone, though both hear what changed', async () => {

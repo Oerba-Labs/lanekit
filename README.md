@@ -266,7 +266,7 @@ commands.
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.6.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-0.6.1.vsix
 ```
 
 <br clear="right">

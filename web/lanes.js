@@ -1072,24 +1072,6 @@ const settledOf = (repo) => {
     ]
 }
 
-const terminalOf = (repo) => {
-    const shim = repo.slug ? `./${repo.slug}` : './<project>'
-    return el('details', { class: 'terminal' },
-        el('summary', { text: 'Run it from a terminal' }),
-        el('pre', {
-            text: [
-                `cd ${repo.path}`,
-                `${shim} lane list              what exists and what is serving`,
-                `${shim} lane queue             the verdicts on this page`,
-                `${shim} lane new <name>        what New lane runs`,
-                `(in the lane) ${shim} gate     what Gate runs`,
-                `${shim} lane land <name>       what Land runs, after --dry-run`,
-                `${shim} lane sweep <name>      what Sweep runs, after --dry-run`,
-                'lazygit                         in a lane: its branch, commits and stash'
-            ].join('\n')
-        }))
-}
-
 const sectionFor = (repo) => {
     let kept = sections.get(repo.id)
     if (kept) return kept
@@ -1098,10 +1080,9 @@ const sectionFor = (repo) => {
         head: el('div', {}),
         queue: el('div', {}),
         log: el('ol', { class: 'log' }),
-        settled: el('div', {}),
-        terminal: terminalOf(repo)
+        settled: el('div', {})
     }
-    kept.root.append(kept.head, kept.queue, kept.log, kept.settled, kept.terminal)
+    kept.root.append(kept.head, kept.queue, kept.log, kept.settled)
     sections.set(repo.id, kept)
     return kept
 }

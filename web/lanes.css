@@ -251,7 +251,7 @@ html[data-surface="sidebar"] .pane { padding: 6px 12px 140px; }
 html[data-surface="sidebar"] .repo { margin: 0 0 24px; }
 html[data-surface="sidebar"] .repo-head { flex-wrap: wrap; gap: 4px 8px; }
 html[data-surface="sidebar"] .repo-head h2 { font-size: var(--s14); }
-html[data-surface="sidebar"] .repo-sub, html[data-surface="sidebar"] .terminal { display: none; }
+html[data-surface="sidebar"] .repo-sub { display: none; }
 html[data-surface="sidebar"] .facts { gap: 2px 10px; font-size: var(--s12); }
 html[data-surface="sidebar"] .btn { padding: 2px 8px; font-size: var(--s12); }
 html[data-surface="sidebar"] .btn.link { padding: 0; }
@@ -418,9 +418,6 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
 .landed li > .full:empty { display: none; }
 .landed .confirm { margin: 0; }
 
-.terminal { margin: 16px 0 0; font-size: var(--s13); }
-.terminal summary { color: var(--muted); cursor: pointer; }
-.terminal pre { margin: 8px 0 0; padding: 10px 12px; background: var(--soft); border-radius: 6px; overflow: auto; font-size: var(--s12); }
 
 /* ---- what a press ran ------------------------------------------------------ */
 .job {

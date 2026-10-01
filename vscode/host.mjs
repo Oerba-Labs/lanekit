@@ -59,6 +59,9 @@ export const signpostHtml = () => `<!doctype html>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <style>
 body { margin: 0; padding: 10px 14px; color: var(--vscode-descriptionForeground); font: var(--vscode-font-size, 13px)/1.5 var(--vscode-font-family, sans-serif); }
+/* Unseen for the moment the side bar is open on its way to closing; there only if it stays. */
+body { animation: appear 0.2s ease 0.6s both; }
+@keyframes appear { from { opacity: 0; } to { opacity: 1; } }
 a { color: var(--vscode-textLink-foreground); }
 code { font-family: var(--vscode-editor-font-family, monospace); }
 </style></head><body>
@@ -178,16 +181,22 @@ export const activate = async (context, vscode, { root }) => {
             wire(page)
         }
     }
-    const toTab = async () => {
+    // The side bar is told to close before the tab is opened: both go to the window together, and the side bar
+    // is in sight only for the round trip that told LaneKit it was (over code-server, the browser and back). A
+    // press is acted on once, though VS Code may say both that the view was made and that it became visible.
+    let toTabAt = 0
+    const toTab = () => {
+        if (Date.now() - toTabAt < 400) return
+        toTabAt = Date.now()
+        void vscode.commands.executeCommand('workbench.action.closeSidebar')
         show()
-        await vscode.commands.executeCommand('workbench.action.closeSidebar')
     }
     subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR, {
         resolveWebviewView: (view) => {
             sideView = view
             fillSide(view)
             view.onDidChangeVisibility(() => {
-                if (view.visible && inTab()) void toTab()
+                if (view.visible && inTab()) toTab()
                 schedule(true)
             }, null, subscriptions)
             view.onDidDispose(() => {
@@ -195,7 +204,7 @@ export const activate = async (context, vscode, { root }) => {
                 if (sideView === view) sideView = null
                 schedule()
             }, null, subscriptions)
-            if (view.visible && inTab()) void toTab()
+            if (view.visible && inTab()) toTab()
             schedule(true)
         }
     }, { webviewOptions: { retainContextWhenHidden: true } }))
@@ -497,6 +506,9 @@ export const activate = async (context, vscode, { root }) => {
         if (message.type === 'ready') {
             lastSent = null
             hereSaid = null   // a page just made has not heard where the editor is
+            // What was last read, at once, so a tab just opened is not "Reading the lanes…" for the read's length.
+            const known = service.stateKnown()
+            if (known) page.webview.postMessage({ type: 'state', state: known })
             updateBar()
             // A lane asked for before this page could hear it: said now, and then forgotten.
             if (pendingFocus?.surface === page.surface) {
