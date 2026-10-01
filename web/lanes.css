@@ -11,7 +11,7 @@
   --ink: #1d2433;
   --muted: #667085;
   --line: #e4e7ec;
-  --rail: #cfd4dc;
+  --rail: #b3bac6;
   --accent: #2563eb;
   --accent-ink: #ffffff;
   --accent-wash: #eef4ff;
@@ -32,7 +32,7 @@
     --ink: #e6e8ec;
     --muted: #9aa1ad;
     --line: #2b2f37;
-    --rail: #3b414c;
+    --rail: #4d5462;
     --accent: #6ea2ff;
     --accent-ink: #0d1422;
     --accent-wash: #1a2436;
@@ -77,7 +77,7 @@ body.in-editor .btn:not(.primary):not(.link):not(.quiet) {
   border-color: var(--vscode-button-border, var(--line));
 }
 body.in-editor .btn:not(.primary):not(.link):not(.quiet):hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--soft)); }
-body.in-editor /* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
+/* The tab says "LaneKit" already: the bar keeps where and when, and gives its height back. */
 body.in-editor .product { display: none; }
 body.in-editor .bar { padding-top: 8px; padding-bottom: 8px; }
 
@@ -89,7 +89,7 @@ body {
   color: var(--ink);
   font: 400 var(--s14)/1.45 var(--sans);
 }
-code, pre, .sha, .mono { font-family: var(--mono); font-size: 0.92em; }
+code, pre, .mono { font-family: var(--mono); font-size: 0.92em; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .muted { color: var(--muted); }
@@ -162,66 +162,77 @@ a.btn { display: inline-block; text-decoration: none; }
 .state.small { font-size: var(--s12); font-weight: 400; }
 .state.small::before { width: 6px; height: 6px; }
 
-/* ---- the log: main as a spine, each lane above the commit it forked from -- */
-.log { position: relative; list-style: none; margin: 8px 0 0; padding: 0; }
+/*
+ * ---- the log, ISL's way -----------------------------------------------------
+ * Main is a line with its commits as dots on it, newest at the top. Each lane is drawn just above the
+ * commit it forked from, on a line of its own in the next column, and that line curves into main's
+ * (svg.fork, drawn by the page at a fixed size) where it forked. No boxes: a lane is its name, its
+ * state, what it holds and its commits, and the lines say where it stands. Three measures place it:
+ * the spine's column, the lanes' column, and where a lane's words begin.
+ */
+.log {
+  --spine: 12px; --column: 32px; --indent: 48px;
+  position: relative; list-style: none; margin: 12px 0 0; padding: 0;
+}
 .log::before {
-  content: ""; position: absolute; left: 11px; top: 8px; bottom: 8px;
+  content: ""; position: absolute; left: calc(var(--spine) - 1px); top: 8px; bottom: 8px;
   width: 2px; background: var(--rail);
 }
 .commit {
   position: relative;
   display: flex; gap: 10px; align-items: baseline;
-  padding: 5px 0 5px 32px;
+  padding: 5px 0 5px calc(var(--spine) + 20px);
   font-size: var(--s13);
   min-width: 0;
 }
 .commit::before {
-  content: ""; position: absolute; left: 7px; top: 10px;
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--bg); border: 2px solid var(--rail);
+  content: ""; position: absolute; left: calc(var(--spine) - 5px); top: 10px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
 }
-.commit.tip::before { background: var(--ink); border-color: var(--ink); }
-.commit .sha { color: var(--muted); flex: none; }
-.commit .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.commit .when { color: var(--muted); font-size: var(--s12); flex: none; }
-.commit .branch-name { font-weight: 600; flex: none; }
-.older { padding: 8px 0 4px 32px; color: var(--muted); font-size: var(--s12); }
+.subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { color: var(--muted); font-size: var(--s12); flex: none; font-variant-numeric: tabular-nums; }
+.older { padding: 8px 0 4px calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12); }
 
-.lane {
-  position: relative;
-  margin: 8px 0 8px 32px;
-  padding: 12px 16px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--rail);
-  border-radius: 8px;
+/* A branch's name, as ISL tags a commit: small, grey, in the editor's own ink. */
+.tag {
+  flex: none; padding: 0 6px; border-radius: 4px;
+  font-family: var(--mono); font-size: var(--s12); line-height: 1.6; color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
-/* The tick from the spine to the lane: where it forked is the commit drawn just below. */
+
+.lane { position: relative; padding: 6px 0 20px var(--indent); border-radius: 6px; }
+/* The lane's own line, from its name down to where it curves into main's. */
 .lane::before {
-  content: ""; position: absolute; left: -22px; top: 20px;
-  width: 19px; border-top: 2px solid var(--rail);
+  content: ""; position: absolute; left: calc(var(--column) - 1px); top: 19px; bottom: 18px;
+  width: 2px; background: var(--rail);
 }
-.lane.tone-done { border-left-color: var(--done); }
-.lane.tone-warn { border-left-color: var(--warn); }
-.lane.tone-risk { border-left-color: var(--risk); }
-.lane.tone-info { border-left-color: var(--accent); }
-.lane-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.lane-name { font-weight: 600; font-size: var(--s14); font-family: var(--mono); }
-.lane .why { margin: 6px 0 0; font-size: var(--s13); color: var(--muted); }
-.lane .collide { margin: 6px 0 0; font-size: var(--s13); color: var(--warn); }
+.lane.adrift { padding-bottom: 10px; }
+.lane.adrift::before { bottom: 12px; }
+.lane > svg.fork { position: absolute; left: 0; bottom: 0; overflow: visible; pointer-events: none; }
+.lane > svg.fork path { stroke: var(--rail); }
+/* Where the editor is: its line in the accent, as ISL draws the stack you are on. */
+.lane.is-here::before { background: var(--accent); }
+.lane.is-here > svg.fork path { stroke: var(--accent); }
+.lane-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
+.tag.lane-name { font-weight: 600; font-size: var(--s13); }
+.lane .facts { margin: 2px 0 0; gap: 2px 14px; font-size: var(--s12); }
+.lane .facts .btn.link { font-size: inherit; }
+.lane .why { margin: 4px 0 0; font-size: var(--s13); color: var(--muted); }
+.lane .collide { margin: 4px 0 0; font-size: var(--s12); color: var(--warn); }
 
-.stack { list-style: none; margin: 8px 0 0; padding: 0; }
-.stack li {
+/* A lane's commits: dots on its line, newest first, words and an age. */
+.stack { list-style: none; margin: 4px 0 0; padding: 0; }
+.stack-commit {
+  position: relative;
   display: flex; gap: 10px; align-items: baseline;
-  padding: 2px 0 2px 16px; position: relative; font-size: var(--s13); min-width: 0;
+  padding: 4px 0; font-size: var(--s13); min-width: 0;
 }
-.stack li::before {
-  content: ""; position: absolute; left: 2px; top: 8px;
-  width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--muted);
+.stack-commit::before {
+  content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 9px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
 }
-.stack .sha { color: var(--muted); flex: none; }
-.stack .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stack .when { color: var(--muted); font-size: var(--s12); flex: none; }
+.lane.is-here .stack-commit:first-child::before { background: var(--bg); border: 2px solid var(--accent); }
+.stack-more { padding: 2px 0; font-size: var(--s12); }
 
 /*
  * The side bar's page (the LaneKit icon): narrow, so the same page with less of each thing. The side bar's
@@ -243,17 +254,19 @@ html[data-surface="sidebar"] .repo-head h2 { font-size: var(--s14); }
 html[data-surface="sidebar"] .repo-sub, html[data-surface="sidebar"] .terminal { display: none; }
 html[data-surface="sidebar"] .facts { gap: 2px 10px; font-size: var(--s12); }
 html[data-surface="sidebar"] .btn { padding: 2px 8px; font-size: var(--s12); }
-html[data-surface="sidebar"] .log::before { left: 7px; }
-html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px 24px; font-size: var(--s12); }
-html[data-surface="sidebar"] .commit::before { left: 4px; top: 8px; width: 8px; height: 8px; }
-html[data-surface="sidebar"] .commit .when, html[data-surface="sidebar"] .stack .when { display: none; }
-html[data-surface="sidebar"] .older { padding-left: 24px; }
-html[data-surface="sidebar"] .lane { margin: 6px 0 6px 22px; padding: 8px 10px; }
-html[data-surface="sidebar"] .lane::before { left: -15px; top: 16px; width: 12px; }
-html[data-surface="sidebar"] .lane-head { gap: 4px 8px; }
+html[data-surface="sidebar"] .btn.link { padding: 0; }
+html[data-surface="sidebar"] .log { --spine: 8px; --column: 22px; --indent: 32px; }
+html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px calc(var(--spine) + 16px); font-size: var(--s12); }
+html[data-surface="sidebar"] .commit::before { left: calc(var(--spine) - 4px); top: 8px; width: 8px; height: 8px; }
+html[data-surface="sidebar"] .older { padding-left: calc(var(--spine) + 16px); }
+html[data-surface="sidebar"] .lane { padding-top: 4px; padding-bottom: 16px; }
+html[data-surface="sidebar"] .lane::before { top: 16px; bottom: 14px; }
+html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
+html[data-surface="sidebar"] .lane-head { gap: 4px 6px; min-height: 24px; }
 html[data-surface="sidebar"] .lane-head .grow { display: none; }
 html[data-surface="sidebar"] .lane-head .actions { flex-basis: 100%; }
-html[data-surface="sidebar"] .stack li { font-size: var(--s12); }
+html[data-surface="sidebar"] .stack-commit { gap: 6px; padding: 3px 0; font-size: var(--s12); }
+html[data-surface="sidebar"] .stack-commit::before { left: calc(var(--column) - var(--indent) - 4px); top: 8px; width: 8px; height: 8px; }
 html[data-surface="sidebar"] .landed li { gap: 4px 8px; }
 html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { padding-left: 12px; padding-right: 12px; }
 
@@ -268,16 +281,24 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 @media (prefers-reduced-motion: reduce) { .lane.flash, .landed li.flash { animation: none; outline: 2px solid var(--accent); } }
 
 .files { margin: 6px 0 0; padding: 8px 12px; background: var(--soft); border-radius: 6px; font-size: var(--s12); max-height: 240px; overflow: auto; }
-.files div { font-family: var(--mono); white-space: nowrap; }
+.files > div:not(.conflicts-head) { font-family: var(--mono); white-space: nowrap; }
 .files.conflicts { background: var(--warn-wash); }
 /* The queue: the order to land in, at the head of a repository. */
-.queue { margin: 12px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
-.queue-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.queue-title { font-size: var(--s12); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-.queue-list { margin: 6px 0 0; padding: 0 0 0 20px; display: grid; gap: 2px; font-size: var(--s13); }
-.queue-list li { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; padding: 2px 4px; }
-.queue-list .lane-name { font-size: var(--s13); }
-.queue-list li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
+.queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 12px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); }
+.queue-title { font-size: var(--s11); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.queue-list { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; margin: 0; padding: 0; list-style: none; font-size: var(--s13); }
+.queue-list li { display: inline-flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 4px; cursor: pointer; }
+.queue-list li:hover { background: var(--vscode-list-hoverBackground, var(--soft)); }
+.queue-list li + li::before { content: "→"; color: var(--muted); margin-right: 2px; }
+.queue-list li.next .queue-name { font-weight: 600; }
+.queue-name { font-family: var(--mono); font-size: var(--s12); }
+.queue-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.queue-dot.done { background: var(--done); }
+.queue-dot.warn { background: var(--warn); }
+.queue-dot.risk { background: var(--risk); }
+.queue-dot.info { background: var(--accent); }
+.queue-dot.quiet { background: transparent; border: 1.5px solid var(--muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* A collision drawn: a bracket in the log's right margin, from one lane to the other. */
 .log.has-collisions { padding-right: 18px; }
 .log > svg.collisions { position: absolute; top: 0; right: 0; overflow: visible; pointer-events: stroke; }
@@ -296,7 +317,7 @@ html[data-surface="sidebar"] .lane .hover-actions { display: none; }
 html[data-surface="sidebar"] .lane.tools-open .hover-actions { display: flex; visibility: visible; opacity: 1; }
 html[data-surface="sidebar"] .lane .corner {
   display: flex; gap: 4px; align-items: center;
-  position: absolute; top: 5px; right: 6px; z-index: 2;
+  position: absolute; top: 4px; right: 0; z-index: 2;
   padding: 0 0 0 16px;
   background: linear-gradient(to right, transparent, var(--bg) 14px);
   visibility: hidden; opacity: 0; transition: opacity 0.12s ease;
@@ -312,8 +333,8 @@ html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .
 }
 /* A commit's own actions, New lane here, in place of its time while the pointer is on it. */
 .row-actions { display: none; flex: none; gap: 6px; }
-.commit:hover .row-actions, .commit:focus-within .row-actions, .stack li:hover .row-actions, .stack li:focus-within .row-actions { display: inline-flex; }
-.commit:hover .when, .commit:focus-within .when, .stack li:hover .when, .stack li:focus-within .when { display: none; }
+.commit:hover .row-actions, .commit:focus-within .row-actions, .stack-commit:hover .row-actions, .stack-commit:focus-within .row-actions { display: inline-flex; }
+.commit:hover .when, .commit:focus-within .when, .stack-commit:hover .when, .stack-commit:focus-within .when { display: none; }
 .row-actions .btn { padding: 1px 8px; font-size: var(--s12); }
 /* A new lane named in the row of the commit it starts from. */
 .name-lane { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
@@ -327,20 +348,23 @@ html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .
 /* Where the editor is. */
 .here { flex: none; padding: 0 7px; border-radius: 999px; font-size: var(--s11); font-weight: 600; line-height: 1.7;
   color: var(--vscode-badge-foreground, var(--accent-ink)); background: var(--vscode-badge-background, var(--accent)); }
-/* What is uncommitted, file by file, ISL's way. */
-.changes { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: var(--s12); }
-.changes-head, .conflicts-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.changes .files-head { color: var(--ink); }
-/* Commit… and Amend wrap together, to the right of a line of their own, when the side bar has no room for them. */
-.changes-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+/* What is uncommitted, ISL's way: each file in the colour of what happened to it, and under them Commit and
+   Amend as words with a mark. */
+.conflicts-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.changes { margin: 6px 0 2px; font-size: var(--s13); }
+.changes-actions { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 2px 0; }
+.btn.link.verb { display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 0; color: var(--ink); }
+.btn.link.verb .glyph { width: 1em; text-align: center; color: var(--muted); }
+.btn.link.verb:hover:not(:disabled) { color: var(--accent); }
+.btn.link.verb:hover:not(:disabled) .glyph { color: var(--accent); }
 .commit-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
-.change-list { list-style: none; margin: 4px 0 0; padding: 0; }
-.change-list li { display: flex; gap: 8px; align-items: baseline; padding: 1px 4px; min-width: 0; }
-.change-status { flex: none; width: 1.2em; font-family: var(--mono); font-weight: 700; text-align: center; }
-.change-status.s-M, .change-status.s-T, .change-status.s-R, .change-status.s-C { color: var(--warn); }
-.change-status.s-A, .change-status.s-new { color: var(--done); }
-.change-status.s-D { color: var(--risk); }
-.change-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.change-list { list-style: none; margin: 2px 0; padding: 0; }
+.change-list li { display: flex; gap: 8px; align-items: baseline; padding: 2px 4px; margin-left: -4px; min-width: 0; }
+.change-status { flex: none; width: 1.2em; font-family: var(--mono); font-size: var(--s12); font-weight: 700; text-align: center; }
+.s-M, .s-T, .s-R, .s-C { color: var(--warn); }
+.s-A, .s-new { color: var(--done); }
+.s-D { color: var(--risk); }
+.change-path { font-family: var(--mono); font-size: var(--s12); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* A lane dragged onto a commit of main: the lane greys, and the commits it can land on say so. */
 .lane[draggable="true"] { cursor: grab; }
 .lane.dragging { opacity: 0.45; }
@@ -415,6 +439,4 @@ html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
   .notice { margin-left: 16px; margin-right: 16px; }
   .pane { padding: 16px 16px 160px; }
   .job-out { padding: 12px 16px; }
-  .lane { padding: 10px 12px; }
-    .commit .when { display: none; }
 }
