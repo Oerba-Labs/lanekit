@@ -18,7 +18,7 @@ import { after, before, test } from 'node:test'
 
 import { createService } from '../lib/service.mjs'
 import { repoState } from '../lib/state.mjs'
-import { checksOf } from '../lib/github.mjs'
+import { checksOf, pushRuleFrom, pushRuleOf, pushTargetOf } from '../lib/github.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const env = {
@@ -424,4 +424,86 @@ test('a pull request\'s checks are said in a word', () => {
     assert.equal(checksOf([{ status: 'IN_PROGRESS', conclusion: '' }, { status: 'COMPLETED', conclusion: 'SUCCESS' }]), 'pending')
     assert.equal(checksOf([{ status: 'COMPLETED', conclusion: 'FAILURE' }, { status: 'IN_PROGRESS' }]), 'failing')
     assert.equal(checksOf([{ state: 'ERROR' }]), 'failing')
+})
+
+test('whether main may be pushed to straight is read from GitHub\'s rules for it, and said when it cannot be known', async () => {
+    const rule = (type, id = 7) => ({ type, ruleset_id: id })
+    assert.deepEqual(pushRuleOf({ branch: 'main', rules: [rule('non_fast_forward'), rule('pull_request')], isProtected: false }),
+        { allowed: false, why: 'main takes its changes by pull request' })
+    assert.equal(pushRuleOf({ branch: 'main', rules: [rule('pull_request')], bypass: { 7: 'always' }, isProtected: false }).allowed, true, 'a person its ruleset lets past')
+    assert.equal(pushRuleOf({ branch: 'main', rules: [rule('pull_request')], bypass: { 7: 'pull_requests_only' }, isProtected: false }).allowed, false, 'past it by pull request only')
+    assert.match(pushRuleOf({ branch: 'main', rules: [rule('required_linear_history')], isProtected: false }).why, /no merge commits, and a land makes one/)
+    assert.deepEqual(pushRuleOf({ branch: 'main', rules: [rule('non_fast_forward'), rule('deletion')], isProtected: false }), { allowed: true, why: null }, 'never forced, never deleted: no matter')
+    assert.equal(pushRuleOf({ branch: 'main', rules: [], isProtected: true, protection: null }).allowed, null, 'protected, and only an admin may read how')
+    assert.equal(pushRuleOf({ branch: 'main', rules: [], isProtected: true, protection: { required_pull_request_reviews: {}, enforce_admins: { enabled: false } } }).allowed, true, 'an admin is let past')
+    assert.equal(pushRuleOf({ branch: 'main', rules: [], isProtected: true, protection: { required_pull_request_reviews: {}, enforce_admins: { enabled: true } } }).allowed, false, 'unless it holds admins too')
+    assert.equal(pushRuleOf({ branch: 'main' }).allowed, null, 'GitHub said nothing')
+
+    // Asked through gh's api, route by route: a ruleset's rules, then whether this person may bypass it.
+    const asked = []
+    const api = (answers) => async (route) => { asked.push(route); return route in answers ? { ok: true, json: answers[route] } : { ok: false } }
+    const said = await pushRuleFrom(api({ 'rules/branches/main': [rule('pull_request', 9)], 'rulesets/9': { current_user_can_bypass: 'never' }, 'branches/main': { protected: false } }), 'main')
+    assert.equal(said.allowed, false)
+    assert.deepEqual(asked, ['rules/branches/main', 'rulesets/9', 'branches/main'])
+    assert.equal((await pushRuleFrom(api({}), 'main')).allowed, null, 'not on GitHub, or gh signed out')
+
+    // Which repository a remote is, as written, whatever insteadOf makes of it.
+    assert.deepEqual(pushTargetOf(repo, 'main'), { remote: 'origin', merge: 'refs/heads/main', github: null }, 'a folder is no GitHub repository')
+})
+
+test('push --main sends main on as a fast-forward, only where GitHub lets it, and never forced', () => {
+    // A stand-in for gh: main's ruleset asks for pull requests, and lets this person past only when BYPASS says so.
+    const bin = path.join(scratch, 'bin')
+    fs.mkdirSync(bin, { recursive: true })
+    fs.writeFileSync(path.join(bin, 'gh'), [
+        '#!/bin/sh',
+        'case "$*" in',
+        '  *repos/acme/demo/rules/branches/main) echo \'[{"type":"pull_request","ruleset_id":7}]\' ;;',
+        '  *repos/acme/demo/rulesets/7) echo "{\\"current_user_can_bypass\\":\\"${BYPASS:-never}\\"}" ;;',
+        '  *repos/acme/demo/branches/main) echo \'{"protected":false}\' ;;',
+        '  *) echo "gh: not here: $*" >&2; exit 1 ;;',
+        'esac', ''].join('\n'), { mode: 0o755 })
+    const pushMain = (extra = {}) => {
+        const result = spawnSync(process.execPath, [path.join(KIT, 'dev', 'lane.mjs'), 'push', '--main'], {
+            cwd: repo, encoding: 'utf8', env: { ...env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...extra }
+        })
+        return { code: result.status, out: `${result.stdout}${result.stderr}` }
+    }
+    // Where the pull before it left main: one commit here, one there.
+    git(repo, 'fetch', '-q', 'origin')
+    const diverged = pushMain()
+    assert.equal(diverged.code, 1)
+    assert.match(diverged.out, /diverged/)
+
+    git(repo, 'merge', '-q', '--no-edit', 'origin/main')
+    // The remote as GitHub names it; git goes to the folder instead, by insteadOf.
+    git(repo, 'remote', 'set-url', 'origin', 'git@github.com:acme/demo.git')
+    git(repo, 'config', `url.${origin}.insteadOf`, 'git@github.com:acme/demo.git')
+    try {
+        const before = git(origin, 'rev-parse', 'main')
+        const refused = pushMain()
+        assert.equal(refused.code, 1)
+        assert.match(refused.out, /main takes its changes by pull request, so it is not pushed to straight from here/)
+        assert.equal(git(origin, 'rev-parse', 'main'), before, 'nothing was tried')
+
+        const pushed = pushMain({ BYPASS: 'always' })
+        assert.equal(pushed.code, 0, pushed.out)
+        assert.match(pushed.out, /PUSHED/)
+        assert.equal(git(origin, 'rev-parse', 'main'), git(repo, 'rev-parse', 'main'))
+        assert.match(pushMain({ BYPASS: 'always' }).out, /has everything main has/)
+    } finally {
+        git(repo, 'config', '--unset', `url.${origin}.insteadOf`)
+        git(repo, 'remote', 'set-url', 'origin', origin)
+    }
+})
+
+test('the page\'s push of main is refused when there is nothing to push, before anything runs', async () => {
+    const service = createService({ dirs: [path.join(scratch, 'work')] })
+    try {
+        const nothing = await service.press({ repo: 'demo', verb: 'push-main' })
+        assert.equal(nothing.status, 409)
+        assert.match(nothing.body.error, /has everything main has/)
+    } finally {
+        service.dispose()
+    }
 })

@@ -21,6 +21,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
+import { ghApiNow, pushRuleFrom, pushTargetOf } from '../lib/github.mjs'
 import { planQueue, landBlockers } from '../lib/queue.mjs'
 import { changesOf } from '../lib/state.mjs'
 import {
@@ -791,6 +792,39 @@ const push = (config, name, options) => {
     console.log(`\n${rule}\n  ${GREEN}PUSHED${OFF}  ·  ${name}  ·  origin/${branch} at ${git(['rev-parse', '--short', 'HEAD'], dir)}\n${rule}\n`)
 }
 
+/**
+ * Push the integration branch to where it is pushed, from the main checkout: what lanes have landed, sent on.
+ *
+ * ONLY WHERE THE REPOSITORY TAKES IT. On GitHub its rules for the branch are read first (lib/github.mjs,
+ * pushRuleOf): one that takes its changes by pull request, that only some may update, or that takes no merge
+ * commit is refused here, with why, and never tried. Where GitHub cannot say (another host, gh missing or signed
+ * out, a protection only an admin may read) the push is tried, and the remote's own refusal is shown as it said it.
+ *
+ * NEVER FORCED. A main behind its upstream is refused (lane pull first), and one that has diverged needs a person.
+ */
+const pushMain = async (config) => {
+    const mainRepo = mainRepoFrom(process.cwd())
+    const base = config.integrationBranch
+    const target = pushTargetOf(mainRepo, base)
+    if (!target) fail(`${base} has no upstream to push to: git push -u <remote> ${base}, by hand, gives it one.`)
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${base}@{upstream}`], mainRepo).out
+    const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${upstream}...${base}`], mainRepo).out.split(/\s+/).map(Number)
+    if (!ahead && !behind) { log(`${upstream} has everything ${base} has, as of the last fetch`); return }
+    if (ahead && behind) fail(`${base} and ${upstream} have diverged: ${ahead} here, ${behind} there. That needs a person, not a push.`)
+    if (behind) fail(`${upstream} has ${behind} ${behind === 1 ? 'commit' : 'commits'} ${base} does not: lane pull first.`)
+    if (target.github) {
+        const said = await pushRuleFrom(ghApiNow(target.github), base)
+        if (said.allowed === false) fail(`${said.why}, so it is not pushed to straight from here. A lane reaches it by pull request: lane push <name>, then lane pr <name>.`)
+        if (said.why) log(said.why)
+    }
+    const args = ['push', target.remote, `${base}:${target.merge}`]
+    log(`git ${args.join(' ')}`)
+    const pushed = spawnSync('git', args, { cwd: mainRepo, stdio: 'inherit' })
+    if (pushed.status !== 0) fail(`${target.remote} refused the push (above).`)
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}PUSHED${OFF}  ·  ${base}  ·  ${upstream} at ${git(['rev-parse', '--short', base], mainRepo)}, ${ahead} ${ahead === 1 ? 'commit' : 'commits'}\n${rule}\n`)
+}
+
 /** Open a pull request for a lane's pushed branch, through `gh`, from its commits' own words. */
 const pr = (config, name) => {
     const lane = laneNamed(config, name, 'pr')
@@ -852,7 +886,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -868,6 +902,7 @@ const main = () => {
         continue: argv.includes('--continue'),
         abort: argv.includes('--abort'),
         forceWithLease: argv.includes('--force-with-lease'),
+        main: argv.includes('--main'),
         onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
         amend: argv.includes('--amend'),
         reword: argv.includes('--reword'),
@@ -894,6 +929,10 @@ const main = () => {
     if (command === 'queue') return process.exit(queue(config, name))
     if (command === 'land') return land(config, name, options)
     if (command === 'rebase') return rebase(config, name, options)
+    if (command === 'push' && options.main) {
+        if (name) fail('lane push --main pushes the integration branch: give no lane with it.')
+        return pushMain(config)
+    }
     if (command === 'push') return push(config, name, options)
     if (command === 'pr') return pr(config, name, options)
     if (command === 'pull') return pull(config, options)

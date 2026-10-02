@@ -1165,7 +1165,7 @@ const inlineDetails = (repo, commit) => (IN_SIDEBAR && selected?.sha && isSelect
 // ---------------------------------------------------------------------------
 
 const VERB_WORDS = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making a lane',
-    pull: 'Pulling', fetch: 'Fetching', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
+    pull: 'Pulling', 'push-main': 'Pushing main', fetch: 'Fetching', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
 /** A job's command as a person would type it: lane …, gate, git …, without the node and the path in front. */
 const typed = (command) => String(command ?? '').replace(/^node (?:\S*\/)?dev\/lane\.mjs /, 'lane ').replace(/^node (?:\S*\/)?dev\/gate\.mjs\b/, 'gate')
     .replace(/^node (?:\S*\/)?bin\/adopt\.mjs\b/, 'lane adopt')
@@ -1661,6 +1661,33 @@ const pullButton = (repo) => {
     })
 }
 
+/**
+ * Push, for main: shown while main has commits its upstream does not and nothing of the upstream's it lacks, and never
+ * where GitHub said it takes its changes another way (by pull request, say). Asked first, in place: a push of main
+ * reaches everybody.
+ */
+const pushMainButton = (repo) => {
+    const main = repo.main
+    const up = main?.upstream
+    const rule = repo.github?.pushRule
+    if (!up?.ahead || up.behind || main.operation || rule?.allowed === false) return null
+    const key = `push-main:${repo.id}`
+    const words = `${plural(up.ahead, 'commit')} of ${repo.integrationBranch} to ${up.name}`
+    if (pending.has(key)) {
+        return el('span', { class: 'confirm-inline' },
+            iconButton('push', `Push ${words}`, {
+                class: 'btn primary', disabled: busyIn(repo.id), title: rule?.why ?? 'A fast-forward only: nothing of origin\'s is replaced',
+                onclick: () => { pending.delete(key); press({ repo: repo.id, verb: 'push-main' }) }
+            }),
+            el('button', { type: 'button', class: 'btn quiet', text: 'Cancel', onclick: () => { pending.delete(key); draw(true) } }))
+    }
+    return iconButton('push', `Push ${up.ahead}`, {
+        disabled: busyIn(repo.id),
+        title: `git push: ${words}, asked first.${rule?.why ? ` ${rule.why}.` : ''}`,
+        onclick: () => { pending.set(key, { verb: 'push-main', stage: 'confirm' }); draw(true) }
+    })
+}
+
 const headOf = (repo) => {
     const parts = []
     parts.push(el('div', { class: 'repo-head' },
@@ -1673,6 +1700,7 @@ const headOf = (repo) => {
                 onclick: () => openOwnTab(repo.id)
             }, true) : null,
             pullButton(repo),
+            pushMainButton(repo),
             gotoButton(repo, null),
             iconButton('fetch', 'Fetch', {
                 disabled: busyIn(repo.id),
@@ -1692,6 +1720,8 @@ const headOf = (repo) => {
     else if (up.ahead) facts.push(state('warn', `${plural(up.ahead, 'commit')} on ${base} not pushed`, 'small'))
     else if (up.behind) facts.push(state('info', `${up.behind} behind ${up.name}`, 'small'))
     else facts.push(state('done', `Up to date with ${up.name}`, 'small'))
+    // Where GitHub said main takes its changes another way, there is no Push for it, and this says why.
+    if (up?.ahead && repo.github?.pushRule?.allowed === false) facts.push(el('span', { text: `${repo.github.pushRule.why}: not pushed to from here` }))
     // When it last heard from origin: fetched by itself every few minutes while a page is open.
     if (repo.fetchError) facts.push(state('warn', `Could not fetch: ${repo.fetchError}`, 'small'))
     else if (main.fetchedAt) facts.push(el('span', { text: `fetched ${ago(main.fetchedAt)}`, title: exactly(main.fetchedAt) }))

@@ -1074,6 +1074,14 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             item('$(add) New lane…', `from ${repo.integrationBranch}`, () => commands['lanekit.newLaneHere']({ repo: repo.id }))
             const up = repo.main?.upstream
             if (up?.behind && !up.ahead) item(`$(repo-pull) Pull ${up.behind}`, `fast-forward ${repo.integrationBranch} to ${up.name}`, () => pressFromPalette({ repo: repo.id, verb: 'pull' }).then((job) => job && output.show(true)))
+            // Main sent on, asked first, and only where GitHub has not said it takes its changes another way.
+            if (up?.ahead && !up.behind && repo.github?.pushRule?.allowed !== false) {
+                item(`$(repo-push) Push ${up.ahead}…`, `${repo.integrationBranch} to ${up.name}`, async () => {
+                    const go = await vscode.window.showWarningMessage(`Push ${up.ahead} ${up.ahead === 1 ? 'commit' : 'commits'} of ${repo.integrationBranch} to ${up.name}?`,
+                        { modal: true, detail: `${repo.github?.pushRule?.why ? `${repo.github.pushRule.why}. ` : ''}A fast-forward only: nothing of origin's is replaced.` }, 'Push')
+                    if (go === 'Push' && await pressFromPalette({ repo: repo.id, verb: 'push-main' })) output.show(true)
+                })
+            }
             item('$(cloud-download) Fetch now', `what origin has, for ${repo.id}`, () => pressFromPalette({ repo: repo.id, verb: 'fetch' }))
         }
         const picked = await vscode.window.showQuickPick(items, { title: lane ? `Lane ${lane.name}` : `${repo.id}'s main checkout`, matchOnDetail: true })

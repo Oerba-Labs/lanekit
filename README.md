@@ -262,9 +262,9 @@ The page in the picture above, for every repository in a folder:
   Smartlog does, so a page of lanes reads calmly until you reach for one. They are lane's own
   commands, run as a terminal would run them, with their output underneath: **Gate**, **Land**,
   **Sweep**, **Rebase** (a lane that is behind), **Push** (one with commits origin lacks), **Pull
-  request** (one pushed without one), **Pull** (main behind origin) and **Fetch**. Land and Sweep
-  check first with `--dry-run` and ask; a push that would replace origin's copy of a rebased branch
-  asks too. A rebase that conflicts stops with the files named, and waits for **Continue** or
+  request** (one pushed without one), **Pull** (main behind origin), **Push** for main (main ahead
+  of origin) and **Fetch**. Land and Sweep check first with `--dry-run` and ask; a push that would
+  replace origin's copy of a rebased branch asks too, and so does a push of main. A rebase that conflicts stops with the files named, and waits for **Continue** or
   **Abort**. The one thing to do next is solid (**Gate** when it needs a gate, **Land** when it is
   ready, **Rebase** when it conflicts with main); what is done now and then, **Push**, **Pull
   request**, **Set aside** and **Drop**, sits behind **⋯** at the toolbar's end.
@@ -293,6 +293,13 @@ The page in the picture above, for every repository in a folder:
   Draft, Merged or Closed, its review, its comments, and its number, each a link to it.
 - **Origin's main** wears a tag where it is; when origin has commits main lacks, a dashed row above
   main's newest says how many, with **Pull**. Main's line ends dashed where its history goes on.
+- **Main is pushed only where the repository takes it.** With commits origin lacks (a land makes
+  one), **Push** beside the repository's name asks, then sends them as a fast-forward, never forced.
+  On GitHub, main's rules are read first: where it takes its changes by pull request, through a merge
+  queue, only from some people, only once checks pass, or takes no merge commits, there is no Push,
+  and the header says which, unless its ruleset lets you past or you are an admin of a protection that
+  does not hold admins. Where GitHub cannot say (another host, `gh` signed out), the push is tried and
+  the remote's own answer shown.
 - **Main's line shows its newest twelve commits**, and its foot says how many of how many ("12 of
   1,204 shown") beside **25 older commits**, which reads that much further back each time, as far
   as 500. Once it reads further back, **Newest only** goes back to the twelve, at the foot and beside
@@ -406,6 +413,7 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased
 ./<project> lane pr <name>       open a pull request for a pushed lane, through gh
 ./<project> lane pull            fast-forward main to origin, as of the last fetch
+./<project> lane push --main     send main to origin, a fast-forward, where its rules on GitHub allow
 ./<project> lane commit <name>   commit what is uncommitted: -m <message>, --amend, --reword, -- <file>…
 ./<project> lane uncommit <name> take the newest commit back out, its changes left uncommitted
 ./<project> lane discard <name> -- <file>…   throw away what is uncommitted in those files
