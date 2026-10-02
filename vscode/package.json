@@ -3,7 +3,7 @@
   "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: go to a lane with your files and terminal, see which agent works where and which needs you, and gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

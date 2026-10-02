@@ -235,3 +235,47 @@ test('the page groups the landing order by what each lane needs, with an order o
     assert.deepEqual(groups[5].lanes, [{ name: 'g', after: [], days: 30 }], 'quiet and not ready, last')
     assert.ok(!groups.flatMap((group) => group.lanes).some((item) => item.name === 'i' || item.name === 'j'), 'set aside, and nothing to land, left out')
 })
+
+test('home says each repository at a glance: its lanes, its landing order, its agents with those waiting on you first, and what runs', () => {
+    // glanceOf, with the landing groups it reads, from the page as it is written there and run here: plain data in and out.
+    const page = fs.readFileSync(path.join(KIT, 'web', 'lanes.js'), 'utf8')
+    const groupsAt = page.indexOf('const LANDING_GROUPS = [')
+    const groupsEnd = page.indexOf('\n}\n', page.indexOf('const landingGroupsOf = ', groupsAt)) + 2
+    const glanceAt = page.indexOf('const AGENT_ORDER = ')
+    const glanceEnd = page.indexOf('\n}\n', page.indexOf('const glanceOf = ', glanceAt)) + 2
+    assert.ok(groupsAt !== -1 && glanceAt !== -1, 'the page has the grouping and the glance')
+    const glanceOf = new Function(`${page.slice(groupsAt, groupsEnd)}; ${page.slice(glanceAt, glanceEnd)}; return glanceOf`)()
+    const lane = (name, kind, verdict, extra = {}) => ({ name, kind, dirty: 0, aside: null, quiet: false, queue: verdict ? { verdict, position: 0, collisions: [] } : null, ...extra })
+    const repo = {
+        id: 'demo',
+        lanes: [
+            lane('ready', 'working', 'land now'), lane('gate-me', 'working', 'gate now'), lane('also', 'working', 'gate now'),
+            lane('empty', 'fresh', null), lane('parked', 'working', 'gate now', { aside: '2026-09-01T00:00:00.000Z' }),
+            lane('done', 'landed', null), lane('gone', 'missing', null)
+        ]
+    }
+    const agents = [
+        { repo: 'demo', lane: 'gate-me', agent: 'opencode', state: 'running', since: 2 },
+        { repo: 'demo', lane: 'ready', agent: 'claude', state: 'done', since: 3 },
+        { repo: 'demo', lane: 'also', agent: 'claude', state: 'needs-you', since: 1 },
+        { repo: 'other', lane: 'x', agent: 'claude', state: 'needs-you', since: 4 }
+    ]
+    const jobs = [
+        { repo: 'demo', verb: 'gate', lane: 'gate-me', state: 'running', startedAt: 10 },
+        { repo: 'demo', verb: 'land', lane: 'ready', state: 'queued' },
+        { repo: 'other', verb: 'gate', lane: 'x', state: 'running' }
+    ]
+    const glance = glanceOf(repo, agents, jobs)
+    assert.deepEqual([glance.lanes, glance.aside, glance.finished], [4, 1, 2])
+    assert.deepEqual(glance.groups, [
+        { verdict: 'land now', label: 'Ready', names: ['ready'] },
+        { verdict: 'gate now', label: 'Needs a gate', names: ['also', 'gate-me'] },
+        { verdict: 'empty', label: 'Nothing committed', names: ['empty'] }
+    ])
+    assert.deepEqual(glance.agents.map((agent) => agent.lane), ['also', 'gate-me', 'ready'], 'waiting on you, then at work, then the rest; its own only')
+    assert.equal(glance.needsYou, 1)
+    assert.equal(glance.running.lane, 'gate-me')
+    assert.equal(glance.waiting, 1)
+    const broken = glanceOf({ id: 'demo', error: 'lane.config.json is not JSON', lanes: [] }, agents, [])
+    assert.deepEqual([broken.lanes, broken.groups, broken.running], [0, [], null])
+})

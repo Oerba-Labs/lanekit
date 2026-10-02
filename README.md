@@ -209,11 +209,17 @@ The page in the picture above, for every repository in a folder:
 - **A repository with no lanes yet** is listed apart, under *Without lanes*, with **Give it
   lanes…**: it shows what `lane adopt` would write, asks, then writes it and commits only that, and
   opens what is left to decide (how the app picks its port, its tests), which INSTALL.md walks through.
-- **More than one repository** brings a switcher along the top: *All*, then each repository with the
+- **More than one repository** brings a switcher along the top: *Home*, then each repository with the
   number of lanes in it, and a dot on one not shown while something runs there. Choosing one shows it
   alone and gives the page its name for a title (*api · LaneKit*). The address keeps the choice
-  (`?repo=api`), so a browser tab can stay open on each; `[` and `]` step through them, *All* among
+  (`?repo=api`), so a browser tab can stay open on each; `[` and `]` step through them, *Home* among
   them. A Cmd- or Ctrl-click on one, or the ↗ beside its **Fetch**, opens it in a tab of its own.
+- **Home** shows each repository as a card of how it stands, without its log: how many lanes it has
+  (and how many are set aside or finished), main against origin and anything in its checkout that
+  would stop a land, its landing order by group with each lane's name, its agents with any waiting on
+  you first, and what is running in it. A card whose agent needs you is edged in amber. A click on a
+  card, or Enter on it (`j` and `k` move between them), opens its repository; a lane's name opens it
+  with that lane in front; in the editor, **Open in a tab** gives it a tab of its own.
 - **Each repository** opens with its **landing order**, grouped by what each lane needs: *Ready*,
   *Needs a gate*, *Commit first*, *Waiting* (each with the lanes it waits for: "dark-mode after
   midi-export"), *Rebase first*, *Part-way* (a rebase not finished), and *Quiet*. An order only holds

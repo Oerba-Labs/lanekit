@@ -708,3 +708,39 @@ html[data-surface="sidebar"] .cmdbar .cmd-step, html[data-surface="sidebar"] .cm
 /* A lane gone quiet says so first among its facts; the set-aside list sits above the finished lanes. */
 .state.quiet-for { color: var(--muted); }
 .aside-list li { opacity: 0.9; }
+
+/* Home: with two or more repositories and none chosen, each one as a card of how it stands, without its log: two or
+   three to a row in a tab or a browser, one above another in the side bar. A card whose agent waits on you is edged in
+   amber, as a lane's line is. The whole card opens its repository; its lanes' names open it at that lane. */
+.home {
+  list-style: none; margin: 4px 0 40px; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;
+}
+.home-card {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+  cursor: pointer;
+}
+.home-card:hover, .home-card.pointer { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.home-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.home-card.wants-you { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
+.home-card.broken { border-style: dashed; }
+.home-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.home-name { font-size: var(--s17); font-weight: 600; color: var(--ink); text-decoration: none; flex: none; }
+.home-name:hover { color: var(--accent); }
+.home-counts { font-size: var(--s12); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.home-head .btn { flex: none; padding: 1px 8px; font-size: var(--s12); }
+.home-path { margin-top: -6px; font-family: var(--mono); font-size: var(--s11); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.home-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: var(--s12); color: var(--muted); min-width: 0; }
+.home-row > .state { white-space: normal; }
+.home-queue { gap: 4px 16px; }
+.home-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+.home-group .queue-label { font-size: var(--s12); }
+.home-lane { font-size: var(--s12); font-family: var(--mono); }
+.home-agents { display: flex; flex-direction: column; gap: 3px; }
+.home-agents:empty { display: none; }
+.home-agent { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: var(--s12); min-width: 0; }
+.home-step { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28ch; }
+html[data-surface="sidebar"] .home { grid-template-columns: 1fr; gap: 10px; }
+html[data-surface="sidebar"] .home-card { padding: 10px 12px; gap: 6px; }
+html[data-surface="sidebar"] .home-name { font-size: var(--s14); }

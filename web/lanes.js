@@ -549,6 +549,13 @@ const drawAgents = () => {
         badge.textContent = words
         badge.closest('li.lane')?.classList.toggle('wants-you', Boolean(words))
     }
+    for (const row of document.querySelectorAll('.home-agents[data-home-agents]')) {
+        const repo = current?.repos.find((candidate) => candidate.id === row.dataset.homeAgents)
+        if (!repo) continue
+        const glance = glanceOf(repo, current.agents ?? [], current.jobs ?? [])
+        row.replaceChildren(...homeAgentsOf(repo, glance))
+        row.closest('.home-card')?.classList.toggle('wants-you', glance.needsYou > 0)
+    }
     markPointer()
 }
 
@@ -1870,6 +1877,36 @@ const landingGroupsOf = (lanes) => {
 }
 /** How long a lane has been quiet, in the largest unit that says it. */
 const quietFor = (days) => (days >= 60 ? plural(Math.floor(days / 30), 'month') : days >= 14 ? plural(Math.floor(days / 7), 'week') : plural(days, 'day'))
+/** Each landing group's colour, in the queue and at home. */
+const VERDICT_TONES = { 'land now': 'done', 'gate now': 'info', 'commit first': 'warn', 'hold the gate': 'warn', 'rebase first': 'risk', parked: 'quiet', quiet: 'quiet', empty: 'quiet' }
+
+/**
+ * A repository at a glance, for its card at home: how many lanes it has, its landing order by group with a group of
+ * the lanes with nothing in them yet, its agents with any waiting on you first, and what is running in it and waiting.
+ * Plain data in and out, so lanekit's tests run it as it is written here, with landingGroupsOf (test/tidy.test.mjs).
+ */
+const AGENT_ORDER = { 'needs-you': 0, running: 1, thinking: 1, failed: 2, ready: 3, done: 4 }
+const glanceOf = (repo, agents, jobs) => {
+    const lanes = repo.error ? [] : repo.lanes
+    const live = lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
+    const groups = landingGroupsOf(lanes).map((group) => ({ verdict: group.verdict, label: group.label, names: group.lanes.map((item) => item.name) }))
+    const queued = new Set(groups.flatMap((group) => group.names))
+    const empty = live.filter((lane) => !queued.has(lane.name) && lane.kind === 'fresh' && !lane.dirty).map((lane) => lane.name)
+    if (empty.length) groups.push({ verdict: 'empty', label: 'Nothing committed', names: empty })
+    const theirs = agents.filter((agent) => agent.repo === repo.id)
+        .sort((a, b) => (AGENT_ORDER[a.state] ?? 5) - (AGENT_ORDER[b.state] ?? 5) || (b.since ?? 0) - (a.since ?? 0))
+    const mine = jobs.filter((job) => job.repo === repo.id)
+    return {
+        lanes: live.length,
+        aside: lanes.filter((lane) => lane.aside && lane.kind !== 'landed' && lane.kind !== 'missing').length,
+        finished: lanes.filter((lane) => lane.kind === 'landed' || lane.kind === 'missing').length,
+        groups,
+        agents: theirs,
+        needsYou: theirs.filter((agent) => agent.state === 'needs-you').length,
+        running: mine.find((job) => job.state === 'running') ?? null,
+        waiting: mine.filter((job) => job.state === 'queued').length
+    }
+}
 
 /** The landing order at the head of a repository, in groups, with Land next when one is ready. */
 const queueOf = (repo) => {
@@ -1879,7 +1916,6 @@ const queueOf = (repo) => {
     const ready = groups.find((group) => group.verdict === 'land now')
     const next = ready ? repo.lanes.find((lane) => lane.name === ready.lanes[0].name) : null
     const busy = busyIn(repo.id)
-    const tone = { 'land now': 'done', 'gate now': 'info', 'commit first': 'warn', 'hold the gate': 'warn', 'rebase first': 'risk', parked: 'quiet', quiet: 'quiet' }
     return [el('div', { class: 'queue' },
         el('span', { class: 'queue-title', text: 'Landing order' }),
         el('div', { class: 'queue-groups' }, groups.map((group) => el('span', { class: 'queue-group' },
@@ -1888,7 +1924,7 @@ const queueOf = (repo) => {
                 const lane = repo.lanes.find((candidate) => candidate.name === item.name)
                 const words = item.after.length ? `${item.name}, after ${item.after.join(' and ')}` : item.days ? `${item.name}, quiet for ${quietFor(item.days)}` : item.name
                 const chip = el('span', { class: 'queue-item', tabindex: '0', role: 'button', title: `${words}: ${VERDICT_WORDS[lane?.queue?.verdict]?.[1] ?? group.label.toLowerCase()}` },
-                    el('span', { class: `queue-dot ${tone[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
+                    el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
                     el('span', { class: 'queue-name', text: item.name }),
                     item.after.length ? el('span', { class: 'queue-after', text: `after ${item.after.join(', ')}` }) : null)
                 chip.addEventListener('click', () => focusLane(repo.id, item.name))
@@ -2029,7 +2065,7 @@ const drawSwitcher = () => {
     el('span', { class: 'n', text: String(count) }),
     running ? el('span', { class: 'busy', title: 'Something is running in it' }) : null)
     nav.replaceChildren(
-        tab(null, 'All', repos.reduce((sum, repo) => sum + liveLanes(repo).length, 0), 'Every repository, one after another ([ and ] step through them)'),
+        tab(null, 'Home', repos.reduce((sum, repo) => sum + liveLanes(repo).length, 0), 'Every repository at a glance, each opened from its card ([ and ] step through them)'),
         ...repos.map((repo) => tab(repo.id, repo.name ?? repo.id, liveLanes(repo).length,
             `${repo.path}${repo.error ? ` — ${repo.error}` : ''}\n${host.inEditor ? 'Cmd- or Ctrl-click, or a middle click' : 'Cmd- or Ctrl-click'}: a tab of its own`,
             { running: repo.id !== showing && busy(repo.id), broken: !!repo.error })))
@@ -2115,6 +2151,97 @@ const withoutLanesOf = () => {
         el('ul', { class: 'landed' }, bare.map(bareRow)))
 }
 
+// ---------------------------------------------------------------------------
+// home: with two or more repositories and none chosen, each one as a card of how it stands, without its log
+// ---------------------------------------------------------------------------
+
+/** Home is shown while no one repository is chosen and there are two or more to choose from. */
+const atHome = () => !shownId() && (current?.repos.length ?? 0) > 1
+
+/** How main stands against origin, and anything in its checkout that would stop a land, a few words each. */
+const mainWords = (repo) => {
+    const main = repo.main
+    const base = repo.integrationBranch
+    const up = main.upstream
+    const words = []
+    if (!up) words.push(state('quiet', `${base} has no upstream`, 'small'))
+    else if (up.ahead && up.behind) words.push(state('warn', `${base} and ${up.name} have diverged`, 'small'))
+    else if (up.ahead) words.push(state('warn', `${plural(up.ahead, 'commit')} on ${base} not pushed`, 'small'))
+    else if (up.behind) words.push(state('info', `${up.behind} behind ${up.name}`, 'small'))
+    else words.push(state('done', `Up to date with ${up.name}`, 'small'))
+    if (repo.fetchError) words.push(state('warn', 'Could not fetch', 'small'))
+    if (!main.onIntegration) words.push(state('warn', `Main checkout on ${main.branch}`, 'small'))
+    if (main.operation) words.push(state('risk', `Main checkout part-way through a ${main.operation}`, 'small'))
+    if (main.dirty) words.push(state('warn', `${main.dirty} uncommitted in the main checkout`, 'small'))
+    const newest = repo.spine?.[0]
+    if (newest?.at) words.push(el('span', { text: `${base} moved ${ago(newest.at)}`, title: `${newest.subject} · ${exactly(newest.at)}` }))
+    return words
+}
+
+/** A repository opened from home, with its lane in front where one was named. */
+const openFromHome = (repo, laneName = null) => {
+    showRepo(repo.id)
+    if (laneName) focusLane(repo.id, laneName)
+}
+
+/** Its agents, those waiting on you first, each where it works: three, and how many more. */
+const homeAgentsOf = (repo, glance) => [
+    ...glance.agents.slice(0, 3).map((agent) => el('div', { class: 'home-agent' },
+        agentChip(repo, agent), el('span', { class: 'muted', text: `in ${agent.lane ?? 'the main checkout'}` }))),
+    glance.agents.length > 3 ? el('div', { class: 'muted', text: `and ${glance.agents.length - 3} more` }) : null
+].filter(Boolean)
+
+const homeCard = (repo) => {
+    const glance = glanceOf(repo, current.agents ?? [], current.jobs ?? [])
+    const name = repo.name ?? repo.id
+    const counts = [plural(glance.lanes, 'lane'), glance.aside ? `${glance.aside} set aside` : null, glance.finished ? `${glance.finished} finished` : null]
+    const running = glance.running
+    const card = el('li', {
+        class: `home-card${glance.needsYou ? ' wants-you' : ''}${repo.error ? ' broken' : ''}`,
+        'data-key': `home:${repo.id}`, 'data-home': repo.id, tabindex: '0', 'aria-label': `${name}: ${counts.filter(Boolean).join(', ')}. Enter opens it`
+    },
+    el('div', { class: 'home-head' },
+        // A link, so a browser opens it in a tab of its own on a Cmd- or Ctrl-click, as the switcher's tabs do.
+        el('a', {
+            class: 'home-name', href: `?repo=${encodeURIComponent(repo.id)}`, text: name,
+            onclick: (event) => {
+                const elsewhere = event.metaKey || event.ctrlKey || event.shiftKey
+                if (elsewhere && !host.inEditor) return
+                event.preventDefault()
+                if (elsewhere) openOwnTab(repo.id); else openFromHome(repo)
+            }
+        }),
+        el('span', { class: 'home-counts', text: counts.filter(Boolean).join(' · ') }),
+        el('span', { class: 'grow' }),
+        host.inEditor ? el('button', { type: 'button', class: 'btn quiet', text: 'Open in a tab', title: `${name} in an editor tab of its own`, onclick: () => openOwnTab(repo.id) }) : null),
+    // Cut short from its start, so the end of it, the repository's own folder, is what is read.
+    el('div', { class: 'home-path', title: repo.path }, el('bdi', { dir: 'ltr', text: repo.path })),
+    repo.error ? state('risk', repo.error, 'small') : [
+        el('div', { class: 'home-row' }, mainWords(repo)),
+        el('div', { class: 'home-row home-queue' }, glance.groups.length
+            ? glance.groups.map((group) => el('span', { class: 'home-group' },
+                el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
+                el('span', { class: 'queue-label', text: group.label }),
+                group.names.slice(0, 3).map((laneName) => el('button', {
+                    type: 'button', class: 'btn link home-lane', text: laneName, title: `Open ${name} at ${laneName}`, onclick: () => openFromHome(repo, laneName)
+                })),
+                group.names.length > 3 ? el('span', { class: 'muted', text: `and ${group.names.length - 3} more` }) : null))
+            : el('span', { class: 'muted', text: glance.lanes ? 'Nothing in the landing order' : 'No lanes yet' })),
+        el('div', { class: 'home-agents', 'data-home-agents': repo.id }, homeAgentsOf(repo, glance)),
+        running || glance.waiting ? el('div', { class: 'home-row' },
+            running ? state('info', `${VERB_WORDS[running.verb] ?? running.verb}${running.lane ? ` ${running.lane}` : ''}`, 'small') : null,
+            running?.startedAt ? el('span', { class: 'live-clock', 'data-since': String(running.startedAt), text: secondsSince(running.startedAt) }) : null,
+            running?.step ? el('span', { class: 'home-step', text: running.step }) : null,
+            glance.waiting ? el('span', { text: `${glance.waiting} waiting their turn` }) : null) : null
+    ])
+    // The card opens its repository wherever it is clicked but on what has a click of its own; Enter does too.
+    card.addEventListener('click', (event) => { if (!event.target.closest('a, button, .opens')) openFromHome(repo) })
+    card.addEventListener('keydown', (event) => {
+        if (event.target === card && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openFromHome(repo) }
+    })
+    return card
+}
+
 const sectionFor = (repo) => {
     let kept = sections.get(repo.id)
     if (kept) return kept
@@ -2171,7 +2298,8 @@ const draw = (force = false) => {
     drawSwitcher()
     sayTitle()
     const pane = $('repos')
-    const shown = shownRepos()
+    const home = atHome()
+    const shown = home ? [] : shownRepos()
     const ids = new Set(shown.map((repo) => repo.id))
     for (const [id, kept] of sections) {
         if (!ids.has(id)) { kept.root.remove(); sections.delete(id) }
@@ -2202,6 +2330,12 @@ const draw = (force = false) => {
     for (const node of [...pane.children]) {
         if (![...sections.values()].some((kept) => kept.root === node)) node.remove()
     }
+    if (home) {
+        // Nothing chosen in a log not drawn: the details pane and a lane being named go with it.
+        selected = null
+        naming = null
+        pane.append(el('ul', { class: 'home', 'aria-label': 'Repositories' }, current.repos.map(homeCard)))
+    }
     if (bare) pane.append(bare)
     drawDetails()
     drawCommandBar()
@@ -2224,7 +2358,7 @@ const KEYS = [
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
     ...(host.inEditor ? [['o', 'go to it: the files you have open and your terminal move to it'], ['a', 'start an agent in it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
-    ['[  ]', 'the repository before, or the next, All among them'], ['?', 'these keys'],
+    ['[  ]', 'the repository before, or the next, Home among them'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
 ]
 const keysPanel = el('div', { class: 'keys', hidden: true, role: 'dialog', 'aria-label': 'Keys' },
@@ -2267,7 +2401,10 @@ document.addEventListener('keydown', (event) => {
         return done()
     }
     const here = laneInFocus()
-    const repo = here?.repo ?? shownRepos().find((candidate) => !candidate.error)
+    // At home a key acts on the card in focus, and only on one: there is no one repository on the page.
+    const card = atHome() ? current.repos.find((candidate) => candidate.id === document.activeElement?.dataset?.home && !candidate.error) : null
+    const repo = here?.repo ?? (atHome() ? card : shownRepos().find((candidate) => !candidate.error))
+    if (key === 'n' && repo && card) showRepo(repo.id)
     if (key === 'n' && repo) {
         const from = here?.lane?.stack?.[0] ? { commit: here.lane.stack[0], lane: here.lane.name } : null
         if (from) startNaming(repo, from.commit, from.lane); else if (repo.spine?.[0]) startNaming(repo, repo.spine[0])
