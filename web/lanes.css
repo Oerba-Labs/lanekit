@@ -756,3 +756,17 @@ html[data-surface="sidebar"] .home-name { font-size: var(--s14); }
 
 /* Push, for main, asked in place: the push it would make, and Cancel. */
 .confirm-inline { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Pull requests anywhere waiting on your review, above home's cards: each a link to it on GitHub, edged as something
+   that waits on you is. In a repository's header, its own, by number. */
+.home-reviews { margin: 4px 0 20px; padding: 12px 16px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 8px; }
+.home-reviews-title { margin: 0 0 6px; font-size: var(--s12); font-weight: 600; color: var(--warn); }
+.home-reviews ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.home-reviews li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: var(--s13); min-width: 0; }
+.home-review-title { color: var(--ink); font-weight: 500; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch; min-width: 0; }
+a.home-review-title:hover { color: var(--accent); text-decoration: underline; }
+.home-reviews .pr-number { color: var(--muted); font-size: var(--s12); }
+.home-reviews .pr-pill { font-size: var(--s11); }
+.home-reviews .btn.link { font-size: var(--s12); }
+.waits-on-you { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+.waits-on-you a { color: var(--warn); }

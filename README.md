@@ -220,6 +220,11 @@ The page in the picture above, for every repository in a folder:
   you first, and what is running in it. A card whose agent needs you is edged in amber. A click on a
   card, or Enter on it (`j` and `k` move between them), opens its repository; a lane's name opens it
   with that lane in front; in the editor, **Open in a tab** gives it a tab of its own.
+- **Pull requests waiting on your review**, anywhere on GitHub (`gh search prs
+  --review-requested=@me`, asked every few minutes while a page is open), are listed above Home's
+  cards, newest first, each a link to it, with its repository (one of yours here opens from its
+  name), its author and its age. A repository's card, and its own header, say how many of its own
+  wait on you.
 - **Each repository** opens with its **landing order**, grouped by what each lane needs: *Ready*,
   *Needs a gate*, *Commit first*, *Waiting* (each with the lanes it waits for: "dark-mode after
   midi-export"), *Rebase first*, *Part-way* (a rebase not finished), and *Quiet*. An order only holds

@@ -588,7 +588,7 @@ const drawAgents = () => {
     for (const row of document.querySelectorAll('.home-agents[data-home-agents]')) {
         const repo = current?.repos.find((candidate) => candidate.id === row.dataset.homeAgents)
         if (!repo) continue
-        const glance = glanceOf(repo, current.agents ?? [], current.jobs ?? [])
+        const glance = glanceOf(repo, current.agents ?? [], current.jobs ?? [], current.reviews ?? [])
         row.replaceChildren(...homeAgentsOf(repo, glance))
         row.closest('.home-card')?.classList.toggle('wants-you', glance.needsYou > 0)
     }
@@ -1881,6 +1881,15 @@ const headOf = (repo) => {
     else if (github.state === 'not-github') facts.push(el('span', { text: 'Pull requests: its remote is not on GitHub' }))
     else if (github.error) facts.push(state('warn', `GitHub: ${github.error}`, 'small'))
     if (repo.planError) facts.push(state('warn', `The queue could not be planned: ${repo.planError}`, 'small'))
+    // Its pull requests that wait on your review, each a link to it, where GitHub said so: home lists them all.
+    const mine = repo.github?.slug ? (current?.reviews ?? []).filter((review) => review.repo === repo.github.slug) : []
+    if (mine.length) {
+        facts.push(el('span', { class: 'waits-on-you' }, state('warn', `${plural(mine.length, 'pull request')} ${mine.length === 1 ? 'waits' : 'wait'} on your review:`, 'small'),
+            mine.slice(0, 3).map((review) => {
+                const href = safeHref(review.url)
+                return href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', text: `#${review.number}`, title: review.title }) : el('span', { text: `#${review.number}`, title: review.title })
+            })))
+    }
     // Read further back than main's newest: said here too, with the way back, so it is not only at the foot of a long log.
     if (repo.spineDeeper) facts.push(el('span', { class: 'deeper' }, `${shownOf(repo, true) ?? `${repo.spine.length} of ${base}'s commits shown`} · `, newestButton(repo, 'newest-top')))
     parts.push(el('div', { class: 'facts' }, facts))
@@ -2063,7 +2072,7 @@ const VERDICT_TONES = { 'land now': 'done', 'gate now': 'info', 'commit first': 
  * Plain data in and out, so lanekit's tests run it as it is written here, with landingGroupsOf (test/tidy.test.mjs).
  */
 const AGENT_ORDER = { 'needs-you': 0, running: 1, thinking: 1, failed: 2, ready: 3, done: 4 }
-const glanceOf = (repo, agents, jobs) => {
+const glanceOf = (repo, agents, jobs, reviews = []) => {
     const lanes = repo.error ? [] : repo.lanes
     const live = lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
     const groups = landingGroupsOf(lanes).map((group) => ({ verdict: group.verdict, label: group.label, names: group.lanes.map((item) => item.name) }))
@@ -2081,7 +2090,9 @@ const glanceOf = (repo, agents, jobs) => {
         agents: theirs,
         needsYou: theirs.filter((agent) => agent.state === 'needs-you').length,
         running: mine.find((job) => job.state === 'running') ?? null,
-        waiting: mine.filter((job) => job.state === 'queued').length
+        waiting: mine.filter((job) => job.state === 'queued').length,
+        // Its pull requests waiting on this person's review, matched by its owner/name on GitHub.
+        reviews: repo.github?.slug ? reviews.filter((review) => review.repo === repo.github.slug).length : 0
     }
 }
 
@@ -2373,8 +2384,31 @@ const homeAgentsOf = (repo, glance) => [
     glance.agents.length > 3 ? el('div', { class: 'muted', text: `and ${glance.agents.length - 3} more` }) : null
 ].filter(Boolean)
 
+/** Pull requests anywhere that wait on your review, above home's cards, newest first: each a link to it on GitHub. */
+const reviewsHome = () => {
+    const waiting = current?.reviews ?? []
+    if (!waiting.length) return null
+    const ours = new Map((current.repos ?? []).filter((repo) => repo.github?.slug).map((repo) => [repo.github.slug, repo]))
+    return el('section', { class: 'home-reviews', 'aria-label': 'Pull requests waiting on your review' },
+        el('p', { class: 'home-reviews-title', text: `Waiting on your review · ${waiting.length}` }),
+        el('ul', {}, waiting.map((pr) => {
+            const href = safeHref(pr.url)
+            const mine = ours.get(pr.repo)
+            return el('li', {},
+                href ? el('a', { class: 'home-review-title', href, target: '_blank', rel: 'noopener noreferrer', text: pr.title, title: `${pr.title}, on GitHub` })
+                    : el('span', { class: 'home-review-title', text: pr.title }),
+                el('span', { class: 'pr-number', text: `#${pr.number}` }),
+                pr.draft ? el('span', { class: 'pr-pill draft', text: 'Draft' }) : null,
+                // One of the repositories here: its name, which opens it; anywhere else, its owner/name.
+                mine ? el('button', { type: 'button', class: 'btn link', text: mine.name ?? mine.id, title: `${pr.repo}: open it here`, onclick: () => openFromHome(mine) })
+                    : el('span', { class: 'muted', text: pr.repo }),
+                pr.author ? el('span', { class: 'muted', text: `by ${pr.author}` }) : null,
+                pr.at ? el('span', { class: 'when', text: short(pr.at), title: exactly(pr.at) }) : null)
+        })))
+}
+
 const homeCard = (repo) => {
-    const glance = glanceOf(repo, current.agents ?? [], current.jobs ?? [])
+    const glance = glanceOf(repo, current.agents ?? [], current.jobs ?? [], current.reviews ?? [])
     const name = repo.name ?? repo.id
     const counts = [plural(glance.lanes, 'lane'), glance.aside ? `${glance.aside} set aside` : null, glance.finished ? `${glance.finished} finished` : null]
     const running = glance.running
@@ -2410,6 +2444,7 @@ const homeCard = (repo) => {
                 group.names.length > 3 ? el('span', { class: 'muted', text: `and ${group.names.length - 3} more` }) : null))
             : el('span', { class: 'muted', text: glance.lanes ? 'Nothing in the landing order' : 'No lanes yet' })),
         el('div', { class: 'home-agents', 'data-home-agents': repo.id }, homeAgentsOf(repo, glance)),
+        glance.reviews ? el('div', { class: 'home-row' }, state('warn', `${plural(glance.reviews, 'pull request')} ${glance.reviews === 1 ? 'waits' : 'wait'} on your review`, 'small')) : null,
         running || glance.waiting ? el('div', { class: 'home-row' },
             running ? state('info', `${VERB_WORDS[running.verb] ?? running.verb}${running.lane ? ` ${running.lane}` : ''}`, 'small') : null,
             running?.startedAt ? el('span', { class: 'live-clock', 'data-since': String(running.startedAt), text: secondsSince(running.startedAt) }) : null,
@@ -2516,6 +2551,8 @@ const draw = (force = false) => {
         // Nothing chosen in a log not drawn: the details pane and a lane being named go with it.
         selected = null
         naming = null
+        const waiting = reviewsHome()
+        if (waiting) pane.append(waiting)
         pane.append(el('ul', { class: 'home', 'aria-label': 'Repositories' }, current.repos.map(homeCard)))
     }
     if (bare) pane.append(bare)

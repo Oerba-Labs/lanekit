@@ -48,7 +48,15 @@ before(() => {
     fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(KIT, 'test', 'fake-gh')}" "$@"\n`, { mode: 0o755 })
     origin = path.join(scratch, 'origin.git')
     git(scratch, 'init', '-q', '--bare', '-b', 'main', origin)
-    fs.writeFileSync(ghState, JSON.stringify({ owner: 'acme', name: 'demo', origin, prs: [], repo: { mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true } }))
+    fs.writeFileSync(ghState, JSON.stringify({
+        owner: 'acme', name: 'demo', origin, prs: [], repo: { mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true },
+        // Pull requests anywhere asking this person for a review: one here, one elsewhere. Asked for once in a while,
+        // so said from the start.
+        search: [
+            { number: 3, title: 'Tidy the docs', url: 'https://github.com/other/thing/pull/3', repository: { name: 'thing', nameWithOwner: 'other/thing' }, author: { login: 'yan' }, updatedAt: '2026-09-29T08:00:00Z', isDraft: true },
+            { number: 7, title: 'Fix the parser', url: 'https://github.com/acme/demo/pull/7', repository: { name: 'demo', nameWithOwner: 'acme/demo' }, author: { login: 'zoe' }, updatedAt: '2026-09-30T10:00:00Z', isDraft: false }
+        ]
+    }))
     repo = path.join(scratch, 'work', 'demo')
     fs.mkdirSync(repo, { recursive: true })
     fs.writeFileSync(path.join(repo, 'lane.config.json'), JSON.stringify({
@@ -260,6 +268,24 @@ test('squashed on GitHub, a lane is said to be merged there, to drop; and the pa
         const again = await service.press({ repo: 'demo', verb: 'merge', lane: 'second' })
         assert.equal(again.status, 409)
         assert.match(again.body.error, /no open pull request to merge/)
+    } finally {
+        service.dispose()
+    }
+})
+
+test('pull requests anywhere that wait on your review are asked of GitHub, newest first, and matched to the repositories here', async () => {
+    const service = createService({ dirs: [path.join(scratch, 'work')] })
+    try {
+        let state = null
+        for (let i = 0; i < 80; i++) {
+            state = await service.state()
+            if (state.reviews.length === 2 && state.repos[0].github?.slug) break
+            await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        assert.deepEqual(state.reviews.map((review) => [review.repo, review.number, review.author, review.draft]), [['acme/demo', 7, 'zoe', false], ['other/thing', 3, 'yan', true]])
+        assert.equal(state.reviews[0].url, 'https://github.com/acme/demo/pull/7')
+        assert.equal(state.repos[0].github.slug, 'acme/demo', 'the repository here, by its name on GitHub')
+        assert.ok(ghAsked().some((args) => args[0] === 'search' && args.includes('--review-requested=@me') && args.includes('--state=open')))
     } finally {
         service.dispose()
     }

@@ -276,6 +276,9 @@ test('home says each repository at a glance: its lanes, its landing order, its a
     assert.equal(glance.needsYou, 1)
     assert.equal(glance.running.lane, 'gate-me')
     assert.equal(glance.waiting, 1)
+    const reviews = [{ repo: 'acme/demo', number: 7 }, { repo: 'acme/demo', number: 9 }, { repo: 'other/thing', number: 3 }]
+    assert.equal(glanceOf({ ...repo, github: { slug: 'acme/demo' } }, agents, jobs, reviews).reviews, 2, 'its own reviews waiting on you, by its name on GitHub')
+    assert.equal(glanceOf(repo, agents, jobs, reviews).reviews, 0, 'none matched where its name on GitHub is not known')
     const broken = glanceOf({ id: 'demo', error: 'lane.config.json is not JSON', lanes: [] }, agents, [])
     assert.deepEqual([broken.lanes, broken.groups, broken.running], [0, [], null])
 })
