@@ -290,7 +290,13 @@ The page in the picture above, for every repository in a folder:
 - **A rebase stopped on a conflict** lists its files, each with **✓ Resolved**, which LaneKit
   refuses while a conflict marker is left in the file; then **Continue** carries on.
 - **A pull request has badges** under its lane's newest commit: its checks (✓, ✗ or •), Open,
-  Draft, Merged or Closed, its review, its comments, and its number, each a link to it.
+  Draft, Merged or Closed, its review in a few words ("Waiting on carol · 1 of 2", "Approved by
+  alice", "Changes requested by bob", with everyone in it on hover), its review threads not yet
+  resolved, its comments, and its number, each a link to it. How many approvals it needs, whether
+  its code owners must approve and whether every thread must be resolved come from main's rules on
+  GitHub. **Pull request…** (behind ⋯, once a lane is pushed) opens one from its commits' own words,
+  as a draft if ticked, with reviewers if named; on an open one, **Request review…** asks more, and
+  **Ready for review** takes a draft out of draft.
 - **Origin's main** wears a tag where it is; when origin has commits main lacks, a dashed row above
   main's newest says how many, with **Pull**. Main's line ends dashed where its history goes on.
 - **Main is pushed only where the repository takes it.** With commits origin lacks (a land makes
@@ -411,7 +417,8 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
 ./<project> lane land <name>     in main: merge a lane whose gate is green, then sweep it
 ./<project> lane rebase <name>   replay a lane onto main as it is now; --continue or --abort after a conflict
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased
-./<project> lane pr <name>       open a pull request for a pushed lane, through gh
+./<project> lane pr <name>       open a pull request for a pushed lane, through gh: --draft, --reviewer
+                                 alice,org/team (on an open one too), --ready for a draft, --push first
 ./<project> lane pull            fast-forward main to origin, as of the last fetch
 ./<project> lane push --main     send main to origin, a fast-forward, where its rules on GitHub allow
 ./<project> lane commit <name>   commit what is uncommitted: -m <message>, --amend, --reword, -- <file>…

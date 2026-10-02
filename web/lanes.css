@@ -647,6 +647,15 @@ html[data-surface="sidebar"] .log > li.commit.root { background-position: calc(v
 .check.pending { color: var(--warn); }
 .review.ok { color: var(--done); }
 .review.bad { color: var(--risk); }
+.review.wait { color: var(--ink); }
+.threads { display: inline-flex; align-items: center; gap: 3px; color: var(--warn); }
+/* A pull request opened, or reviewers asked for, in the lane's question area. */
+.pr-form input.reviewers {
+  flex: 1 1 200px; min-width: 0; padding: 4px 8px; font: inherit; font-family: var(--mono); font-size: var(--s12);
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+}
+.pr-form input.reviewers:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.draft-box { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); cursor: pointer; }
 .comments { display: inline-flex; align-items: center; gap: 3px; }
 .icon { flex: none; }
 

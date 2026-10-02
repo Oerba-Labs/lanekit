@@ -941,8 +941,11 @@ const viewOf = (repo) => {
                 lane.conflicts = lane.conflicts.filter((file) => !(body.paths ?? []).includes(file))
                 lane.pending = 'Marking it resolved…'
                 break
-            case 'land': case 'sweep': case 'push': case 'pr':
-                if (lane) lane.pending = { land: 'Landing…', sweep: 'Sweeping…', push: 'Pushing…', pr: 'Opening a pull request…' }[body.verb]
+            case 'land': case 'sweep': case 'push': case 'merge':
+                if (lane) lane.pending = { land: 'Landing…', sweep: 'Sweeping…', push: 'Pushing…', merge: 'Merging on GitHub…' }[body.verb]
+                break
+            case 'pr':
+                if (lane) lane.pending = body.ready ? 'Marking it ready…' : lane.pull?.state === 'OPEN' ? 'Asking for review…' : 'Opening a pull request…'
                 break
         }
     }
@@ -1256,9 +1259,40 @@ const iconButton = (name, label, props = {}, only = false) => el('button', {
     title: props.title ?? (only ? label : undefined), 'aria-label': only ? label : props['aria-label']
 }, icon(name), only ? null : el('span', { class: 'label', text: label }))
 const PR_WORD = { OPEN: 'Open', MERGED: 'Merged', CLOSED: 'Closed' }
-const badgesOf = (lane) => {
+/**
+ * An open pull request's review in a few words, with everyone in it for its title: who approved, who asked for changes,
+ * who was asked and has not answered, and what main's rules need (`needs`: approvals, code owners, threads resolved).
+ * Plain data in and out, so lanekit's tests run it as it is written here (test/github.test.mjs).
+ */
+const reviewWordsOf = (pr, needs) => {
+    if (!pr || pr.state !== 'OPEN' || pr.draft) return null
+    const by = (state) => (pr.reviews ?? []).filter((review) => review.state === state).map((review) => review.who)
+    const approved = by('APPROVED')
+    const changes = by('CHANGES_REQUESTED')
+    const asked = pr.requested ?? []
+    const names = (list) => (list.length > 2 ? `${list.slice(0, 2).join(', ')} and ${list.length - 2} more` : list.join(' and '))
+    const tally = needs?.approvals ? ` · ${Math.min(approved.length, needs.approvals)} of ${needs.approvals}` : ''
+    const title = [
+        ...approved.map((who) => `${who} approved`), ...changes.map((who) => `${who} asked for changes`),
+        ...by('COMMENTED').map((who) => `${who} commented`), ...asked.map((who) => `${who} is asked to review`),
+        needs?.approvals ? `${needs.approvals} ${needs.approvals === 1 ? 'approval' : 'approvals'} needed` : null,
+        needs?.codeOwners ? 'its code owners must approve' : null, needs?.threads ? 'every thread must be resolved' : null
+    ].filter(Boolean).join(' · ')
+    if (pr.review === 'CHANGES_REQUESTED') return { tone: 'bad', text: `Changes requested${changes.length ? ` by ${names(changes)}` : ''}`, title }
+    if (pr.review === 'APPROVED') return { tone: 'ok', text: `Approved${approved.length ? ` by ${names(approved)}` : ''}`, title }
+    if (asked.length) return { tone: 'wait', text: `Waiting on ${names(asked)}${tally}`, title }
+    if (pr.review === 'REVIEW_REQUIRED') return { tone: 'wait', text: `Review required, nobody asked${tally}`, title }
+    if (approved.length) return { tone: 'ok', text: `Approved by ${names(approved)}`, title }
+    return null
+}
+/** Everybody this repository's pull requests have asked, or heard from: who a Request review is likely for. */
+const reviewersSeen = (repo) => [...new Set((repo.lanes ?? []).flatMap((lane) =>
+    [...(lane.pull?.requested ?? []), ...(lane.pull?.reviews ?? []).map((review) => review.who)]))].sort()
+
+const badgesOf = (repo, lane) => {
     const pr = lane.pull
     if (!pr) return null
+    const said = reviewWordsOf(pr, repo.github?.rules?.review)
     const word = pr.draft && pr.state === 'OPEN' ? 'Draft' : PR_WORD[pr.state] ?? pr.state
     const href = safeHref(pr.url)
     const link = (props, ...kids) => href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', ...props }, ...kids) : el('span', props, ...kids)
@@ -1266,8 +1300,8 @@ const badgesOf = (lane) => {
         pr.checks && pr.checks !== 'none'
             ? el('span', { class: `check ${pr.checks}`, title: `Checks ${pr.checks}`, text: { passing: '✓', failing: '✗', pending: '•' }[pr.checks] ?? '' }) : null,
         link({ class: `pr-pill ${word.toLowerCase()}`, title: pr.title }, icon('pr'), word),
-        pr.review === 'APPROVED' ? el('span', { class: 'review ok', text: 'Approved' })
-            : pr.review === 'CHANGES_REQUESTED' ? el('span', { class: 'review bad', text: 'Changes requested' }) : null,
+        said ? el('span', { class: `review ${said.tone}`, text: said.text, title: said.title || null }) : null,
+        pr.threads ? el('span', { class: 'threads', title: `${plural(pr.threads, 'review thread')} not resolved yet` }, icon('comment'), `${pr.threads} unresolved`) : null,
         pr.comments ? el('span', { class: 'comments', title: plural(pr.comments, 'comment') }, icon('comment'), String(pr.comments)) : null,
         link({ class: 'pr-number', text: `#${pr.number}` }))
 }
@@ -1333,6 +1367,39 @@ const confirmOf = (repo, lane, key) => {
         return el('div', { class: 'confirm' },
             el('p', { text: `Abort ${lane.name}'s rebase? It puts the lane back exactly as it was before the rebase began; what you resolved so far is dropped.` }),
             go('Abort it', { repo: repo.id, verb: 'rebase', lane: lane.name, abort: true }), cancel)
+    }
+    if (waiting.verb === 'pr' || waiting.verb === 'review') {
+        // A pull request opened (a draft, if ticked; pushed first, where the press said so), or reviewers asked of an
+        // open one. What is typed is kept on the press waiting here, so a redraw keeps it.
+        const opening = waiting.verb === 'pr'
+        const listId = `reviewers-of-${repo.id}`
+        const named = () => String(waiting.reviewers ?? '').split(/[\s,]+/).map((one) => one.replace(/^@/, '')).filter(Boolean)
+        const send = async () => {
+            if (!opening && !named().length) { notice('Name somebody to ask: a GitHub login, or org/team.'); return }
+            pending.delete(key)
+            draw(true)
+            await press({ repo: repo.id, verb: 'pr', lane: lane.name, draft: opening && waiting.draft === true, push: opening && waiting.push === true, reviewers: named() })
+        }
+        const input = el('input', {
+            type: 'text', class: 'reviewers', list: listId, autocomplete: 'off', spellcheck: 'false', 'data-draft': `${key}:reviewers`,
+            placeholder: opening ? 'reviewers, if any: alice, org/team' : 'who: alice, org/team',
+            'aria-label': 'Reviewers: GitHub logins, or org/team, between commas',
+            oninput: (event) => { waiting.reviewers = event.target.value },
+            onkeydown: (event) => { if (event.key === 'Enter') { event.preventDefault(); send() } }
+        })
+        input.value = waiting.reviewers ?? ''
+        return el('div', { class: 'confirm pr-form' },
+            el('p', {
+                text: opening
+                    ? `Open a pull request for ${lane.branch} into ${base}, from its commits' own words${waiting.push ? ', pushing the lane first' : ''}. Reviewers can be asked now or later.`
+                    : `Ask for a review of #${lane.pull?.number}: GitHub logins, or org/team.`
+            }),
+            input,
+            el('datalist', { id: listId }, reviewersSeen(repo).map((who) => el('option', { value: who }))),
+            opening ? el('label', { class: 'draft-box' },
+                el('input', { type: 'checkbox', checked: waiting.draft === true ? true : null, onchange: (event) => { waiting.draft = event.target.checked } }), 'Draft') : null,
+            el('button', { type: 'button', class: 'btn primary', text: opening ? 'Open it' : 'Ask', disabled: busy, onclick: send }),
+            cancel)
     }
     if (waiting.verb === 'push-force') {
         return el('div', { class: 'confirm' },
@@ -1451,13 +1518,26 @@ const laneCard = (repo, lane, forked = true) => {
                 title: rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time',
                 onclick: rewrite ? ask('push-force') : () => press({ repo: repo.id, verb: 'push', lane: lane.name })
             }))
-        } else if (!lane.pull && repo.github?.state === 'ok') {
-            more.push(iconButton('pr', 'Pull request', {
+        } else if (lane.pull?.state !== 'OPEN' && repo.github?.state === 'ok') {
+            more.push(iconButton('pr', 'Pull request…', {
                 disabled: busy,
-                title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}, from its commits' own words`,
-                onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name })
+                title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}, from its commits' own words: a draft if you like, with reviewers if you like`,
+                onclick: () => { pending.set(key, { verb: 'pr', stage: 'form' }); draw(true) }
             }))
         }
+    }
+    // Its open pull request: a draft made ready for review, and reviewers asked for.
+    if (lane.pull?.state === 'OPEN' && repo.github?.state === 'ok' && !lane.operation) {
+        if (lane.pull.draft) {
+            more.push(iconButton('pr', 'Ready for review', {
+                disabled: busy, title: `Mark #${lane.pull.number} ready for review: those asked to review it are told`,
+                onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name, ready: true })
+            }))
+        }
+        more.push(iconButton('pr', 'Request review…', {
+            disabled: busy, title: `Ask somebody to review #${lane.pull.number}`,
+            onclick: () => { pending.set(key, { verb: 'review', stage: 'form' }); draw(true) }
+        }))
     }
     // What openLinks has nothing for (no Changes for an empty lane, no Goto where you are) is left out, not kept as a gap.
     buttons.push(...openLinks(repo, lane).filter(Boolean))
@@ -1516,7 +1596,7 @@ const laneCard = (repo, lane, forked = true) => {
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         lane.pending ? null : gateOf(lane),
         lane.pending ? null : pushedOf(lane),
-        stack0(lane) ? null : badgesOf(lane),
+        stack0(lane) ? null : badgesOf(repo, lane),
         serverOf(lane),
         filesToggle)
 
@@ -1535,7 +1615,7 @@ const laneCard = (repo, lane, forked = true) => {
                     ])
                 return [
                     isNaming(repo, commit) ? row : selectable(row, repo, commit, lane.name),
-                    index === 0 && badgesOf(lane) ? el('li', { class: 'stack-badges' }, badgesOf(lane)) : null,
+                    index === 0 && badgesOf(repo, lane) ? el('li', { class: 'stack-badges' }, badgesOf(repo, lane)) : null,
                     inlineDetails(repo, commit),
                     IN_SIDEBAR && index === 0 && selected?.form === 'reword' && selected.repo === repo.id && selected.lane === lane.name
                         ? el('li', { class: 'details-inline' }, paneFor(repo)) : null
@@ -1669,7 +1749,7 @@ const pullButton = (repo) => {
 const pushMainButton = (repo) => {
     const main = repo.main
     const up = main?.upstream
-    const rule = repo.github?.pushRule
+    const rule = repo.github?.rules?.push
     if (!up?.ahead || up.behind || main.operation || rule?.allowed === false) return null
     const key = `push-main:${repo.id}`
     const words = `${plural(up.ahead, 'commit')} of ${repo.integrationBranch} to ${up.name}`
@@ -1721,7 +1801,7 @@ const headOf = (repo) => {
     else if (up.behind) facts.push(state('info', `${up.behind} behind ${up.name}`, 'small'))
     else facts.push(state('done', `Up to date with ${up.name}`, 'small'))
     // Where GitHub said main takes its changes another way, there is no Push for it, and this says why.
-    if (up?.ahead && repo.github?.pushRule?.allowed === false) facts.push(el('span', { text: `${repo.github.pushRule.why}: not pushed to from here` }))
+    if (up?.ahead && repo.github?.rules?.push?.allowed === false) facts.push(el('span', { text: `${repo.github.rules.push.why}: not pushed to from here` }))
     // When it last heard from origin: fetched by itself every few minutes while a page is open.
     if (repo.fetchError) facts.push(state('warn', `Could not fetch: ${repo.fetchError}`, 'small'))
     else if (main.fetchedAt) facts.push(el('span', { text: `fetched ${ago(main.fetchedAt)}`, title: exactly(main.fetchedAt) }))

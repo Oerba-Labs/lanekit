@@ -825,22 +825,51 @@ const pushMain = async (config) => {
     console.log(`\n${rule}\n  ${GREEN}PUSHED${OFF}  ·  ${base}  ·  ${upstream} at ${git(['rev-parse', '--short', base], mainRepo)}, ${ahead} ${ahead === 1 ? 'commit' : 'commits'}\n${rule}\n`)
 }
 
-/** Open a pull request for a lane's pushed branch, through `gh`, from its commits' own words. */
-const pr = (config, name) => {
+/**
+ * A lane's pull request, through `gh`: opened from its commits' own words (as a draft with `--draft`), with reviewers
+ * asked for (`--reviewer alice,org/team`, on a new one or one open already), or a draft made ready for review
+ * (`--ready`). `--push` pushes the lane first where origin lacks some of it, never forced: the press that opens a pull
+ * request need not be a press of Push before it.
+ */
+const REVIEWER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9._-]{1,100})?$/
+const pr = (config, name, options = {}) => {
     const lane = laneNamed(config, name, 'pr')
     const dir = lane.path
     const branch = lane.branch ?? name
+    const reviewers = options.reviewers ?? []
+    const odd = reviewers.find((reviewer) => !REVIEWER.test(reviewer))
+    if (odd) fail(`"${odd}" is not a GitHub login, or an org/team.`)
     const gh = (args, stdio = 'pipe') => spawnSync('gh', args, { cwd: dir, encoding: 'utf8', stdio: stdio === 'pipe' ? ['ignore', 'pipe', 'pipe'] : 'inherit', env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } })
     const version = gh(['--version'])
     if (version.error) fail('gh is not installed here, and a pull request is made through it.')
+    const existing = gh(['pr', 'view', branch, '--json', 'url,state,isDraft'])
+    let open = null
+    try { open = existing.status === 0 ? JSON.parse(existing.stdout) : null } catch { open = null }
+    if (open?.state !== 'OPEN') open = null
+    if (open) {
+        if (!reviewers.length && !options.ready) { log(`${branch} has an open pull request already: ${open.url}`); return }
+        if (options.ready && open.isDraft) {
+            log(`gh pr ready ${branch}`)
+            if (gh(['pr', 'ready', branch], 'inherit').status !== 0) fail('gh did not mark it ready for review (above).')
+        } else if (options.ready) {
+            log(`${open.url} is ready for review already`)
+        }
+        if (reviewers.length) {
+            log(`gh pr edit ${branch} --add-reviewer ${reviewers.join(',')}`)
+            if (gh(['pr', 'edit', branch, '--add-reviewer', reviewers.join(',')], 'inherit').status !== 0) fail('gh did not ask for the review (above).')
+        }
+        return
+    }
+    if (options.ready) fail(`${branch} has no open pull request to make ready: lane pr ${name} opens one.`)
+    if (options.push) push(config, name, {})
     const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir)
     if (!upstream.ok) fail(`${branch} is not pushed yet: lane push ${name} first.`)
     const ahead = gitQuiet(['rev-list', '--count', `${upstream.out}..${branch}`], dir).out
     if (ahead !== '0') fail(`${branch} has ${ahead} ${ahead === '1' ? 'commit' : 'commits'} origin does not: lane push ${name} first.`)
-    const existing = gh(['pr', 'view', branch, '--json', 'url,state', '--jq', 'select(.state == "OPEN") | .url'])
-    if (existing.status === 0 && existing.stdout.trim()) { log(`${branch} has an open pull request already: ${existing.stdout.trim()}`); return }
-    log(`gh pr create --base ${config.integrationBranch} --head ${branch} --fill`)
-    const made = gh(['pr', 'create', '--base', config.integrationBranch, '--head', branch, '--fill'], 'inherit')
+    const args = ['pr', 'create', '--base', config.integrationBranch, '--head', branch, '--fill',
+        ...(options.draft ? ['--draft'] : []), ...reviewers.flatMap((reviewer) => ['--reviewer', reviewer])]
+    log(`gh ${args.join(' ')}`)
+    const made = gh(args, 'inherit')
     if (made.status !== 0) fail('gh did not make the pull request (above). gh auth status says whether it is signed in.')
 }
 
@@ -886,7 +915,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -903,6 +932,10 @@ const main = () => {
         abort: argv.includes('--abort'),
         forceWithLease: argv.includes('--force-with-lease'),
         main: argv.includes('--main'),
+        draft: argv.includes('--draft'),
+        ready: argv.includes('--ready'),
+        push: argv.includes('--push'),
+        reviewers: argv.includes('--reviewer') ? String(argv[argv.indexOf('--reviewer') + 1] ?? '').split(',').map((one) => one.trim()).filter(Boolean) : [],
         onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
         amend: argv.includes('--amend'),
         reword: argv.includes('--reword'),
@@ -911,7 +944,7 @@ const main = () => {
         paths: argv.includes('--') ? argv.slice(argv.indexOf('--') + 1) : []
     }
     // What follows a flag that takes a value is the value, not a name; what follows `--` is a file.
-    const valued = new Set(['--base', '--onto', '-m'])
+    const valued = new Set(['--base', '--onto', '-m', '--reviewer'])
     const flags = argv.includes('--') ? argv.slice(1, argv.indexOf('--')) : argv.slice(1)
     const positional = flags.filter((arg, i, all) => !arg.startsWith('-') && !valued.has(all[i - 1]))
     const name = positional[0] !== options.base ? positional[0] : positional[1]

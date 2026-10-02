@@ -1,0 +1,108 @@
+// A stand-in for gh, for lanekit's tests (test/github.test.mjs): it answers what lanekit asks of gh from a JSON file
+// (FAKE_GH_STATE), writes down every ask (FAKE_GH_LOG, one JSON array a line), and makes, edits and merges pull
+// requests in that file, merging into a bare repository on this machine as GitHub would into its own. It reaches no
+// network. No extension, so `node --test` does not take it for a test; a test's own `gh` on the PATH runs it with node.
+'use strict'
+
+const fs = require('node:fs')
+const { execFileSync } = require('node:child_process')
+
+const args = process.argv.slice(2)
+const statePath = process.env.FAKE_GH_STATE
+const state = statePath && fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : {}
+const save = () => fs.writeFileSync(statePath, JSON.stringify(state, null, 1))
+if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, `${JSON.stringify(args)}\n`)
+
+const out = (value) => { process.stdout.write(typeof value === 'string' ? value : JSON.stringify(value)); process.exit(0) }
+const no = (message) => { process.stderr.write(`${message}\n`); process.exit(1) }
+const valueOf = (flag) => { const at = args.indexOf(flag); return at === -1 ? undefined : args[at + 1] }
+const valuesOf = (flag) => args.flatMap((arg, at) => (arg === flag ? [args[at + 1]] : []))
+
+const LISTS = new Set(['comments', 'reviewRequests', 'latestReviews', 'statusCheckRollup'])
+const pick = (item, fields) => Object.fromEntries(String(fields).split(',').map((field) => [field, item[field] ?? (LISTS.has(field) ? [] : null)]))
+const prs = state.prs ?? (state.prs = [])
+const owner = state.owner ?? 'acme'
+const name = state.name ?? 'demo'
+/** A pull request by its number or its branch, an open one first. */
+const find = (selector) => {
+    const mine = prs.filter((pr) => String(pr.number) === String(selector) || pr.headRefName === selector)
+    return mine.find((pr) => pr.state === 'OPEN') ?? mine[0] ?? null
+}
+const [one, two] = args
+
+if (one === '--version') out('gh version 9.9.9 (lanekit\'s stand-in)\n')
+if (one === 'auth' && two === 'status') out('')
+
+if (one === 'pr' && two === 'list') {
+    const wanted = valueOf('--state') ?? 'open'
+    out(prs.filter((pr) => wanted === 'all' || pr.state === wanted.toUpperCase()).map((pr) => pick(pr, valueOf('--json'))))
+}
+if (one === 'pr' && two === 'view') {
+    const pr = find(args[2])
+    if (!pr) no(`no pull requests found for branch "${args[2]}"`)
+    out(pick(pr, valueOf('--json')))
+}
+if (one === 'pr' && two === 'create') {
+    const head = valueOf('--head')
+    const number = Math.max(0, ...prs.map((pr) => pr.number)) + 1
+    const pr = {
+        number, title: `Lane ${head}`, state: 'OPEN', isDraft: args.includes('--draft'), headRefName: head,
+        url: `https://github.com/${owner}/${name}/pull/${number}`,
+        reviewRequests: valuesOf('--reviewer').map((login) => ({ login })), latestReviews: [], comments: [],
+        reviewDecision: state.reviewRequired ? 'REVIEW_REQUIRED' : '', mergeStateStatus: 'BLOCKED', threads: []
+    }
+    prs.push(pr)
+    save()
+    out(`${pr.url}\n`)
+}
+if (one === 'pr' && two === 'edit') {
+    const pr = find(args[2])
+    if (!pr) no('no pull request to edit')
+    for (const login of String(valueOf('--add-reviewer') ?? '').split(',').filter(Boolean)) pr.reviewRequests.push({ login })
+    save()
+    out(`${pr.url}\n`)
+}
+if (one === 'pr' && two === 'ready') {
+    const pr = find(args[2])
+    if (!pr) no('no pull request to make ready')
+    pr.isDraft = false
+    save()
+    out('')
+}
+if (one === 'pr' && two === 'merge') {
+    const pr = find(args[2])
+    if (!pr || pr.state !== 'OPEN') no('no open pull request to merge')
+    if (state.refuseMerge) no(state.refuseMerge)
+    const git = (...more) => execFileSync('git', ['--git-dir', state.origin, ...more], { encoding: 'utf8' }).trim()
+    const main = git('rev-parse', 'refs/heads/main')
+    const head = git('rev-parse', `refs/heads/${pr.headRefName}`)
+    const match = valueOf('--match-head-commit')
+    if (match && match !== head) no(`the head of the pull request is ${head}, not ${match}`)
+    const tree = git('merge-tree', '--write-tree', main, head).split('\n')[0]
+    const merged = args.includes('--merge')
+        ? git('commit-tree', tree, '-p', main, '-p', head, '-m', `Merge pull request #${pr.number}`)
+        : git('commit-tree', tree, '-p', main, '-m', `${pr.title} (#${pr.number})`)
+    git('update-ref', 'refs/heads/main', merged)
+    pr.state = 'MERGED'
+    pr.mergedWith = ['--merge', '--squash', '--rebase'].find((method) => args.includes(method)) ?? null
+    save()
+    out('')
+}
+if (one === 'repo' && two === 'view') out(pick(state.repo ?? {}, valueOf('--json')))
+if (one === 'search' && two === 'prs') out((state.search ?? []).map((pr) => pick(pr, valueOf('--json'))))
+
+if (one === 'api' && args.includes('graphql')) {
+    out({ data: { repository: { pullRequests: { nodes: prs.filter((pr) => pr.state === 'OPEN').map((pr) => ({
+        number: pr.number, reviewThreads: { nodes: (pr.threads ?? []).map((isResolved) => ({ isResolved })) }
+    })) } } } })
+}
+if (one === 'api') {
+    const route = String(args[args.length - 1]).replace(`repos/${owner}/${name}/`, '')
+    let found
+    if ((found = /^rules\/branches\/(.+)$/.exec(route))) out(state.rules ?? [])
+    if ((found = /^rulesets\/(.+)$/.exec(route))) { if (state.rulesets?.[found[1]]) out(state.rulesets[found[1]]); no('HTTP 404: Not Found') }
+    if ((found = /^branches\/(.+)\/protection$/.exec(route))) { if (state.protection) out(state.protection); no('HTTP 404: Branch not protected') }
+    if ((found = /^branches\/(.+)$/.exec(route))) out({ name: decodeURIComponent(found[1]), protected: Boolean(state.protected) })
+    no(`HTTP 404: Not Found (${route})`)
+}
+no(`lanekit's stand-in for gh does not do: gh ${args.join(' ')}`)
