@@ -495,6 +495,18 @@ test('each page is answered alone, though both hear what changed', async () => {
     fs.rmSync(path.join(working, 'more.txt'))
 })
 
+test('the page asks for main\'s line further back, and every page is told what is read', async () => {
+    const refused = await editor.ask('history', { repo: 'demo', way: 'older' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error, /no commits older/)
+    const before = editor.seen.sidePosted.length
+    const reply = await editor.ask('history', { repo: 'demo', way: 'newest' })
+    assert.equal(reply.ok, true, reply.error)
+    assert.equal(reply.value.repos[0].spineDeeper, false)
+    assert.ok(editor.seen.sidePosted.slice(before).some((m) => m.type === 'state'), 'the side bar is told too')
+    assert.equal((await editor.ask('history', { repo: 'ghost', way: 'newest' })).ok, false)
+})
+
 test('the status bar\'s words follow the page\'s verdicts', () => {
     assert.equal(wordOf({ kind: 'working', queue: { verdict: 'land now' } }), 'ready to land')
     assert.equal(wordOf({ kind: 'fresh', dirty: 0 }), 'nothing committed')

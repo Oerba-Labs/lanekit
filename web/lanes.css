@@ -291,7 +291,7 @@ html[data-surface="sidebar"] .btn.link { padding: 0; }
 html[data-surface="sidebar"] .log { --spine: 8px; --column: 22px; --indent: 32px; }
 html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px calc(var(--spine) + 16px); font-size: var(--s12); }
 html[data-surface="sidebar"] .commit::before { left: calc(var(--spine) - 4px); top: 8px; width: 8px; height: 8px; }
-html[data-surface="sidebar"] .older { padding-left: calc(var(--spine) + 16px); }
+html[data-surface="sidebar"] .older, html[data-surface="sidebar"] .log > li.continues { padding-left: calc(var(--spine) + 16px); }
 html[data-surface="sidebar"] .lane { padding-top: 4px; padding-bottom: 16px; }
 html[data-surface="sidebar"] .lane::before { top: 16px; bottom: 14px; }
 html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
@@ -602,10 +602,16 @@ html[data-surface="sidebar"] .changes::before { left: calc(var(--column) - var(-
 .tag.remote { background: transparent; border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); color: var(--muted); }
 .commit.remote-ahead::before { background: var(--bg); border: 2px dashed var(--muted); box-sizing: border-box; }
 .commit.remote-ahead .btn { padding: 1px 8px; font-size: var(--s12); }
-.log > li.continues { height: 22px; }
+/* Main's line going on below the log: dashed, beside Older commits (and Newest only, once it reads further back). */
+.log > li.continues {
+  position: relative; height: 28px;
+  display: flex; gap: 16px; align-items: center;
+  padding-left: calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12);
+}
+.log > li.continues .btn, .older.further .btn { font-size: inherit; }
 .log:has(> li.continues)::before { bottom: 30px; }
 .log > li.continues::before { content: ""; position: absolute; left: calc(var(--spine) - 1px); bottom: 2px; height: 26px; border-left: 2px dashed var(--rail); }
-.log > li.continues { position: relative; }
+.older.further { display: flex; gap: 16px; align-items: baseline; }
 
 /* A pull request's badges under its lane's newest commit: its checks, its state, its comments, its number. */
 .stack > li.stack-badges { padding: 0 0 4px; }

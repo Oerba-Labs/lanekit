@@ -118,6 +118,19 @@ test('the routes answer under a proxy prefix too', async () => {
     assert.match(await page.text(), /<title>LaneKit<\/title>/)
 })
 
+test('main\'s line is read further back only when the page asks, and the answer is the page\'s state', async () => {
+    const asking = (headers, way) => ask('api/history', { method: 'POST', headers, body: JSON.stringify({ repo: 'demo', way }) })
+    assert.equal((await asking({ 'content-type': 'application/json' }, 'newest')).status, 403, 'not from the page')
+    const asked = await asking({ 'content-type': 'application/json', 'x-lanes': '1' }, 'newest')
+    assert.equal(asked.status, 200)
+    assert.deepEqual(asked.body.repos.map((read) => [read.id, read.spineDeeper]), [['demo', false]])
+    assert.equal(asked.body.scan, work, 'with what the browser\'s page is told besides')
+    assert.ok(asked.body.open)
+    const older = await asking({ 'content-type': 'application/json', 'x-lanes': '1' }, 'older')
+    assert.equal(older.status, 409, 'a short main has nothing older')
+    assert.match(older.body.error, /no commits older/)
+})
+
 test('each lane is read as what it is: working, empty with work in it, or landed', async () => {
     const { body } = await ask('api/state')
     assert.equal(body.repos.length, 1, 'one repository: the lanes beside it are not repositories')

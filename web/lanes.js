@@ -102,6 +102,16 @@ const browserHost = () => ({
         if (!response.ok) throw new Error(response.status === 404 ? 'That commit is not here.' : String(response.status))
         return response.json()
     },
+    history: async (repo, way) => {
+        const response = await fetch('api/history', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-lanes': '1' },
+            body: JSON.stringify({ repo, way })
+        })
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(body.error ?? String(response.status))
+        return body
+    },
     copy: (text) => navigator.clipboard.writeText(text),
     on: () => {},
     remember: () => {},
@@ -142,6 +152,7 @@ const editorHost = (api) => {
         open: (what, params) => ask('open', { what, ...params }),
         cancel: (id) => ask('cancel', { id }),
         commit: (repoPath, sha) => ask('commit', { repo: repoPath, sha }),
+        history: (repo, way) => ask('history', { repo, way }),
         copy: (text) => ask('copy', { text }),
         on: (type, listener) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
         remember: (value) => api.setState(value),
@@ -1700,6 +1711,39 @@ const spineOf = (repo, live) => {
     return repo.spine.slice(0, Math.max(SIDEBAR_SPINE, deepest + 1))
 }
 
+// Main's line further back: the service reads it a page further at each ask, for every page it answers, and the newest
+// alone again when asked. While an ask is out its button says so, and both wait.
+const readingHistory = new Map()   // repo id -> 'older' | 'newest'
+const readHistory = async (repo, way) => {
+    if (readingHistory.has(repo.id)) return
+    readingHistory.set(repo.id, way)
+    draw(true)
+    try {
+        took(await host.history(repo.id, way))
+    } catch (error) {
+        notice(error.message)
+    } finally {
+        readingHistory.delete(repo.id)
+        draw(true)
+    }
+}
+/** Under main's line: Older commits where it goes on, and Newest only once it is read further back than its newest. */
+const historyParts = (repo) => {
+    const asked = readingHistory.get(repo.id)
+    const base = repo.integrationBranch
+    return [
+        repo.spineMore && !repo.spineAtMost ? el('button', {
+            type: 'button', class: 'btn link', disabled: Boolean(asked), text: asked === 'older' ? 'Reading…' : 'Older commits',
+            title: `Read further back in ${base}`, onclick: () => readHistory(repo, 'older')
+        }) : null,
+        repo.spineMore && repo.spineAtMost ? el('span', { text: `The newest ${repo.spine.length} of ${base}; git log has the rest` }) : null,
+        repo.spineDeeper ? el('button', {
+            type: 'button', class: 'btn link', disabled: Boolean(asked), text: asked === 'newest' ? 'Reading…' : 'Newest only',
+            title: `Show only the newest commits of ${base} again`, onclick: () => readHistory(repo, 'newest')
+        }) : null
+    ].filter(Boolean)
+}
+
 const logOf = (repo) => {
     if (repo.error) return []
     const onSpine = new Set(repo.spine.map((commit) => commit.sha))
@@ -1732,8 +1776,11 @@ const logOf = (repo) => {
         rows.push(el('li', { class: 'older', text: `${plural(repo.spine.length - spine.length, 'older commit')} of ${repo.integrationBranch}: Show in an Editor Tab has them` }))
     }
     const older = live.filter((lane) => !onSpine.has(lane.base)).sort(newestFirst)
-    // Main's line going on below what is drawn: dashed, as ISL draws it.
-    if (repo.spineMore && spine.length === repo.spine.length && !older.length) rows.push(el('li', { class: 'continues', 'aria-hidden': 'true' }))
+    // Main's line going on below what is drawn: dashed, as ISL draws it, beside what reads further back. Where the side
+    // bar has cut the log short, the row above says so instead.
+    const further = spine.length === repo.spine.length ? historyParts(repo) : []
+    if (repo.spineMore && further.length && !older.length) rows.push(el('li', { class: 'continues' }, further))
+    else if (further.length) rows.push(el('li', { class: 'older further' }, further))
     if (older.length) {
         rows.push(el('li', { class: 'older', text: `Forked from further back in ${repo.integrationBranch}` }))
         for (const lane of older) rows.push(laneCard(repo, lane, false))

@@ -212,3 +212,105 @@ test('a repository without lanes is offered them: adopt\'s check first, then ado
         service.dispose()
     }
 })
+
+/**
+ * A repository of its own beside the others, with main `count` commits long: the first holds the files a lane needs,
+ * the rest are empty, made by one fast-import rather than a git process each.
+ */
+const longHistory = (dir, count, portBase) => {
+    fs.mkdirSync(dir, { recursive: true })
+    const config = JSON.parse(fs.readFileSync(path.join(repo, 'lane.config.json'), 'utf8'))
+    config.slug = path.basename(dir)
+    Object.assign(config.lane, { portBase, portCeiling: portBase + 98 })
+    fs.writeFileSync(path.join(dir, 'lane.config.json'), JSON.stringify(config))
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n.lanekit/\n')
+    fs.writeFileSync(path.join(dir, '.env'), `PORT=${portBase - 1}\n`)
+    git(dir, 'init', '-q', '-b', 'main')
+    git(dir, 'add', '-A')
+    git(dir, 'commit', '-qm', 'Commit 1')
+    let stream = ''
+    for (let n = 2; n <= count; n++) {
+        const message = `Commit ${n}\n`
+        stream += `commit refs/heads/main\ncommitter Test <test@example.invalid> ${1700000000 + n} +0000\ndata ${message.length}\n${message}`
+        if (n === 2) stream += 'from refs/heads/main^0\n'
+        stream += '\n'
+    }
+    execFileSync('git', ['fast-import', '--quiet'], { cwd: dir, env, input: stream })
+    // Commit n of main, oldest first.
+    return ['', ...git(dir, 'rev-list', '--first-parent', 'main').trim().split('\n').reverse()]
+}
+
+const finishedIn = async (service, id) => {
+    for (let i = 0; i < 300 && service.job(id)?.state !== 'done'; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+    return service.job(id, 0)
+}
+
+test('main\'s line is read further back a page at a time when a page asks, kept for every page, and the newest alone again', async () => {
+    const other = path.join(scratch, 'history')
+    const commit = longHistory(path.join(other, 'long'), 40, 19901)
+    lane(path.join(other, 'long'), 'new', 'old', '--base', commit[3])
+    // The worker reads at the depth asked too: it is the reader the editor uses.
+    const service = createService({ dirs: [other], reader: 'worker' })
+    try {
+        const at = (state) => state.repos.find((candidate) => candidate.id === 'long')
+        const first = at(await service.state())
+        assert.equal(first.spine.length, 12)
+        assert.equal(first.spine[0].subject, 'Commit 40')
+        assert.deepEqual([first.spineMore, first.spineDeeper, first.spineAtMost], [true, false, false])
+        const old = first.lanes.find((candidate) => candidate.name === 'old')
+        assert.equal(old.base, commit[3])
+        assert.ok(!first.spine.some((shown) => shown.sha === old.base), 'the lane forked further back than the log reads')
+        const tooFar = await service.press({ repo: 'long', verb: 'rebase', lane: 'old', onto: commit[2] })
+        assert.equal(tooFar.status, 400)
+        assert.match(tooFar.body.error, /not one of main's commits shown/)
+
+        const once = await service.history('long', 'older')
+        assert.equal(once.status, 200, JSON.stringify(once.body))
+        assert.equal(at(once.body).spine.length, 37)
+        assert.equal(at(once.body).spine.at(-1).subject, 'Commit 4')
+        assert.deepEqual([at(once.body).spineMore, at(once.body).spineDeeper], [true, true])
+        assert.equal(at(await service.state()).spine.length, 37, 'kept for the next reading, whoever asks it')
+
+        const twice = at((await service.history('long', 'older')).body)
+        assert.equal(twice.spine.length, 40, 'as far as there is')
+        assert.equal(twice.spine.at(-1).subject, 'Commit 1')
+        assert.equal(twice.spineMore, false)
+        assert.ok(twice.spine.some((shown) => shown.sha === old.base), 'the lane is on main\'s line now')
+        const nothing = await service.history('long', 'older')
+        assert.equal(nothing.status, 409)
+        assert.match(nothing.body.error, /no commits older/)
+
+        // A drop onto a commit only a page further back shows is held to the same rule, and passes it now.
+        const back = await service.press({ repo: 'long', verb: 'rebase', lane: 'old', onto: commit[2] })
+        assert.equal(back.status, 202, JSON.stringify(back.body))
+        assert.equal((await finishedIn(service, back.body.id)).code, 0)
+
+        const newest = at((await service.history('long', 'newest')).body)
+        assert.deepEqual([newest.spine.length, newest.spineMore, newest.spineDeeper], [12, true, false])
+        assert.equal(at(await service.state()).spine.length, 12)
+
+        assert.equal((await service.history('long', 'sideways')).status, 400)
+        assert.equal((await service.history('ghost', 'older')).status, 404)
+    } finally {
+        service.dispose()
+    }
+})
+
+test('main\'s line is read no further back than five hundred commits, and the page is told it stops there', async () => {
+    const other = path.join(scratch, 'longest')
+    longHistory(path.join(other, 'longest'), 501, 20001)
+    const service = createService({ dirs: [other] })
+    try {
+        let read = (await service.state()).repos[0]
+        let asks = 0
+        while (!read.spineAtMost && asks++ < 30) read = (await service.history('longest', 'older')).body.repos[0]
+        assert.equal(read.spine.length, 500)
+        assert.deepEqual([read.spineMore, read.spineDeeper, read.spineAtMost], [true, true, true])
+        assert.equal(read.spine.at(-1).subject, 'Commit 2')
+        const refused = await service.history('longest', 'older')
+        assert.equal(refused.status, 409)
+        assert.match(refused.body.error, /at most 500/)
+    } finally {
+        service.dispose()
+    }
+})

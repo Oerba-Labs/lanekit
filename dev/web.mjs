@@ -80,6 +80,7 @@ const routeOf = (pathname) => {
     if (pathname.endsWith('/api/state')) return { name: 'state' }
     if (pathname.endsWith('/api/jobs')) return { name: 'jobs' }
     if (pathname.endsWith('/api/commit')) return { name: 'commit' }
+    if (pathname.endsWith('/api/history')) return { name: 'history' }
     const job = /\/api\/jobs\/([a-z0-9-]+)$/.exec(pathname)
     if (job) return { name: 'job', id: job[1] }
     const cancel = /\/api\/jobs\/([a-z0-9-]+)\/cancel$/.exec(pathname)
@@ -93,6 +94,8 @@ const routeOf = (pathname) => {
 
 export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browserEditor = null }) => {
     const service = createService({ dirs: [scan] })
+    // What a browser's page is told beyond the service's state: where it looks, and how to open a lane elsewhere.
+    const extras = { scan, open: { sshHost, browserEditor } }
 
     const server = http.createServer(async (request, response) => {
         const url = new URL(request.url, 'http://lanes.invalid')
@@ -106,7 +109,7 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
             if (request.method === 'GET' && route.name === 'state') {
                 // Somebody is looking: fetch each repository now and then, by itself, in the background.
                 service.fetchQuietly().catch(() => {})
-                return send(response, 200, { ...await service.state(), scan, open: { sshHost, browserEditor } })
+                return send(response, 200, { ...await service.state(), ...extras })
             }
             if (request.method === 'GET' && route.name === 'job') {
                 const job = service.job(route.id, url.searchParams.get('from'))
@@ -135,6 +138,21 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
                 }
                 const pressed = await service.press(body ?? {})
                 return send(response, pressed.status, pressed.body)
+            }
+            if (request.method === 'POST' && route.name === 'history') {
+                // How far back a repository's log reads: the page's own, held to the same rule as a press. The answer
+                // is the page's state, read at the new depth.
+                if (request.headers['x-lanes'] !== '1' || !String(request.headers['content-type']).startsWith('application/json')) {
+                    return send(response, 403, { error: 'this address takes presses from the lanes page only' })
+                }
+                let body
+                try {
+                    body = JSON.parse(await readBody(request))
+                } catch {
+                    return send(response, 400, { error: 'the request was not JSON this page understands' })
+                }
+                const asked = await service.history(String(body?.repo ?? ''), String(body?.way ?? ''))
+                return send(response, asked.status, asked.status === 200 ? { ...asked.body, ...extras } : asked.body)
             }
             return send(response, route.name === 'missing' ? 404 : 405, { error: 'not here' })
         } catch (error) {

@@ -287,6 +287,12 @@ The page in the picture above, for every repository in a folder:
   Draft, Merged or Closed, its review, its comments, and its number, each a link to it.
 - **Origin's main** wears a tag where it is; when origin has commits main lacks, a dashed row above
   main's newest says how many, with **Pull**. Main's line ends dashed where its history goes on.
+- **Main's line shows its newest twelve commits**, and **Older commits** at its foot reads 25 further
+  back each time, as far as 500; **Newest only** goes back to the twelve. How far back is kept for
+  every page LaneKit answers, the side bar's and each tab's, until it is asked back or restarts. A
+  lane that forked further back than the log reads is listed under *Forked from further back* until
+  the log reaches its commit, and is drawn there from then on; a lane can be dragged onto any commit
+  the log shows.
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
