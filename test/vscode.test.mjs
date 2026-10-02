@@ -505,6 +505,9 @@ test('the page asks for main\'s line further back, and every page is told what i
     assert.equal(reply.value.repos[0].spineDeeper, false)
     assert.ok(editor.seen.sidePosted.slice(before).some((m) => m.type === 'state'), 'the side bar is told too')
     assert.equal((await editor.ask('history', { repo: 'ghost', way: 'newest' })).ok, false)
+    const fork = await editor.ask('history', { repo: 'demo', way: 'fork', lane: 'ghost' })
+    assert.equal(fork.ok, false)
+    assert.match(fork.error, /no lane "ghost"/)
 })
 
 test('the status bar\'s words follow the page\'s verdicts', () => {

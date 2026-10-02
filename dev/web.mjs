@@ -151,7 +151,7 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
                 } catch {
                     return send(response, 400, { error: 'the request was not JSON this page understands' })
                 }
-                const asked = await service.history(String(body?.repo ?? ''), String(body?.way ?? ''))
+                const asked = await service.history(String(body?.repo ?? ''), String(body?.way ?? ''), body?.lane ? String(body.lane) : null)
                 return send(response, asked.status, asked.status === 200 ? { ...asked.body, ...extras } : asked.body)
             }
             return send(response, route.name === 'missing' ? 404 : 405, { error: 'not here' })

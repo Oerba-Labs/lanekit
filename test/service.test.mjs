@@ -257,6 +257,7 @@ test('main\'s line is read further back a page at a time when a page asks, kept 
         assert.equal(first.spine.length, 12)
         assert.equal(first.spine[0].subject, 'Commit 40')
         assert.deepEqual([first.spineMore, first.spineDeeper, first.spineAtMost], [true, false, false])
+        assert.deepEqual([first.spineTotal, first.spineNext], [40, 25], 'main\'s line is forty long, and the next ask reads twenty-five more')
         const old = first.lanes.find((candidate) => candidate.name === 'old')
         assert.equal(old.base, commit[3])
         assert.ok(!first.spine.some((shown) => shown.sha === old.base), 'the lane forked further back than the log reads')
@@ -269,12 +270,13 @@ test('main\'s line is read further back a page at a time when a page asks, kept 
         assert.equal(at(once.body).spine.length, 37)
         assert.equal(at(once.body).spine.at(-1).subject, 'Commit 4')
         assert.deepEqual([at(once.body).spineMore, at(once.body).spineDeeper], [true, true])
+        assert.equal(at(once.body).spineNext, 3, 'only as many as are left')
         assert.equal(at(await service.state()).spine.length, 37, 'kept for the next reading, whoever asks it')
 
         const twice = at((await service.history('long', 'older')).body)
         assert.equal(twice.spine.length, 40, 'as far as there is')
         assert.equal(twice.spine.at(-1).subject, 'Commit 1')
-        assert.equal(twice.spineMore, false)
+        assert.deepEqual([twice.spineMore, twice.spineNext, twice.spineTotal], [false, 0, 40])
         assert.ok(twice.spine.some((shown) => shown.sha === old.base), 'the lane is on main\'s line now')
         const nothing = await service.history('long', 'older')
         assert.equal(nothing.status, 409)
@@ -289,6 +291,14 @@ test('main\'s line is read further back a page at a time when a page asks, kept 
         assert.deepEqual([newest.spine.length, newest.spineMore, newest.spineDeeper], [12, true, false])
         assert.equal(at(await service.state()).spine.length, 12)
 
+        // A lane listed as forked further back is read down to in one ask: its fork, now commit 2, the log's last row.
+        const fork = at((await service.history('long', 'fork', 'old')).body)
+        assert.equal(fork.spine.length, 39)
+        assert.equal(fork.spine.at(-1).sha, commit[2])
+        assert.equal((await service.history('long', 'fork', 'old')).status, 200, 'asked again, it is shown already')
+        assert.equal(at(await service.state()).spine.length, 39)
+        assert.equal((await service.history('long', 'fork', 'ghost')).status, 404)
+
         assert.equal((await service.history('long', 'sideways')).status, 400)
         assert.equal((await service.history('ghost', 'older')).status, 404)
     } finally {
@@ -298,7 +308,8 @@ test('main\'s line is read further back a page at a time when a page asks, kept 
 
 test('main\'s line is read no further back than five hundred commits, and the page is told it stops there', async () => {
     const other = path.join(scratch, 'longest')
-    longHistory(path.join(other, 'longest'), 501, 20001)
+    const commit = longHistory(path.join(other, 'longest'), 501, 20001)
+    lane(path.join(other, 'longest'), 'new', 'first', '--base', commit[1])
     const service = createService({ dirs: [other] })
     try {
         let read = (await service.state()).repos[0]
@@ -306,10 +317,14 @@ test('main\'s line is read no further back than five hundred commits, and the pa
         while (!read.spineAtMost && asks++ < 30) read = (await service.history('longest', 'older')).body.repos[0]
         assert.equal(read.spine.length, 500)
         assert.deepEqual([read.spineMore, read.spineDeeper, read.spineAtMost], [true, true, true])
+        assert.deepEqual([read.spineTotal, read.spineNext], [501, 0])
         assert.equal(read.spine.at(-1).subject, 'Commit 2')
         const refused = await service.history('longest', 'older')
         assert.equal(refused.status, 409)
         assert.match(refused.body.error, /at most 500/)
+        const tooDeep = await service.history('longest', 'fork', 'first')
+        assert.equal(tooDeep.status, 409)
+        assert.match(tooDeep.body.error, /first forked 500 commits back; LaneKit reads at most 500/)
     } finally {
         service.dispose()
     }

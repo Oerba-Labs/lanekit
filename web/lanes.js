@@ -102,11 +102,11 @@ const browserHost = () => ({
         if (!response.ok) throw new Error(response.status === 404 ? 'That commit is not here.' : String(response.status))
         return response.json()
     },
-    history: async (repo, way) => {
+    history: async (repo, way, lane) => {
         const response = await fetch('api/history', {
             method: 'POST',
             headers: { 'content-type': 'application/json', 'x-lanes': '1' },
-            body: JSON.stringify({ repo, way })
+            body: JSON.stringify({ repo, way, lane })
         })
         const body = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(body.error ?? String(response.status))
@@ -152,7 +152,7 @@ const editorHost = (api) => {
         open: (what, params) => ask('open', { what, ...params }),
         cancel: (id) => ask('cancel', { id }),
         commit: (repoPath, sha) => ask('commit', { repo: repoPath, sha }),
-        history: (repo, way) => ask('history', { repo, way }),
+        history: (repo, way, lane) => ask('history', { repo, way, lane }),
         copy: (text) => ask('copy', { text }),
         on: (type, listener) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
         remember: (value) => api.setState(value),
@@ -1504,6 +1504,8 @@ const laneCard = (repo, lane, forked = true) => {
         lane.quiet ? Object.assign(state('quiet', `Quiet for ${quietFor(lane.quietDays)}`, 'small quiet-for'), { title: `Nothing done in it since ${exactly(lane.lastActive)}: set it aside, or drop it, if it is not wanted now` }) : null,
         lane.branch !== lane.name ? el('span', { text: `branch ${lane.branch}` }) : null,
         lane.behind ? el('span', { text: `${lane.behind} behind ${repo.integrationBranch}` }) : null,
+        forked ? null : historyButton(repo, `fork:${lane.name}`, 'Show where it forked', `Read ${repo.integrationBranch} down to the commit ${lane.name} forked from`,
+            () => readHistory(repo, 'fork', `fork:${lane.name}`, lane)),
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         lane.pending ? null : gateOf(lane),
         lane.pending ? null : pushedOf(lane),
@@ -1695,6 +1697,8 @@ const headOf = (repo) => {
     else if (github.state === 'not-github') facts.push(el('span', { text: 'Pull requests: its remote is not on GitHub' }))
     else if (github.error) facts.push(state('warn', `GitHub: ${github.error}`, 'small'))
     if (repo.planError) facts.push(state('warn', `The queue could not be planned: ${repo.planError}`, 'small'))
+    // Read further back than main's newest: said here too, with the way back, so it is not only at the foot of a long log.
+    if (repo.spineDeeper) facts.push(el('span', { class: 'deeper' }, `${shownOf(repo, true) ?? `${repo.spine.length} of ${base}'s commits shown`} · `, newestButton(repo, 'newest-top')))
     parts.push(el('div', { class: 'facts' }, facts))
     // Agents at work in the main checkout itself, on a line of their own as a lane's are.
     parts.push(agentsRow(repo, null))
@@ -1711,36 +1715,66 @@ const spineOf = (repo, live) => {
     return repo.spine.slice(0, Math.max(SIDEBAR_SPINE, deepest + 1))
 }
 
-// Main's line further back: the service reads it a page further at each ask, for every page it answers, and the newest
-// alone again when asked. While an ask is out its button says so, and both wait.
-const readingHistory = new Map()   // repo id -> 'older' | 'newest'
-const readHistory = async (repo, way) => {
+// Main's line further back: the service reads it a page further at each ask, or down to where a lane forked, for every
+// page it answers, and the newest alone again when asked. While an ask is out its button says so and keeps the keyboard,
+// so Enter on Older commits again reads further still.
+const readingHistory = new Map()   // repo id -> what was asked: 'older', 'newest', 'newest-top' or 'fork:<lane>'
+const historyKey = (repo, what) => `history:${repo.id}:${what}`
+const keyedNode = (key) => [...document.querySelectorAll('[data-key]')].find((node) => node.dataset.key === key)
+// The foot's buttons stand in for each other when the one with the keyboard goes: Older commits once main's first commit
+// is read, Newest only once the log is back to the newest.
+const STANDS_IN = { older: 'newest', newest: 'older' }
+const readHistory = async (repo, way, what, lane = null) => {
     if (readingHistory.has(repo.id)) return
-    readingHistory.set(repo.id, way)
+    const ours = document.activeElement?.dataset?.key === historyKey(repo, what)
+    readingHistory.set(repo.id, what)
     draw(true)
+    let read = false
     try {
-        took(await host.history(repo.id, way))
+        took(await host.history(repo.id, way, lane?.name))
+        read = true
     } catch (error) {
         notice(error.message)
     } finally {
         readingHistory.delete(repo.id)
         draw(true)
     }
+    // A lane brought onto main's line is shown, and given the keyboard, where it now is; a button of the foot that went
+    // hands the keyboard to the one beside it.
+    if (read && lane) {
+        focusLane(repo.id, lane.name)
+        keyedNode(`${repo.id}/${lane.name}`)?.focus({ preventScroll: true })
+    } else if (ours && STANDS_IN[what] && !keyedNode(historyKey(repo, what))) {
+        keyedNode(historyKey(repo, STANDS_IN[what]))?.focus({ preventScroll: true })
+    }
 }
-/** Under main's line: Older commits where it goes on, and Newest only once it is read further back than its newest. */
-const historyParts = (repo) => {
+const historyButton = (repo, what, text, title, onclick) => {
     const asked = readingHistory.get(repo.id)
+    return el('button', {
+        type: 'button', class: 'btn link', 'data-key': historyKey(repo, what), title, onclick,
+        text: asked === what ? 'Reading…' : text, 'aria-busy': asked === what ? 'true' : null, 'aria-disabled': asked && asked !== what ? 'true' : null
+    })
+}
+const newestButton = (repo, what) => historyButton(repo, what, 'Newest only', `Show only the newest commits of ${repo.integrationBranch} again`,
+    () => readHistory(repo, 'newest', what))
+/** How many of main's commits the log shows, of how many its line holds: briefly at the foot of the line, which says
+    whose they are, and whole in the header. Nothing where git could not count them. */
+const shownOf = (repo, whole = false) => {
+    if (!Number.isFinite(repo.spineTotal)) return null
+    const [shown, total, base] = [repo.spine.length.toLocaleString(), repo.spineTotal.toLocaleString(), repo.integrationBranch]
+    if (!repo.spineMore) return `All ${total} of ${base}'s commits${whole ? ' shown' : ''}`
+    return whole ? `${shown} of ${base}'s ${total} commits shown` : `${shown} of ${total} shown`
+}
+/** The foot of main's line: what reads further back, Newest only once it is read further than its newest, and the count. */
+const footOf = (repo) => {
     const base = repo.integrationBranch
+    const count = shownOf(repo)
     return [
-        repo.spineMore && !repo.spineAtMost ? el('button', {
-            type: 'button', class: 'btn link', disabled: Boolean(asked), text: asked === 'older' ? 'Reading…' : 'Older commits',
-            title: `Read further back in ${base}`, onclick: () => readHistory(repo, 'older')
-        }) : null,
+        repo.spineNext > 0 ? historyButton(repo, 'older', plural(repo.spineNext, 'older commit'), `Read ${repo.spineNext} further back in ${base}`,
+            () => readHistory(repo, 'older', 'older')) : null,
         repo.spineMore && repo.spineAtMost ? el('span', { text: `The newest ${repo.spine.length} of ${base}; git log has the rest` }) : null,
-        repo.spineDeeper ? el('button', {
-            type: 'button', class: 'btn link', disabled: Boolean(asked), text: asked === 'newest' ? 'Reading…' : 'Newest only',
-            title: `Show only the newest commits of ${base} again`, onclick: () => readHistory(repo, 'newest')
-        }) : null
+        repo.spineDeeper ? newestButton(repo, 'newest') : null,
+        count ? el('span', { class: 'count', text: count }) : null
     ].filter(Boolean)
 }
 
@@ -1767,20 +1801,22 @@ const logOf = (repo) => {
             el('span', { class: 'subject muted', text: `${plural(upstream.behind, 'newer commit')} than ${repo.integrationBranch}, as of the last fetch` }),
             pullButton(repo)))
     }
+    // Main's first commit, where the whole of its line is drawn: the line stops at its dot.
+    const root = !repo.spineMore && spine.length === repo.spine.length ? spine.length - 1 : -1
     spine.forEach((commit, index) => {
         for (const lane of live.filter((candidate) => candidate.base === commit.sha).sort(newestFirst)) rows.push(laneCard(repo, lane))
-        rows.push(commitRow(repo, commit, index === 0 ? 'tip' : '', index === 0 ? repo.integrationBranch : null))
+        rows.push(commitRow(repo, commit, `${index === 0 ? 'tip' : ''}${index === root ? ' root' : ''}`, index === 0 ? repo.integrationBranch : null))
         rows.push(inlineDetails(repo, commit))
     })
     if (spine.length < repo.spine.length) {
         rows.push(el('li', { class: 'older', text: `${plural(repo.spine.length - spine.length, 'older commit')} of ${repo.integrationBranch}: Show in an Editor Tab has them` }))
     }
     const older = live.filter((lane) => !onSpine.has(lane.base)).sort(newestFirst)
-    // Main's line going on below what is drawn: dashed, as ISL draws it, beside what reads further back. Where the side
-    // bar has cut the log short, the row above says so instead.
-    const further = spine.length === repo.spine.length ? historyParts(repo) : []
-    if (repo.spineMore && further.length && !older.length) rows.push(el('li', { class: 'continues' }, further))
-    else if (further.length) rows.push(el('li', { class: 'older further' }, further))
+    // The foot of main's line: dashed where its history goes on, as ISL draws it, whether or not lanes forked further
+    // back are listed below it. Where the side bar has cut the log short, the row above says so instead.
+    if (spine.length === repo.spine.length && (repo.spineMore || repo.spineDeeper)) {
+        rows.push(el('li', { class: `foot ${repo.spineMore ? 'continues' : 'end'}` }, footOf(repo)))
+    }
     if (older.length) {
         rows.push(el('li', { class: 'older', text: `Forked from further back in ${repo.integrationBranch}` }))
         for (const lane of older) rows.push(laneCard(repo, lane, false))

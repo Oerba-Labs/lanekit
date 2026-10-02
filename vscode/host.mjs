@@ -887,7 +887,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             }
             case 'history': {
                 // How far back a repository's log reads, kept by the service: every page is told, the side bar and each tab.
-                const asked = await service.history(String(params?.repo ?? ''), String(params?.way ?? ''))
+                const asked = await service.history(String(params?.repo ?? ''), String(params?.way ?? ''), params?.lane ? String(params.lane) : null)
                 if (asked.status !== 200) throw new Error(asked.body.error)
                 lastSent = JSON.stringify({ ...asked.body, at: 0 })
                 post({ type: 'state', state: asked.body })

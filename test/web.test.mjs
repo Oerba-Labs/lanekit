@@ -129,6 +129,8 @@ test('main\'s line is read further back only when the page asks, and the answer 
     const older = await asking({ 'content-type': 'application/json', 'x-lanes': '1' }, 'older')
     assert.equal(older.status, 409, 'a short main has nothing older')
     assert.match(older.body.error, /no commits older/)
+    const fork = await ask('api/history', { method: 'POST', headers: { 'content-type': 'application/json', 'x-lanes': '1' }, body: JSON.stringify({ repo: 'demo', way: 'fork', lane: 'ghost' }) })
+    assert.equal(fork.status, 404, 'the lane is carried, and one that is not there refused')
 })
 
 test('each lane is read as what it is: working, empty with work in it, or landed', async () => {

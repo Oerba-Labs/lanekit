@@ -291,7 +291,7 @@ html[data-surface="sidebar"] .btn.link { padding: 0; }
 html[data-surface="sidebar"] .log { --spine: 8px; --column: 22px; --indent: 32px; }
 html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px calc(var(--spine) + 16px); font-size: var(--s12); }
 html[data-surface="sidebar"] .commit::before { left: calc(var(--spine) - 4px); top: 8px; width: 8px; height: 8px; }
-html[data-surface="sidebar"] .older, html[data-surface="sidebar"] .log > li.continues { padding-left: calc(var(--spine) + 16px); }
+html[data-surface="sidebar"] .older, html[data-surface="sidebar"] .log > li.foot { padding-left: calc(var(--spine) + 16px); }
 html[data-surface="sidebar"] .lane { padding-top: 4px; padding-bottom: 16px; }
 html[data-surface="sidebar"] .lane::before { top: 16px; bottom: 14px; }
 html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
@@ -602,16 +602,32 @@ html[data-surface="sidebar"] .changes::before { left: calc(var(--column) - var(-
 .tag.remote { background: transparent; border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); color: var(--muted); }
 .commit.remote-ahead::before { background: var(--bg); border: 2px dashed var(--muted); box-sizing: border-box; }
 .commit.remote-ahead .btn { padding: 1px 8px; font-size: var(--s12); }
-/* Main's line going on below the log: dashed, beside Older commits (and Newest only, once it reads further back). */
-.log > li.continues {
-  position: relative; height: 28px;
-  display: flex; gap: 16px; align-items: center;
+/* The foot of main's line: dashed where its history goes on, beside what reads further back, Newest only, and how many
+   of main's commits are shown. The dashes are painted over the rail, in the page's own colour between them, so the rail
+   can carry on below to the lanes forked further back; where the foot is the log's last row, the rail stops above it. */
+.log > li.foot {
+  position: relative; box-sizing: border-box; height: 28px;
+  display: flex; gap: 16px; align-items: center; white-space: nowrap; overflow: hidden;
   padding-left: calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12);
 }
-.log > li.continues .btn, .older.further .btn { font-size: inherit; }
-.log:has(> li.continues)::before { bottom: 30px; }
-.log > li.continues::before { content: ""; position: absolute; left: calc(var(--spine) - 1px); bottom: 2px; height: 26px; border-left: 2px dashed var(--rail); }
-.older.further { display: flex; gap: 16px; align-items: baseline; }
+.log > li.foot .btn { font-size: inherit; }
+.log > li.foot .count { font-variant-numeric: tabular-nums; }
+html[data-surface="sidebar"] .log > li.foot .count { display: none; }
+.log > li.foot.continues::before {
+  content: ""; position: absolute; left: calc(var(--spine) - 1px); top: 0; bottom: 2px; width: 2px;
+  background: repeating-linear-gradient(to bottom, var(--rail) 0 4px, var(--bg) 4px 8px);
+}
+.log:has(> li.foot:last-child)::before { bottom: 30px; }
+/* Main's first commit: its line stops at its dot, the rail below it painted over in the page's own colour. */
+.log > li.commit.root {
+  /* Longhands, so a drop's wash on the row (its background-color) is kept. */
+  background-image: linear-gradient(var(--bg), var(--bg)); background-repeat: no-repeat;
+  background-position: calc(var(--spine) - 1px) 21px; background-size: 2px calc(100% - 21px);
+}
+html[data-surface="sidebar"] .log > li.commit.root { background-position: calc(var(--spine) - 1px) 16px; background-size: 2px calc(100% - 16px); }
+/* A button waiting while another ask of its repository's history is out. */
+.btn.link[aria-disabled="true"] { opacity: 0.45; cursor: progress; }
+.facts .deeper .btn { font-size: inherit; }
 
 /* A pull request's badges under its lane's newest commit: its checks, its state, its comments, its number. */
 .stack > li.stack-badges { padding: 0 0 4px; }
