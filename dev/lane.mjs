@@ -874,6 +874,64 @@ const pr = (config, name, options = {}) => {
 }
 
 /**
+ * Merge a lane's pull request on GitHub, through gh, then bring main here up to it: how a lane lands where main takes
+ * its changes by pull request, which lane land (a merge here) cannot do, since such a main is never pushed to.
+ *
+ * ONLY WHAT GITHUB WOULD MERGE, AT THIS LANE'S COMMIT. The pull request must be open, out of draft, not waiting on its
+ * review, and at the commit the lane is at: gh is told that commit (--match-head-commit), so a push made since nobody
+ * looked is not merged unseen. Whatever else GitHub holds it to (its checks, a merge queue) is gh's to say, word for
+ * word, and never stepped past here: no --admin.
+ *
+ * A MERGE COMMIT WHERE THE REPOSITORY ALLOWS ONE, as lane land makes: the lane's commits are then main's, and the lane
+ * reads as landed, to sweep, once main here has them. A squash or a rebase otherwise, and then it reads as merged on
+ * GitHub, to drop.
+ */
+const merge = (config, name) => {
+    const lane = laneNamed(config, name, 'merge')
+    const dir = lane.path
+    const branch = lane.branch ?? name
+    const base = config.integrationBranch
+    const gh = (args, stdio = 'pipe') => spawnSync('gh', args, { cwd: dir, encoding: 'utf8', stdio: stdio === 'pipe' ? ['ignore', 'pipe', 'pipe'] : 'inherit', env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } })
+    if (gh(['--version']).error) fail('gh is not installed here, and a pull request is merged through it.')
+    const json = (args) => { const asked = gh(args); try { return asked.status === 0 ? JSON.parse(asked.stdout) : null } catch { return null } }
+    const pr = json(['pr', 'view', branch, '--json', 'number,state,isDraft,headRefOid,mergeStateStatus,reviewDecision,url'])
+    if (!pr || pr.state !== 'OPEN') fail(`${branch} has no open pull request: lane pr ${name} opens one.`)
+    if (pr.isDraft) fail(`#${pr.number} is a draft: lane pr ${name} --ready takes it out of draft, for its review.`)
+    const head = git(['rev-parse', 'HEAD'], dir)
+    if (pr.headRefOid && pr.headRefOid !== head) {
+        fail(`#${pr.number} is at ${pr.headRefOid.slice(0, 7)}, and ${name} at ${head.slice(0, 7)}: lane push ${name} first, so what is merged is what is here.`)
+    }
+    if (pr.reviewDecision === 'CHANGES_REQUESTED') fail(`#${pr.number} has changes requested of it: ${pr.url}`)
+    if (pr.reviewDecision === 'REVIEW_REQUIRED') fail(`#${pr.number} waits for its review: ${pr.url}`)
+    if (pr.mergeStateStatus === 'DIRTY') fail(`#${pr.number} conflicts with ${base}: lane rebase ${name}, then lane push ${name} --force-with-lease.`)
+    if (pr.mergeStateStatus === 'BEHIND') fail(`#${pr.number} is behind ${base}, which wants it up to date first: lane rebase ${name}, then lane push ${name} --force-with-lease.`)
+    const allowed = json(['repo', 'view', '--json', 'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed']) ?? {}
+    const method = allowed.mergeCommitAllowed !== false ? '--merge' : allowed.squashMergeAllowed ? '--squash' : allowed.rebaseMergeAllowed ? '--rebase' : '--merge'
+    const args = ['pr', 'merge', String(pr.number), method, '--match-head-commit', head]
+    log(`gh ${args.join(' ')}`)
+    if (gh(args, 'inherit').status !== 0) fail('GitHub did not merge it (above).')
+
+    // Main here, brought up to it: fetched, and fast-forwarded where the main checkout is on it, clean, and not ahead.
+    const mainRepo = mainRepoFrom(process.cwd())
+    const target = pushTargetOf(mainRepo, base)
+    const remote = target?.remote ?? 'origin'
+    log(`git fetch ${remote}`)
+    spawnSync('git', ['fetch', '--quiet', remote], { cwd: mainRepo, stdio: 'inherit' })
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${base}@{upstream}`], mainRepo)
+    const onBase = gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], mainRepo).out === base
+    const [behind, ahead] = upstream.ok ? gitQuiet(['rev-list', '--left-right', '--count', `${upstream.out}...${base}`], mainRepo).out.split(/\s+/).map(Number) : [0, 0]
+    let brought = false
+    if (upstream.ok && onBase && !ahead && behind && !dirtIn(mainRepo, config).length) {
+        brought = spawnSync('git', ['merge', '--ff-only', '--quiet', upstream.out], { cwd: mainRepo, stdio: 'inherit' }).status === 0
+    }
+    if (!brought) log(`${base} here is not at GitHub's yet: lane pull brings it, once the main checkout is on ${base} and clean`)
+    const how = { '--merge': 'by a merge commit', '--squash': 'squashed', '--rebase': 'rebased' }[method]
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}MERGED${OFF}  ·  ${name}  ·  #${pr.number} into ${base} on GitHub, ${how}${brought ? `; ${base} here is at it` : ''}\n${rule}\n`)
+    if (method !== '--merge') log(`squashed or rebased, its commits are not ${base}'s own: lane drop ${name} clears it away, keeping its branch`)
+}
+
+/**
  * Fast-forward the integration branch in the main checkout to what origin has, as of the
  * last fetch. Only a fast-forward: a main that has diverged from origin needs a person.
  */
@@ -898,7 +956,7 @@ const pull = (config) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop }
+const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, merge, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -915,7 +973,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -968,6 +1026,7 @@ const main = () => {
     }
     if (command === 'push') return push(config, name, options)
     if (command === 'pr') return pr(config, name, options)
+    if (command === 'merge') return merge(config, name)
     if (command === 'pull') return pull(config, options)
     if (command === 'commit') return commitIn(config, name, options)
     if (command === 'uncommit') return uncommit(config, name, options)

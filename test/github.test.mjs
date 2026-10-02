@@ -30,7 +30,7 @@ const env = {
     GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
     LANEKIT_PORTS: ''
 }
-const { reviewNeedsOf, reviewerOf, unresolvedOf } = await import('../lib/github.mjs')
+const { forgetGithub, reviewNeedsOf, reviewerOf, unresolvedOf } = await import('../lib/github.mjs')
 const { createService } = await import('../lib/service.mjs')
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const lane = (cwd, ...args) => {
@@ -171,6 +171,95 @@ test('the reading carries each open pull request\'s review, its threads, and wha
         assert.equal(refused.status, 409)
         assert.match(refused.body.error, /takes its changes by pull request/)
         git(repo, 'reset', '-q', '--hard', 'HEAD~1')
+    } finally {
+        service.dispose()
+    }
+})
+
+test('where main lands by pull request, a lane\'s next step follows its pull request, and one merged on GitHub says so anywhere', () => {
+    // prStepOf, read from the page as it is written there and run here: plain data in and out.
+    const page = fs.readFileSync(path.join(KIT, 'web', 'lanes.js'), 'utf8')
+    const start = page.indexOf('const prStepOf = ')
+    assert.notEqual(start, -1, 'the page has prStepOf')
+    const prStepOf = new Function(`${page.slice(start, page.indexOf('\n}\n', start) + 2)}; return prStepOf`)()
+    const byPr = { integrationBranch: 'main', github: { rules: { push: { allowed: false } } }, main: { upstream: { behind: 0 } } }
+    const here = { ...byPr, github: { rules: { push: { allowed: true } } } }
+    const lane = (extra) => ({ kind: 'working', dirty: 0, operation: null, behind: 0, queue: { verdict: 'land now' }, upstream: { ahead: 0, behind: 0 }, pull: null, ...extra })
+    const open = (extra) => ({ state: 'OPEN', number: 5, draft: false, review: '', checks: 'passing', mergeState: 'CLEAN', requested: [], ...extra })
+    const next = (repo, extra) => prStepOf(repo, lane(extra))?.next ?? null
+    assert.equal(next(byPr, {}), 'pr', 'ready, and no pull request yet')
+    assert.equal(next(byPr, { queue: { verdict: 'gate now' } }), null, 'its gate first: the usual words')
+    assert.equal(next(byPr, { dirty: 2 }), null, 'uncommitted work first')
+    assert.equal(next(byPr, { pull: open(), upstream: { ahead: 1, behind: 0 } }), 'push')
+    assert.equal(next(byPr, { pull: open(), upstream: { ahead: 1, behind: 2 } }), 'push-force')
+    assert.equal(next(byPr, { pull: open({ draft: true }) }), 'ready')
+    assert.equal(next(byPr, { pull: open({ review: 'REVIEW_REQUIRED' }) }), 'review', 'nobody asked yet')
+    assert.equal(next(byPr, { pull: open({ review: 'REVIEW_REQUIRED', requested: ['carol'] }) }), null, 'waiting on carol')
+    assert.equal(next(byPr, { pull: open({ review: 'CHANGES_REQUESTED' }) }), null)
+    assert.equal(next(byPr, { pull: open({ mergeState: 'BEHIND' }), behind: 3 }), 'rebase')
+    assert.equal(next(byPr, { pull: open({ review: 'APPROVED' }) }), 'merge')
+    assert.equal(prStepOf(byPr, lane({ pull: open({ review: 'APPROVED' }) })).word, 'Approved: ready to merge')
+    assert.equal(next(here, { pull: open({ review: 'APPROVED' }) }), null, 'where main lands here, the usual words')
+    assert.equal(next(here, { pull: { state: 'MERGED' } }), 'drop', 'merged on GitHub, squashed: anywhere')
+    assert.equal(next({ ...here, main: { upstream: { behind: 1 } } }, { pull: { state: 'MERGED' } }), 'pull', 'main here is behind it')
+})
+
+test('lane merge merges a pull request GitHub would merge, at the lane\'s own commit, and brings main here up to it', () => {
+    const head = git(feature, 'rev-parse', 'HEAD')
+    const pr = (change) => ghSet({ prs: ghSaid().prs.map((one) => (one.number === 1 ? { ...one, ...change } : one)) })
+    pr({ reviewDecision: 'REVIEW_REQUIRED', headRefOid: head, mergeStateStatus: 'BLOCKED' })
+    assert.match(lane(repo, 'merge', 'feature').out, /#1 waits for its review/)
+    pr({ reviewDecision: 'APPROVED', isDraft: true })
+    assert.match(lane(repo, 'merge', 'feature').out, /#1 is a draft: lane pr feature --ready/)
+    pr({ isDraft: false, headRefOid: 'f'.repeat(40) })
+    assert.match(lane(repo, 'merge', 'feature').out, /lane push feature first/)
+    assert.ok(!ghAsked().some((args) => args[0] === 'pr' && args[1] === 'merge'), 'nothing was merged yet')
+
+    pr({ headRefOid: head, mergeStateStatus: 'CLEAN' })
+    const merged = lane(repo, 'merge', 'feature')
+    assert.equal(merged.code, 0, merged.out)
+    assert.match(merged.out, /MERGED/)
+    assert.deepEqual(ghAsked().find((args) => args[0] === 'pr' && args[1] === 'merge'), ['pr', 'merge', '1', '--merge', '--match-head-commit', head])
+    assert.equal(git(origin, 'rev-list', '--parents', '-n1', 'main').split(' ')[2], head, 'a merge commit, the lane\'s commit its second parent')
+    assert.equal(git(repo, 'rev-parse', 'main'), git(origin, 'rev-parse', 'main'), 'main here brought up to it')
+    git(repo, 'merge-base', '--is-ancestor', 'feature', 'main')
+})
+
+test('squashed on GitHub, a lane is said to be merged there, to drop; and the page\'s land and merge are held to main\'s rules', async () => {
+    assert.equal(lane(repo, 'new', 'second').code, 0)
+    const second = path.join(scratch, 'work', 'demo-second')
+    fs.writeFileSync(path.join(second, 'second.txt'), 'second\n')
+    git(second, 'add', '-A')
+    git(second, 'commit', '-qm', 'Add a second thing')
+    assert.equal(lane(repo, 'pr', 'second', '--push').code, 0)
+    ghSet({
+        repo: { mergeCommitAllowed: false, squashMergeAllowed: true, rebaseMergeAllowed: false },
+        prs: ghSaid().prs.map((one) => (one.headRefName === 'second' ? { ...one, reviewDecision: 'APPROVED', headRefOid: git(second, 'rev-parse', 'HEAD'), mergeStateStatus: 'CLEAN' } : one))
+    })
+    const service = createService({ dirs: [path.join(scratch, 'work')] })
+    try {
+        const landed = await service.press({ repo: 'demo', verb: 'land', lane: 'second', dryRun: true })
+        assert.equal(landed.status, 409)
+        assert.match(landed.body.error, /lands there by its pull request/)
+
+        const squashed = lane(repo, 'merge', 'second')
+        assert.equal(squashed.code, 0, squashed.out)
+        assert.ok(ghAsked().some((args) => args[0] === 'pr' && args[1] === 'merge' && args.includes('--squash')))
+        assert.match(squashed.out, /lane drop second/)
+        assert.equal(spawnSync('git', ['merge-base', '--is-ancestor', 'second', 'main'], { cwd: repo }).status, 1, 'its commits are not main\'s own')
+
+        forgetGithub(repo)
+        let read = null
+        for (let i = 0; i < 80; i++) {
+            read = (await service.state()).repos[0].lanes.find((candidate) => candidate.name === 'second')
+            if (read?.pull?.state === 'MERGED') break
+            await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        assert.equal(read.kind, 'working')
+        assert.equal(read.pull.state, 'MERGED')
+        const again = await service.press({ repo: 'demo', verb: 'merge', lane: 'second' })
+        assert.equal(again.status, 409)
+        assert.match(again.body.error, /no open pull request to merge/)
     } finally {
         service.dispose()
     }

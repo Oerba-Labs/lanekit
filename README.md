@@ -297,6 +297,16 @@ The page in the picture above, for every repository in a folder:
   GitHub. **Pull request…** (behind ⋯, once a lane is pushed) opens one from its commits' own words,
   as a draft if ticked, with reviewers if named; on an open one, **Request review…** asks more, and
   **Ready for review** takes a draft out of draft.
+- **Where main takes its changes by pull request** (GitHub says it may not be pushed to), a lane
+  lands by its pull request instead of **Land**, and its state and its one solid button follow it:
+  *Ready for a pull request* (**Pull request…**, pushing it first), *Not all on #12 yet* (**Push**),
+  *Draft pull request* (**Ready for review**), *Waiting for review* (**Request review…** while
+  nobody is asked), *Changes requested*, *Checks failing* or *Behind main on GitHub* (**Rebase**),
+  and *Approved: ready to merge* (**Merge…**, and **Merge feature…** in the landing order). Merge
+  asks, then merges it on GitHub (a merge commit where the repository allows one, as Land makes, so
+  the lane is then landed and swept as usual; squashed or rebased otherwise, and the lane says
+  *Merged on GitHub*, to drop) and brings main here up to it. It merges only at the lane's own
+  commit, and never steps past a rule. A pull request merged on GitHub some other way is said too.
 - **Origin's main** wears a tag where it is; when origin has commits main lacks, a dashed row above
   main's newest says how many, with **Pull**. Main's line ends dashed where its history goes on.
 - **Main is pushed only where the repository takes it.** With commits origin lacks (a land makes
@@ -419,6 +429,7 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased
 ./<project> lane pr <name>       open a pull request for a pushed lane, through gh: --draft, --reviewer
                                  alice,org/team (on an open one too), --ready for a draft, --push first
+./<project> lane merge <name>    merge a lane's pull request on GitHub, at its own commit, then bring main here up to it
 ./<project> lane pull            fast-forward main to origin, as of the last fetch
 ./<project> lane push --main     send main to origin, a fast-forward, where its rules on GitHub allow
 ./<project> lane commit <name>   commit what is uncommitted: -m <message>, --amend, --reword, -- <file>…

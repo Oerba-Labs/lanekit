@@ -440,6 +440,42 @@ const statusOf = (lane) => {
     }
 }
 
+/** Where GitHub said main may not be pushed to straight, a lane lands by its pull request, merged on GitHub. */
+const byPullRequest = (repo) => repo.github?.rules?.push?.allowed === false
+/**
+ * A lane going on by its pull request: its state in a word, and the one thing to press next (`next`: pr, push,
+ * push-force, ready, review, merge, rebase, pull or drop), or none while it waits on somebody. A pull request merged on
+ * GitHub is said wherever main lands; the rest only where main lands by pull request, and only once nothing here comes
+ * first (uncommitted work, a conflict with main, a lane part-way). Null where the usual words say it. Plain data in
+ * and out, so lanekit's tests run it as it is written here (test/github.test.mjs).
+ */
+const prStepOf = (repo, lane) => {
+    if (lane.kind !== 'working' || lane.operation || lane.dirty) return null
+    const pr = lane.pull
+    const base = repo.integrationBranch
+    if (pr?.state === 'MERGED') {
+        return repo.main?.upstream?.behind
+            ? { tone: 'done', word: 'Merged on GitHub', detail: `Pull ${base} to bring it here`, next: 'pull' }
+            : { tone: 'done', word: 'Merged on GitHub', detail: `Squashed or rebased there, so its commits are not ${base}'s own: drop it, and its branch stays`, next: 'drop' }
+    }
+    if (repo.github?.rules?.push?.allowed !== false) return null
+    const verdict = lane.queue?.verdict
+    if (verdict === 'commit first' || verdict === 'rebase first' || verdict === 'parked') return null
+    const open = pr?.state === 'OPEN' ? pr : null
+    const up = lane.upstream
+    if (!open) return verdict === 'land now' ? { tone: 'done', word: 'Ready for a pull request', detail: `${base} takes its changes by pull request`, next: 'pr' } : null
+    if (up && up.behind > 0) return { tone: 'warn', word: 'Rebased since it was pushed', detail: `#${open.number} has its old commits until it is pushed again`, next: 'push-force' }
+    if (!up || up.ahead > 0) return { tone: 'info', word: `Not all on #${open.number} yet`, detail: 'Push what is new, and the pull request has it', next: 'push' }
+    if (open.draft) return { tone: 'quiet', word: 'Draft pull request', detail: 'Ready for review when it is', next: 'ready' }
+    if (open.mergeState === 'DIRTY') return { tone: 'risk', word: `Conflicts with ${base} on GitHub`, detail: 'Rebase it here, then push it', next: lane.behind > 0 ? 'rebase' : null }
+    if (open.review === 'CHANGES_REQUESTED') return { tone: 'warn', word: 'Changes requested', detail: 'Work in the lane, commit, and push', next: null }
+    if (open.checks === 'failing') return { tone: 'risk', word: 'Checks failing on GitHub', detail: null, next: null }
+    if (open.mergeState === 'BEHIND') return { tone: 'warn', word: `Behind ${base} on GitHub`, detail: `${base} wants it up to date: rebase it here, then push it`, next: lane.behind > 0 ? 'rebase' : null }
+    if (open.review === 'REVIEW_REQUIRED') return { tone: 'info', word: 'Waiting for review', detail: null, next: open.requested?.length ? null : 'review' }
+    if (open.checks === 'pending') return { tone: 'info', word: 'Checks running on GitHub', detail: null, next: null }
+    return { tone: 'done', word: open.review === 'APPROVED' ? 'Approved: ready to merge' : 'Ready to merge', detail: null, next: 'merge' }
+}
+
 /** A lane's last gate, where there is one. None is not said: the lane's state says what it needs instead. */
 const gateOf = (lane) => {
     const gate = lane.gate
@@ -1401,6 +1437,11 @@ const confirmOf = (repo, lane, key) => {
             el('button', { type: 'button', class: 'btn primary', text: opening ? 'Open it' : 'Ask', disabled: busy, onclick: send }),
             cancel)
     }
+    if (waiting.verb === 'merge') {
+        return el('div', { class: 'confirm' },
+            el('p', { text: `Merge #${lane.pull?.number} into ${base} on GitHub? By a merge commit where the repository allows one, as Land would, else squashed or rebased; then ${base} here is brought up to it, and the lane's branch is kept. GitHub's rules decide whether it may be, and nothing is stepped past.` }),
+            go('Merge it', { repo: repo.id, verb: 'merge', lane: lane.name }), cancel)
+    }
     if (waiting.verb === 'push-force') {
         return el('div', { class: 'confirm' },
             el('p', { text: `Replace origin's ${lane.branch}? It was rebased since it was pushed, so origin has ${plural(lane.upstream?.behind || 0, 'commit')} this lane no longer does. --force-with-lease replaces them only if nobody pushed there since this lane last fetched.` }),
@@ -1461,7 +1502,8 @@ const forkCurve = () => {
     main's log, whose fork is further back than the log goes. */
 const laneCard = (repo, lane, forked = true) => {
     const key = `${repo.id}/${lane.name}`
-    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : statusOf(lane)
+    const step = prStepOf(repo, lane)
+    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(lane)
     const busy = busyIn(repo.id) || Boolean(lane.pending)
     // A lane with nothing in it has nothing to gate or land; one with uncommitted work is
     // shown the buttons, so their refusals can say why.
@@ -1488,20 +1530,39 @@ const laneCard = (repo, lane, forked = true) => {
     }
     if (working && !lane.operation) {
         buttons.push(iconButton('gate', 'Gate', {
-            class: `btn${lane.queue?.verdict === 'gate now' ? ' primary' : ''}`,
+            // One thing solid: where its pull request has a next step, that is it, and the gate is GitHub's checks' too.
+            class: `btn${lane.queue?.verdict === 'gate now' && !step?.next ? ' primary' : ''}`,
             disabled: busy || lane.dirty > 0 || Boolean(lane.operation),
             title: lane.dirty ? 'Commit first: a gate result names a commit, and uncommitted changes are in none' : 'Rebase onto the integration branch and run the tier this lane earns',
             onclick: () => { pending.set(key, { verb: 'gate', stage: 'confirm' }); draw(true) }
         }))
-        buttons.push(iconButton('land', 'Land…', {
-            class: `btn${lane.queue?.verdict === 'land now' ? ' primary' : ''}`, disabled: busy,
-            title: 'Check whether it can land, then ask',
-            onclick: () => check(repo, lane, 'land')
-        }))
+        // Where main lands by pull request there is no land here: the pull request's next step stands in its place.
+        if (!byPullRequest(repo)) {
+            buttons.push(iconButton('land', 'Land…', {
+                class: `btn${lane.queue?.verdict === 'land now' ? ' primary' : ''}`, disabled: busy,
+                title: 'Check whether it can land, then ask',
+                onclick: () => check(repo, lane, 'land')
+            }))
+        }
     }
+    const number = lane.pull?.number
+    const nextStep = {
+        pr: () => iconButton('pr', 'Pull request…', {
+            class: 'btn primary', disabled: busy, title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}${!lane.upstream || lane.upstream.ahead > 0 ? ', pushing it first' : ''}`,
+            onclick: () => { pending.set(key, { verb: 'pr', stage: 'form', push: !lane.upstream || lane.upstream.ahead > 0 }); draw(true) }
+        }),
+        push: () => iconButton('push', 'Push', { class: 'btn primary', disabled: busy, title: `Send what is new to #${number}`, onclick: () => press({ repo: repo.id, verb: 'push', lane: lane.name }) }),
+        'push-force': () => iconButton('push', 'Push…', { class: 'btn primary', disabled: busy, title: 'It was rebased since it was pushed: ask before replacing origin\'s copy', onclick: ask('push-force') }),
+        ready: () => iconButton('pr', 'Ready for review', { class: 'btn primary', disabled: busy, title: `Mark #${number} ready for review`, onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name, ready: true }) }),
+        review: () => iconButton('pr', 'Request review…', { class: 'btn primary', disabled: busy, title: `Nobody is asked to review #${number} yet`, onclick: () => { pending.set(key, { verb: 'review', stage: 'form' }); draw(true) } }),
+        merge: () => iconButton('land', 'Merge…', { class: 'btn primary', disabled: busy, title: `Merge #${number} on GitHub, then bring ${repo.integrationBranch} here up to it`, onclick: ask('merge') }),
+        pull: () => iconButton('pull', `Pull ${repo.integrationBranch}`, { class: 'btn primary', disabled: busy, title: `Bring ${repo.integrationBranch} here up to GitHub's, which has ${lane.name} in it`, onclick: () => press({ repo: repo.id, verb: 'pull' }) }),
+        drop: () => iconButton('trash', 'Drop…', { class: 'btn primary', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') })
+    }[step?.next]
+    if (nextStep && !lane.operation) buttons.push(nextStep())
     if ((working || lane.kind === 'fresh') && !lane.operation && lane.behind > 0) {
         buttons.push(iconButton('rebase', 'Rebase', {
-            class: `btn${lane.queue?.verdict === 'rebase first' ? ' primary' : ''}`,
+            class: `btn${lane.queue?.verdict === 'rebase first' || step?.next === 'rebase' ? ' primary' : ''}`,
             disabled: busy || lane.dirty > 0,
             title: lane.dirty ? 'Commit first: a rebase replays commits, and uncommitted changes are in none' : `Replay it on ${repo.integrationBranch} as it is now: ${lane.behind} behind`,
             onclick: ask('rebase')
@@ -1511,14 +1572,14 @@ const laneCard = (repo, lane, forked = true) => {
     const more = []
     if (lane.kind === 'working' && !lane.operation) {
         const up = lane.upstream
-        if (!up || up.ahead > 0) {
+        if ((!up || up.ahead > 0) && !['push', 'push-force', 'pr'].includes(step?.next)) {
             const rewrite = Boolean(up && up.behind > 0)
             more.push(iconButton('push', rewrite ? 'Push…' : 'Push', {
                 disabled: busy,
                 title: rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time',
                 onclick: rewrite ? ask('push-force') : () => press({ repo: repo.id, verb: 'push', lane: lane.name })
             }))
-        } else if (lane.pull?.state !== 'OPEN' && repo.github?.state === 'ok') {
+        } else if (lane.pull?.state !== 'OPEN' && repo.github?.state === 'ok' && step?.next !== 'pr') {
             more.push(iconButton('pr', 'Pull request…', {
                 disabled: busy,
                 title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}, from its commits' own words: a draft if you like, with reviewers if you like`,
@@ -1528,16 +1589,22 @@ const laneCard = (repo, lane, forked = true) => {
     }
     // Its open pull request: a draft made ready for review, and reviewers asked for.
     if (lane.pull?.state === 'OPEN' && repo.github?.state === 'ok' && !lane.operation) {
-        if (lane.pull.draft) {
+        if (lane.pull.draft && step?.next !== 'ready') {
             more.push(iconButton('pr', 'Ready for review', {
                 disabled: busy, title: `Mark #${lane.pull.number} ready for review: those asked to review it are told`,
                 onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name, ready: true })
             }))
         }
-        more.push(iconButton('pr', 'Request review…', {
-            disabled: busy, title: `Ask somebody to review #${lane.pull.number}`,
-            onclick: () => { pending.set(key, { verb: 'review', stage: 'form' }); draw(true) }
-        }))
+        if (step?.next !== 'review') {
+            more.push(iconButton('pr', 'Request review…', {
+                disabled: busy, title: `Ask somebody to review #${lane.pull.number}`,
+                onclick: () => { pending.set(key, { verb: 'review', stage: 'form' }); draw(true) }
+            }))
+        }
+        // Where main lands here, a pull request can still be merged on GitHub instead, from here.
+        if (!lane.pull.draft && step?.next !== 'merge' && !byPullRequest(repo)) {
+            more.push(iconButton('land', 'Merge on GitHub…', { disabled: busy, title: `Merge #${lane.pull.number} on GitHub, then bring ${repo.integrationBranch} here up to it`, onclick: ask('merge') }))
+        }
     }
     // What openLinks has nothing for (no Changes for an empty lane, no Goto where you are) is left out, not kept as a gap.
     buttons.push(...openLinks(repo, lane).filter(Boolean))
@@ -2042,10 +2109,15 @@ const queueOf = (repo) => {
                 return chip
             })))),
         el('span', { class: 'grow' }),
-        next ? iconButton('land', `Land ${next.name}…`, {
+        next && !byPullRequest(repo) ? iconButton('land', `Land ${next.name}…`, {
             class: 'btn primary', disabled: busy,
             title: `Check that ${next.name} can land, then ask: it is ready, and first among any it collides with`,
             onclick: () => check(repo, next, 'land')
+        }) : null,
+        // Where main lands by pull request, the first ready lane whose pull request may be merged.
+        next && prStepOf(repo, next)?.next === 'merge' ? iconButton('land', `Merge ${next.name}…`, {
+            class: 'btn primary', disabled: busy, title: `Merge #${next.pull.number} on GitHub: it is approved, and first among any it collides with`,
+            onclick: () => { pending.set(`${repo.id}/${next.name}`, { verb: 'merge', stage: 'confirm' }); draw(true); focusLane(repo.id, next.name) }
         }) : null)]
 }
 

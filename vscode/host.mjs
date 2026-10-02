@@ -44,6 +44,7 @@ export const wordOf = (lane) => {
     if (lane.kind === 'missing') return 'folder gone'
     if (lane.operation) return lane.operation === 'rebase' ? 'mid-rebase' : 'mid-merge'
     if (lane.kind === 'landed') return 'landed'
+    if (lane.pull?.state === 'MERGED' && lane.kind === 'working') return 'merged on GitHub'
     if (lane.kind === 'fresh' && !lane.dirty) return 'nothing committed'
     switch (lane.queue?.verdict) {
         case 'land now': return 'ready to land'
