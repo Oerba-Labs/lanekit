@@ -292,9 +292,12 @@ after(() => {
     if (scratch) fs.rmSync(scratch, { recursive: true, force: true })
 })
 
-test('every command the manifest offers is one the extension answers', () => {
+test('every command the manifest offers is one the extension answers: the host all but the loader\'s own', () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(KIT, 'vscode', 'package.json'), 'utf8'))
-    const offered = manifest.contributes.commands.map((command) => command.command).sort()
+    // Updating lanekit is the loader's, which answers it whether or not there is a lanekit to hand over to.
+    const loaders = ['lanekit.update']
+    for (const command of loaders) assert.match(fs.readFileSync(path.join(KIT, 'vscode', 'extension.js'), 'utf8'), new RegExp(`registerCommand\\('${command.replace('.', '\\.')}'`))
+    const offered = manifest.contributes.commands.map((command) => command.command).filter((command) => !loaders.includes(command)).sort()
     assert.deepEqual([...editor.seen.commands.keys()].sort(), offered)
 })
 
@@ -516,14 +519,20 @@ test('the status bar\'s words follow the page\'s verdicts', () => {
     assert.equal(wordOf({ kind: 'working', operation: 'rebase' }), 'mid-rebase')
 })
 
-test('the .vsix holds the loader, the manifest, its icons, a README and the licence, the same bytes every time', () => {
+test('the .vsix holds the loader, the manifest, its icons, a README and the licence, the same bytes every time, as the stores take it', () => {
     const one = build()
     const two = build()
     assert.equal(one.sha256, two.sha256)
     const file = path.join(scratch, 'lanes.vsix')
     fs.writeFileSync(file, one.bytes)
     const listed = execFileSync('unzip', ['-Z1', file], { encoding: 'utf8' }).trim().split('\n').sort()
-    assert.deepEqual(listed, ['[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt', 'extension/README.md', 'extension/extension.js', 'extension/lanekit.png', 'extension/lanekit.svg', 'extension/package.json'])
+    assert.deepEqual(listed, ['[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt', 'extension/README.md', 'extension/extension.js', 'extension/lanekit.png', 'extension/lanekit.svg', 'extension/package.json', 'extension/updates.js'])
+    // What the Marketplace's own packer writes: public, free, its links, and the code it runs said so.
+    const described = execFileSync('unzip', ['-p', file, 'extension.vsixmanifest'], { encoding: 'utf8' })
+    for (const said of ['<GalleryFlags>Public</GalleryFlags>', 'Content.Pricing" Value="Free"', 'Code.ExecutesCode" Value="true"', 'Links.Source" Value="https://github.com/Oerba-Labs/lanekit"', '<Icon>extension/lanekit.png</Icon>', '<License>extension/LICENSE.txt</License>']) {
+        assert.ok(described.includes(said), said)
+    }
+    assert.doesNotMatch(execFileSync('unzip', ['-p', file, 'extension/README.md'], { encoding: 'utf8' }), /Goto/)
     const png = execFileSync('unzip', ['-p', file, 'extension/lanekit.png'])
     assert.equal(png.subarray(1, 4).toString(), 'PNG', 'the Extensions list icon is a PNG')
     assert.equal(png.readUInt32BE(16), 128, 'and 128 pixels wide')

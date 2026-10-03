@@ -14,9 +14,14 @@
  * so the same files make the same .vsix, and whoever installs it can tell from its hash
  * alone whether there is anything new to install.
  *
- * WHAT IS IN IT. Only vscode/extension.js and vscode/package.json, LaneKit's two icons, a README,
- * and lanekit's LICENSE: the extension finds lanekit's checkout on the machine and runs the rest from
- * there (extension.js says why).
+ * WHAT IS IN IT. Only the loader (vscode/extension.js, and vscode/updates.js, which installs lanekit
+ * where there is none and keeps it current), vscode/package.json, LaneKit's two icons, a README, and
+ * lanekit's LICENSE: the extension finds lanekit's checkout on the machine and runs the rest from there
+ * (extension.js says why).
+ *
+ * FOR THE STORES TOO. The same file is what .github/workflows/extension.yml publishes to the VS Code
+ * Marketplace and Open VSX, so its manifest carries what the Marketplace's own packer writes: tags, its
+ * links, that it is public and free, its licence and its icon.
  */
 
 import crypto from 'node:crypto'
@@ -101,17 +106,34 @@ const xml = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').
 export const build = () => {
     const manifestText = fs.readFileSync(path.join(HERE, 'package.json'), 'utf8')
     const manifest = JSON.parse(manifestText)
+    const repository = String(manifest.repository?.url ?? '').replace(/\.git$/, '')
     const vsixManifest = `<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Language="en-US" Id="${xml(manifest.name)}" Version="${xml(manifest.version)}" Publisher="${xml(manifest.publisher)}" />
     <DisplayName>${xml(manifest.displayName)}</DisplayName>
     <Description xml:space="preserve">${xml(manifest.description)}</Description>
+    <Tags>${xml((manifest.keywords ?? []).join(','))}</Tags>
     <Categories>${xml(manifest.categories.join(','))}</Categories>
+    <GalleryFlags>Public</GalleryFlags>
     <Properties>
       <Property Id="Microsoft.VisualStudio.Code.Engine" Value="${xml(manifest.engines.vscode)}" />
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value="" />
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value="" />
       <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="${xml(manifest.extensionKind.join(','))}" />
+      <Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
+      <Property Id="Microsoft.VisualStudio.Code.EnabledApiProposals" Value="" />
+      <Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="${xml(repository)}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="${xml(repository)}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.GitHub" Value="${xml(repository)}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="${xml(manifest.bugs?.url ?? repository)}" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="${xml(manifest.homepage ?? repository)}" />
+      <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
+      <Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free" />
     </Properties>
+    <License>extension/LICENSE.txt</License>
+    <Icon>extension/lanekit.png</Icon>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Code" />
@@ -138,22 +160,28 @@ export const build = () => {
 `
     const readme = `# LaneKit
 
-Every lane of every repository in the folders open in this window, as a smartlog you act
-on: open a commit's or a lane's changes as diffs; **Goto** a lane, and the files you have open
-and your terminal go with you; start Claude Code or OpenCode in it, and see which agent works
-in which lane and which of them waits on you; and gate, land and sweep it. The LaneKit icon
-opens it in an editor tab, with a switcher between repositories and a tab of its own for any
-one of them; the status bar says which lane the file in front of you is in, what it needs,
-and how many agents are at work.
+Work on several things at once in one repository, each in a lane of its own: a second checkout,
+beside it, on its own branch and port. LaneKit draws every lane of every repository in the folders
+open in this window as a smartlog you act on: open a commit's or a lane's changes as diffs; reach a
+lane's terminal, the files you have open following; start Claude Code or OpenCode in it, and see
+which agent works in which lane and which of them waits on you; move work begun in the wrong place
+into a lane of its own; and gate, land and sweep it. The LaneKit icon opens it in an editor tab,
+with a switcher between repositories; the status bar says which lane the file in front of you is
+in, what it needs, and how many agents are at work.
 
-It runs lanekit from the checkout on this machine (\`lanekit.path\`, else \`$LANEKIT\`, else
-\`/opt/lanekit\`, else \`~/.lanekit\`). Apache License 2.0; the source is https://github.com/Oerba-Labs/lanekit.
+It runs lanekit from a copy on this machine (\`lanekit.path\`, else \`$LANEKIT\`, else
+\`/opt/lanekit\`, else \`~/.lanekit\`), so the editor and the \`lane\` commands are one version.
+Where there is none, it offers to install one in \`~/.lanekit\`, and keeps it up to date: fetched every
+few hours and fast-forwarded, never while it has changes or commits of its own
+(\`lanekit.updates\`, and **LaneKit: Update lanekit Now**). Apache License 2.0; the source is
+https://github.com/Oerba-Labs/lanekit.
 `
     const bytes = zip([
         ['extension.vsixmanifest', vsixManifest],
         ['[Content_Types].xml', contentTypes],
         ['extension/package.json', manifestText],
         ['extension/extension.js', fs.readFileSync(path.join(HERE, 'extension.js'))],
+        ['extension/updates.js', fs.readFileSync(path.join(HERE, 'updates.js'))],
         ['extension/README.md', readme],
         ['extension/LICENSE.txt', fs.readFileSync(path.join(HERE, '..', 'LICENSE'))],
         // The side bar's icon, which VS Code draws in the theme's own colour, and the Extensions list's.
