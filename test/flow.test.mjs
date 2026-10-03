@@ -152,8 +152,12 @@ test('pr says what it needs first', () => {
     // With gh on this machine the lane is not pushed yet; without it, gh's absence is said.
     assert.equal(noGh.code, 1)
     assert.match(noGh.out, /not pushed yet|gh is not installed/)
+    // A PATH with git on it and nothing else: git's own folder may hold gh too (it does on CI's runners).
+    const gitOnly = path.join(scratch, 'git-only')
+    fs.mkdirSync(gitOnly, { recursive: true })
+    if (!fs.existsSync(path.join(gitOnly, 'git'))) fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(gitOnly, 'git'))
     const bare = spawnSync(process.execPath, [path.join(KIT, 'dev', 'lane.mjs'), 'pr', 'feature'], {
-        cwd: repo, encoding: 'utf8', env: { ...env, PATH: path.dirname(execFileSync('which', ['git'], { encoding: 'utf8' }).trim()) }
+        cwd: repo, encoding: 'utf8', env: { ...env, PATH: gitOnly }
     })
     assert.match(`${bare.stdout}${bare.stderr}`, /gh is not installed/)
 })

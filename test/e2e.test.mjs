@@ -26,6 +26,8 @@ const chromeAt = () => {
         ...['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'].map(named)].find((candidate) => candidate && fs.existsSync(candidate)) ?? null
 }
 const CHROME = chromeAt()
+// A CI runner is slower than a desk, and runs every test file at once on few cores: everything waits longer there.
+const SLOW = process.env.CI ? 3 : 1
 const skip = !CHROME ? 'no Chrome or Chromium here (LANEKIT_CHROME names one)' : typeof WebSocket !== 'function' ? 'this node has no WebSocket (node 22 or newer has)' : false
 
 const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lanekit-e2e-')))
@@ -80,9 +82,12 @@ const launch = async () => {
         waiting.delete(message.id)
         if (message.error) asked.reject(new Error(`${message.error.message}${message.error.data ? `: ${message.error.data}` : ''}`)); else asked.resolve(message.result)
     })
+    // Every ask answered or refused in time: a Chrome that stops answering is said, with what it was asked, rather
+    // than left to the test's own timeout, which says nothing of where it stood.
     const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
         const id = ++sequence
-        waiting.set(id, { resolve, reject })
+        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Chrome did not answer ${method} in 20 s`)) }, 20_000)
+        waiting.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value) }, reject: (error) => { clearTimeout(timer); reject(error) } })
         socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
     })
     const gone = new Promise((resolve) => child.once('exit', resolve))
@@ -111,7 +116,12 @@ window.acquireVsCodeApi = () => {
         copy: () => true,
         tab: () => true
     }
-    setInterval(async () => { try { window.postMessage({ type: 'state', state: await methods.state() }, '*') } catch {} }, 1000)
+    let reading = false
+    setInterval(async () => {
+        if (reading) return
+        reading = true
+        try { window.postMessage({ type: 'state', state: await methods.state() }, '*') } catch {} finally { reading = false }
+    }, 1000)
     return {
         postMessage: (message) => {
             if (message?.type !== 'request') return
@@ -141,7 +151,7 @@ const open = async (browser, url, { editor = false } = {}) => {
         if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
         return result.result.value
     }
-    const until = async (fn, args = [], { timeout = 30_000, what = String(fn).slice(0, 160) } = {}) => {
+    const until = async (fn, args = [], { timeout = 30_000 * SLOW, what = String(fn).slice(0, 160) } = {}) => {
         const by = Date.now() + timeout
         let last
         for (let i = 0; Date.now() < by; i++) {
@@ -150,7 +160,8 @@ const open = async (browser, url, { editor = false } = {}) => {
             if (i % 6 === 5) await run(() => (typeof refresh === 'function' ? refresh() : null)).catch(() => {})
             await sleep(150)
         }
-        throw new Error(`waited ${timeout} ms for ${what}; last said ${JSON.stringify(last)}`)
+        const shown = await run(() => `${location.href}: ${document.body?.innerText.replace(/\s+/g, ' ').slice(0, 600)}`).catch((error) => error.message)
+        throw new Error(`waited ${timeout} ms for ${what}; last said ${JSON.stringify(last)}; the page showed ${shown}`)
     }
     /** The pointer onto the middle of what `find` finds in the page (a function there that returns an element). */
     const pointAt = async (find, ...args) => {
@@ -165,7 +176,9 @@ const open = async (browser, url, { editor = false } = {}) => {
         await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 })
     }
     const type = (text) => send('Input.insertText', { text })
-    return { run, until, pointAt, click, type, close: () => browser.send('Target.closeTarget', { targetId }) }
+    // Closing a tab never holds a test past what it found: a failure's own words are what it reports.
+    const close = () => Promise.race([browser.send('Target.closeTarget', { targetId }).catch(() => null), sleep(5000)])
+    return { run, until, pointAt, click, type, close }
 }
 
 // Finders, run in the page: each is a function there.
@@ -254,7 +267,7 @@ after(async () => {
 
 // ---------------------------------------------------------------------------
 
-test('the page says nothing of where you are, nor Goto, nor that a repository has no lanes, nor how many files a lane changed', { skip, timeout: 60_000 }, async () => {
+test('the page says nothing of where you are, nor Goto, nor that a repository has no lanes, nor how many files a lane changed', { skip, timeout: 60_000 * SLOW }, async () => {
     const text = await page.run(() => document.body.innerText)
     assert.doesNotMatch(text, /You are here/)
     assert.doesNotMatch(text, /\bGoto\b/)
@@ -273,7 +286,7 @@ test('the page says nothing of where you are, nor Goto, nor that a repository ha
     }
 })
 
-test('a lane is drawn from where it forked up: its uncommitted files on top, its commits under them, its name at its base', { skip, timeout: 60_000 }, async () => {
+test('a lane is drawn from where it forked up: its uncommitted files on top, its commits under them, its name at its base', { skip, timeout: 60_000 * SLOW }, async () => {
     const layout = await page.run((() => {
         const lane = card('feature')
         const kids = [...lane.children]
@@ -293,7 +306,7 @@ test('a lane is drawn from where it forked up: its uncommitted files on top, its
     assert.equal(layout.name, 'feature')
 })
 
-test('a lane\'s buttons sit beside its name and state, and are held until what they need is there, saying what that is', { skip, timeout: 120_000 }, async () => {
+test('a lane\'s buttons sit beside its name and state, and are held until what they need is there, saying what that is', { skip, timeout: 120_000 * SLOW }, async () => {
     await page.pointAt((() => card('ready').querySelector('.lane-name')))
     const placed = await page.until((() => {
         const head = card('ready').querySelector('.lane-title')
@@ -325,7 +338,7 @@ test('a lane\'s buttons sit beside its name and state, and are held until what t
     assert.equal(await page.run((() => laneButton('ready', 'Land').classList.contains('primary'))), true, 'the next thing to do, solid')
 })
 
-test('every uncommitted file is ticked at first, and a tick only ticks', { skip, timeout: 60_000 }, async () => {
+test('every uncommitted file is ticked at first, and a tick only ticks', { skip, timeout: 60_000 * SLOW }, async () => {
     const ticks = () => [...document.querySelectorAll('li.lane[data-key="demo/feature"] > .changes .tick')].map((tick) => tick.checked)
     assert.deepEqual(await page.run(ticks), [true, true])
     await page.click((() => card('feature').querySelector(':scope > .changes .tick')))
@@ -333,7 +346,7 @@ test('every uncommitted file is ticked at first, and a tick only ticks', { skip,
     assert.match(await page.run((() => laneButton('feature', 'Commit').textContent)), /Commit 1 of 2…/)
 })
 
-test('the main checkout\'s uncommitted files are drawn on main\'s line, ticked, and move to a new lane of their own', { skip, timeout: 120_000 }, async () => {
+test('the main checkout\'s uncommitted files are drawn on main\'s line, ticked, and move to a new lane of their own', { skip, timeout: 120_000 * SLOW }, async () => {
     write(repo, 'app.txt', 'one\ntwo, begun in main\nthree\n')
     write(repo, 'idea.txt', 'an idea, begun in main\n')
     const drawn = await page.until(() => {
@@ -361,7 +374,7 @@ test('the main checkout\'s uncommitted files are drawn on main\'s line, ticked, 
     assert.equal(fs.readFileSync(path.join(laneDir('idea'), 'idea.txt'), 'utf8'), 'an idea, begun in main\n')
 })
 
-test('Pull is shown when origin has commits main lacks, held while main has uncommitted work, saying why, then pulls', { skip, timeout: 120_000 }, async () => {
+test('Pull is shown when origin has commits main lacks, held while main has uncommitted work, saying why, then pulls', { skip, timeout: 120_000 * SLOW }, async () => {
     git(other, 'pull', '-q', 'origin', 'main')
     commit(other, 'theirs.txt', 'theirs\n', 'Somebody else lands')
     git(other, 'push', '-q', 'origin', 'main')
@@ -379,7 +392,7 @@ test('Pull is shown when origin has commits main lacks, held while main has unco
     assert.equal(fs.readFileSync(path.join(repo, 'theirs.txt'), 'utf8'), 'theirs\n')
 })
 
-test('a lane whose copy on origin moved on says so, and Pull fast-forwards it', { skip, timeout: 120_000 }, async () => {
+test('a lane whose copy on origin moved on says so, and Pull fast-forwards it', { skip, timeout: 120_000 * SLOW }, async () => {
     git(other, 'fetch', '-q', 'origin')
     git(other, 'switch', '-q', 'shared')
     commit(other, 'suggestion.txt', 'a suggestion from review\n', 'Apply a suggestion')
@@ -394,7 +407,7 @@ test('a lane whose copy on origin moved on says so, and Pull fast-forwards it', 
     await page.until((() => !/new on origin/.test(card('shared').querySelector('.lane-title > .state').textContent)), [], { what: 'shared no longer behind' })
 })
 
-test('a pull request merged on GitHub says so, holds Commit, and moves what came after it to a new lane', { skip, timeout: 120_000 }, async () => {
+test('a pull request merged on GitHub says so, holds Commit, and moves what came after it to a new lane', { skip, timeout: 120_000 * SLOW }, async () => {
     await page.until((() => card('shipped')?.querySelector('.lane-title > .state')?.textContent === 'Merged on GitHub, with work since'), [], { what: 'shipped seen as merged, with work since' })
     const held = await page.run((() => ({
         commit: Boolean(laneButton('shipped', 'Commit')),
@@ -421,7 +434,7 @@ test('a pull request merged on GitHub says so, holds Commit, and moves what came
         [], { what: 'shipped merged, clean, Drop next' })
 })
 
-test('in the editor, a file\'s tick only ticks, a click on the file opens its diff, and the terminal icon is the way to a lane\'s terminal', { skip, timeout: 60_000 }, async () => {
+test('in the editor, a file\'s tick only ticks, a click on the file opens its diff, and the terminal icon is the way to a lane\'s terminal', { skip, timeout: 60_000 * SLOW }, async () => {
     const editor = await open(browser, base, { editor: true })
     try {
         await editor.until((() => document.body.classList.contains('in-editor') && card('feature')?.querySelector(':scope > .changes .tick')))
