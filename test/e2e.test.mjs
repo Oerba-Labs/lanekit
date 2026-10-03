@@ -91,7 +91,15 @@ const launch = async () => {
         socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
     })
     const gone = new Promise((resolve) => child.once('exit', resolve))
-    return { send, close: async () => { try { socket.close() } catch { /* gone */ } child.kill(); await Promise.race([gone, sleep(5000)]) } }
+    // Closed as Chrome closes itself, so it is done writing its profile before the scratch folder goes; killed
+    // outright only if it has not gone a few seconds later.
+    const close = async () => {
+        await Promise.race([send('Browser.close').catch(() => null), sleep(5000)])
+        try { socket.close() } catch { /* gone */ }
+        await Promise.race([gone, sleep(5000)])
+        if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await Promise.race([gone, sleep(2000)]) }
+    }
+    return { send, close }
 }
 
 /**
@@ -271,7 +279,9 @@ before(async () => {
 after(async () => {
     await browser?.close()
     server?.close()
-    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    // A scratch folder that will not go is said, and left to the system's own temporary folder: never a failure of
+    // what was tested.
+    try { fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) } catch (error) { console.error(`left ${scratch}: ${error.message}`) }
 })
 
 // ---------------------------------------------------------------------------
