@@ -240,21 +240,23 @@ The page in the picture above, for every repository in a folder:
   branch is kept, with the page saying whether origin has a copy or the branch here is the only one.
   A lane with uncommitted work is not dropped; commit or discard it first. `lane new <name>
   --existing` brings a dropped lane back from its branch; deleting the branch is a step of its own.
-- **Each lane** is drawn as Interactive Smartlog draws a stack: its name as a tag, its state, its
-  uncommitted files, and its commits as dots on a line of its own, which curves into main's line at
-  the commit it started from. A commit is its words and its age (*22m*, *3d*); its hash is in its
-  tooltip. Under the name, quietly: its last gate, whether it is pushed, its pull request when `gh`
-  is signed in, and what serves on its port while anything does. While a press runs in it, it says
+- **Each lane** is drawn as a stack built on where it started: its uncommitted files on top, its
+  commits under them as dots on a line of its own, newest first, and at its base its name as a tag,
+  its state and its buttons, where its line curves into main's at the commit it started from. A
+  commit is its words and its age (*22m*, *3d*); its hash is in its tooltip. Under the name, quietly:
+  its last gate, whether it is pushed (or what origin has of it that it lacks), its pull request when
+  `gh` is signed in, and what serves on its port while anything does. While a press runs in it, it says
   so live: *Gating · running the tests… · 12 s*. A failed gate shows the failing step and its last
   lines, kept with the run, so it is still there tomorrow.
 - **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
-  difference in the editor), and what can be done with it: **Goto**, **View changes**, **New lane
-  here**, **Copy hash**, and on a lane's newest commit **Edit message** and **Uncommit**. In the
+  difference in the editor), and what can be done with it: its terminal (in the editor), **View
+  changes**, **New lane here**, **Copy hash**, and on a lane's newest commit **Edit message** and
+  **Uncommit**. In the
   side bar the details open under the row instead. A double click opens a commit's changes.
 - **A commit's commands sit beside it**, after its words and its age, as ISL sets them, when the
-  pointer is on it: **Goto** and **Uncommit** on a lane's newest, and a new lane from it and its
-  hash to the clipboard as icons. Words longer than a line's worth are clipped; the whole of them
+  pointer is on it: **Uncommit** on a lane's newest, its terminal on a lane's newest and main's (in
+  the editor), and a new lane from it and its hash to the clipboard, as icons. Words longer than a line's worth are clipped; the whole of them
   is in the tooltip and the details. Each command carries an icon of its own.
 - **The command bar along the bottom** says what is running, with its step and a clock, how the
   last command went (✓ or ✗, as you would type it), and what waits its turn: a press made while
@@ -264,11 +266,19 @@ The page in the picture above, for every repository in a folder:
   as its files leave the list; a rebased lane moves above its new commit; a new lane appears where
   it will start. The next reading after it ends says what really happened.
 - **Its buttons show when the pointer or the keyboard is on it**, the way Sapling's Interactive
-  Smartlog does, so a page of lanes reads calmly until you reach for one. They are lane's own
-  commands, run as a terminal would run them, with their output underneath: **Gate**, **Land**,
-  **Sweep**, **Rebase** (a lane that is behind), **Push** (one with commits origin lacks), **Pull
-  request** (one pushed without one), **Pull** (main behind origin), **Push** for main (main ahead
-  of origin) and **Fetch**. Land and Sweep check first with `--dry-run` and ask; a push that would
+  Smartlog does, so a page of lanes reads calmly until you reach for one, and sit beside its name
+  and state, never across the page from them. They are lane's own commands, run as a terminal would
+  run them, with their output underneath: **Gate**, **Land**, **Sweep**, **Rebase** (a lane that is
+  behind), **Push** (one with commits origin lacks), **Pull** (one whose copy on origin has commits
+  somebody else pushed: a colleague, GitHub's *Update branch*, a suggestion from review), **Pull
+  request** (one pushed without one), **Pull** for main (main behind origin), **Push** for main (main
+  ahead of origin) and **Fetch**. A button is drawn even while what it needs is not there yet, held,
+  with what it waits for as its title: **Gate** until the lane has a commit and nothing uncommitted,
+  **Land** until it is gated green on its newest commit and first among those it collides with, and
+  both of Land and Pull while main's checkout is on another branch, part-way through something, or
+  has uncommitted files. A push never replaces commits on origin that are not the lane's own: a
+  rebased lane's old commits are each the same change as one of its new ones, and anything else is
+  somebody's work, which is brought in first. Land and Sweep check first with `--dry-run` and ask; a push that would
   replace origin's copy of a rebased branch asks too, and so does a push of main. A rebase that conflicts stops with the files named, and waits for **Continue** or
   **Abort**. The one thing to do next is solid (**Gate** when it needs a gate, **Land** when it is
   ready, **Rebase** when it conflicts with main); what is done now and then, **Push**, **Pull
@@ -291,7 +301,14 @@ The page in the picture above, for every repository in a folder:
   of what happened to it (M, A, D, U), with **Select all**, **Deselect all** and **Discard…** above
   (Discard asks, and throws away only the ticked files), and **+ Commit…** and **↓ Amend** under
   them, which open the message form for the ticked files: **Commit** or **Amend**, a title, and a
-  description. Amend and Edit message start from the newest commit's own words.
+  description. Amend and Edit message start from the newest commit's own words. Clicking a tick only
+  ticks; clicking a file opens its difference.
+- **What is uncommitted in the main checkout** is drawn the same way, on main's line just above the
+  commit it was begun on, rather than said in a word above: each file ticked, **Select all**,
+  **Deselect all**, **Discard…**, and under them **Move to a new lane…**, which makes a lane from that
+  commit with the ticked files and takes them out of the main checkout (`lane new <name> --carry`).
+  There is no Commit there: nothing reaches main without a gate. Until it is clean, Land and Pull
+  wait, and say so.
 - **A rebase stopped on a conflict** lists its files, each with **✓ Resolved**, which LaneKit
   refuses while a conflict marker is left in the file; then **Continue** carries on.
 - **A pull request has badges** under its lane's newest commit: its checks (✓, ✗ or •), Open,
@@ -312,8 +329,17 @@ The page in the picture above, for every repository in a folder:
   the lane is then landed and swept as usual; squashed or rebased otherwise, and the lane says
   *Merged on GitHub*, to drop) and brings main here up to it. It merges only at the lane's own
   commit, and never steps past a rule. A pull request merged on GitHub some other way is said too.
+- **A pull request merged while work went on in its lane** says *Merged on GitHub, with work since*:
+  the commits made after the one GitHub merged, and the files not committed, are in no pull request
+  now. Commit and Push are held there, and its one solid button is **Move to a new lane…**, which
+  makes a lane from main's newest commit, replays those commits onto it, moves the files, and leaves
+  the old lane exactly as it was merged, to drop or sweep (`lane new <name> --carry --from <lane>
+  --after <commit>`). If any of it no longer applies, nothing moves. A landed lane with something
+  begun in it since offers the same, under *Finished lanes*.
 - **Origin's main** wears a tag where it is; when origin has commits main lacks, a dashed row above
-  main's newest says how many, with **Pull**. Main's line ends dashed where its history goes on.
+  main's newest says how many, with **Pull**, which fetches first and then fast-forwards; it is there
+  whenever origin is ahead, held and saying why while it cannot run. Main's line ends dashed where
+  its history goes on.
 - **Main is pushed only where the repository takes it.** With commits origin lacks (a land makes
   one), **Push** beside the repository's name asks, then sends them as a fast-forward, never forced.
   On GitHub, main's rules are read first: where it takes its changes by pull request, through a merge
@@ -332,8 +358,8 @@ The page in the picture above, for every repository in a folder:
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
 - **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
-  rebases, `p` pushes, `c` commits, `u` uncommits, `o` goes to it and `a` starts an agent in it (in the
-  editor), `f` fetches, `n` names a new lane from the lane's
+  rebases, `p` pushes (or pulls what origin has of it), `c` commits, `u` uncommits, `o` is its terminal
+  and `a` starts an agent in it (in the editor), `f` fetches, `n` names a new lane from the lane's
   newest commit (or main's), `[` and `]` show the repository before or the next, `Esc` closes the
   details, `?` lists them; in the message form,
   `⌘ Enter` commits.
@@ -357,8 +383,8 @@ in the picture. There its clicks drive the editor:
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it
   holds that the integration branch does not, committed or not, against its files as they are,
   so you can edit them in the diff; an uncommitted file opens its own difference;
-- the lane the file in front of you is in says **You are here**; a click on a lane's name is
-  **Goto**;
+- a click on a lane's name is its terminal; nothing says where you are, since work goes on in many
+  places at once;
 - **a repository in a tab of its own**: each tab is titled with the repository its switcher shows
   (*api · LaneKit*), and a Cmd- or middle-click on one in the switcher, the ↗ beside its **Fetch**, the
   status bar's menu, or **LaneKit: Show a Repository in a Tab of Its Own…** opens one for that
@@ -366,16 +392,15 @@ in the picture. There its clicks drive the editor:
   goes to the tab showing its repository, and each tab comes back on its repository after a reload;
 - in the side bar, where there is no room for a toolbar, the pointer on a lane shows the next
   thing to do and a **⋯** that opens the rest;
-- **Goto** moves you to a lane, as Interactive Smartlog's Goto moves your working copy: each file you
-  have open from another checkout reopens from that lane, where it was; a file with unsaved changes
-  stays where it is, and nothing on disk changes. Your terminal follows and takes the focus: a
-  shell waiting at its prompt in another checkout is sent `cd` to the same folder in the lane; one
-  running something (a server, an agent) is never typed into, and the terminal you last used in
-  the lane comes forward instead, or one opens there. Goto is also the way to a lane's terminal,
-  so it is on every lane, the one you are in included, and on the repository's heading for its
-  main checkout; it is on the lane's toolbar, on its newest commit (and main's) under the pointer,
-  in the details, and `o`. A terminal LaneKit opens in a lane is named for it and wears a colour of
-  its own that all of the lane's terminals share;
+- **the terminal icon** is the way to a lane's terminal (it was called Goto, after Interactive
+  Smartlog's): your terminal follows and takes the focus: a shell waiting at its prompt in another
+  checkout is sent `cd` to the same folder in the lane; one running something (a server, an agent)
+  is never typed into, and the terminal you last used in the lane comes forward instead, or one
+  opens there. Each file you have open from another checkout reopens from that lane, where it was; a
+  file with unsaved changes stays where it is, and nothing on disk changes. It is on every lane's
+  toolbar, on the repository's heading for its main checkout, on a lane's newest commit (and main's)
+  under the pointer, in the details, and `o`. A terminal LaneKit opens in a lane is named for it and
+  wears a colour of its own that all of the lane's terminals share;
 - **Agent** starts Claude Code or OpenCode in the lane, in a terminal named for both
   (`midi-export · Claude`), so the terminal list says which agent works where. Where tmux 3 or newer
   is installed the agent runs in a tmux session of its own, which the terminal only shows: closing
@@ -395,11 +420,10 @@ in the picture. There its clicks drive the editor:
   once a machine: the extension asks the first time it finds lanes on a machine
   (`lanekit.reportAgents` answers instead, `always` or `never`), or run
   `node ~/.lanekit/bin/agent-reports.mjs`;
-- a repository with no lanes yet says so where its lanes would be, with **New lane** beside it;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
-  land"); a click opens that lane's menu: Goto, Changes, Start agent, Gate, Land, Rebase, Push, **New
+  land"); a click opens that lane's menu: Terminal, Changes, Start agent, Gate, Land, Rebase, Push, **New
   lane from here** (on top of this one), or the lane in a new window of its own;
 - the palette's **LaneKit: …** commands act on the lane in front of you, with the page's own
   checks, and a press that ends while LaneKit is out of sight says how it ended;
@@ -426,20 +450,23 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
 
 ```
 ./<project> lane new <name>      start a lane: a folder, a branch, a port, its own state
+./<project> lane new <name> --carry [-- <file>…]   …with what is uncommitted in the main checkout, moved into it
+./<project> lane new <name> --carry --from <lane> [--after <commit>]   …with a lane's files, and its commits after one
 ./<project> lane list            what exists, each lane's port, and what is serving
 ./<project> lane queue [name]    which lane should land next, and which would collide
 ./<project> gate                 in a lane: is this branch ready to merge?
 ./<project> lane land <name>     in main: merge a lane whose gate is green, then sweep it
 ./<project> lane rebase <name>   replay a lane onto main as it is now; --continue or --abort after a conflict
-./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased
+./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased,
+                                 never over somebody else's commits there unless --force
 ./<project> lane pr <name>       open a pull request for a pushed lane, through gh: --draft, --reviewer
                                  alice,org/team (on an open one too), --ready for a draft, --push first
 ./<project> lane merge <name>    merge a lane's pull request on GitHub, at its own commit, then bring main here up to it
-./<project> lane pull            fast-forward main to origin, as of the last fetch
+./<project> lane pull [name]     fast-forward main to origin (or a lane to its copy there), fetched first
 ./<project> lane push --main     send main to origin, a fast-forward, where its rules on GitHub allow
 ./<project> lane commit <name>   commit what is uncommitted: -m <message>, --amend, --reword, -- <file>…
 ./<project> lane uncommit <name> take the newest commit back out, its changes left uncommitted
-./<project> lane discard <name> -- <file>…   throw away what is uncommitted in those files
+./<project> lane discard <name> -- <file>…   throw away what is uncommitted in those files; --main for the main checkout's
 ./<project> lane resolve <name> -- <file>…   mark conflicted files resolved, once no marker is left
 ./<project> lane aside <name>    set a lane aside: out of the landing order, nothing removed
 ./<project> lane resume <name>   bring a lane set aside back
@@ -450,7 +477,9 @@ code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
 ```
 
 `lane new` takes `--base <ref>` to start from something other than the integration branch,
-`--existing` to make a lane of a branch that is there already (one dropped earlier),
+`--existing` to make a lane of a branch that is there already (one dropped earlier), `--carry` to
+move work begun elsewhere into it (it moves all of it, or, where any of it no longer applies,
+nothing),
 `--install` to build the lane's own copies of what would otherwise be shared, `--no-seed` to
 skip filling what it must own, and `--no-provision` to make the folder and stop. `gate` takes
 `--fast` (tier 1 whatever the change earns; it says `UNDER-GATED` rather than `READY`),
@@ -527,8 +556,10 @@ expensive.
 
 ## Contributing
 
-`node --test` runs the tests, on scratch repositories. lanekit is plain JavaScript with no
-dependencies and no build step, and is kept that way.
+`node --test` runs the tests, on scratch repositories; `test/e2e.test.mjs` drives the page itself in
+a headless Chrome over the DevTools protocol, and is skipped where there is none (`LANEKIT_CHROME`
+names one). [docs/use-cases.md](docs/use-cases.md) lists what LaneKit is for and the tests that show
+each works. lanekit is plain JavaScript with no dependencies and no build step, and is kept that way.
 
 ## Licence
 
