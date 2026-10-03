@@ -94,16 +94,17 @@ const create = (config, name, options) => {
 
     // A dirty main is not refused — the lane branches from a ref, not from the
     // working tree — but saying so beats the user discovering it in the lane.
-    const dirty = git(['status', '--porcelain'], mainRepo)
+    // Unless they are what this lane is made to carry (--carry, below).
+    const dirty = options.carrying ? '' : git(['status', '--porcelain'], mainRepo)
     if (dirty) {
-        log(`${mainRepo} has uncommitted changes; they stay there — this lane branches from ${base}`)
+        log(`${mainRepo} has uncommitted changes; they stay there — this lane branches from ${base} (lane new ${name} --carry takes them with it)`)
     }
 
     if (existing) {
         log(`creating ${path.basename(laneDir)} on the branch "${name}" as it is, ${git(['rev-list', '--count', `${config.integrationBranch}..${name}`], mainRepo)} commits of its own`)
         run('git', ['worktree', 'add', laneDir, name], mainRepo, 'git worktree add')
     } else {
-        log(`creating ${path.basename(laneDir)} on a new branch "${name}" from ${base}`)
+        log(`creating ${path.basename(laneDir)} on a new branch "${name}" from ${options.startedFrom ?? base}`)
         run('git', ['worktree', 'add', laneDir, '-b', name, base], mainRepo, 'git worktree add')
     }
 
@@ -194,15 +195,144 @@ const create = (config, name, options) => {
         }
     }
 
+    const made = { name, laneDir, port, vars, from: options.startedFrom ?? base }
+    if (!options.carrying) sayReady(config, made)
+    return made
+}
+
+const sayReady = (config, { name, laneDir, port, vars, from }, notes = []) => {
     const rule = '─'.repeat(64)
     console.log(`\n${rule}`)
     console.log(`  ${GREEN}lane "${name}" ready${OFF}`)
     console.log(`${rule}\n`)
     console.log(`  cd ${laneDir}\n`)
     console.log(`  port     ${port}`)
-    console.log(`  branch   ${name} (from ${base})`)
+    console.log(`  branch   ${name} (from ${from})`)
     if (config.lane.runHint) console.log(`  serve    ${expand(config.lane.runHint, vars)}`)
+    for (const note of notes) console.log(`  ${note}`)
     console.log('')
+}
+
+// ---------------------------------------------------------------------------
+// new --carry: work begun in the wrong place, moved into a lane of its own
+// ---------------------------------------------------------------------------
+
+/**
+ * A new lane that carries work begun elsewhere: what is uncommitted in the main checkout (every file, or those named
+ * after `--`), or with `--from <lane>`, what is uncommitted in that lane and, with `--after <commit>`, the commits it
+ * made after that one, which is how a lane whose pull request was merged hands on what came after the merge.
+ *
+ * FROM THE MAIN CHECKOUT, the lane starts at the commit main's checkout is on, so the files land exactly as they were,
+ * and the checkout is left without them: nothing is left there to stop a land or a pull. FROM A LANE, it starts from
+ * the integration branch's newest commit, the commits are replayed onto it, then the files; the old lane is left as it
+ * was at `--after` (its branch reset there, `--keep`, never losing a change) and has only what was merged, to drop.
+ *
+ * NOTHING IS HALF-MOVED. The lane is made first, and the work moved into it after; if the commits or the files do not
+ * apply there, the new lane is taken away again and the work is where it was, as it was. The files are cleared where
+ * they were begun only once the lane has them.
+ */
+const carry = (config, name, options) => {
+    const mainRepo = mainRepoFrom(process.cwd())
+    const base = config.integrationBranch
+    if (options.base) fail('--carry starts the lane where the work was begun: give no --base with it.')
+    if (options.existing) fail('--carry makes a new branch for the work: give no --existing with it.')
+    if (options.after && !options.from) fail('--after takes commits from a lane: give --from <lane> with it.')
+    if (fs.existsSync(laneDirFor(mainRepo, name))) fail(`${laneDirFor(mainRepo, name)} already exists.`)
+
+    const from = options.from ? laneNamed(config, options.from, 'new --carry --from') : null
+    const source = from ? from.path : mainRepo
+    const label = from ? from.name : 'the main checkout'
+    if (inRebase(source)) fail(`${label} is part-way through a rebase: finish or abort it first.`)
+    if (fs.existsSync(path.join(path.resolve(source, gitQuiet(['rev-parse', '--git-dir'], source).out), 'MERGE_HEAD'))) fail(`${label} is part-way through a merge: finish or abort it first.`)
+    if (!from) {
+        const current = gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], mainRepo).out
+        if (current !== base) fail(`the main checkout is on "${current}", not ${base}: what is uncommitted there is not on ${base}'s line, so it is not carried from here.`)
+    }
+
+    const changed = changesOf(source, config, { limit: Infinity })
+    const paths = options.paths ?? []
+    const stray = paths.filter((file) => !changed.some((change) => change.path === file))
+    if (stray.length) fail(`not uncommitted in ${label}: ${stray.join(', ')}`)
+    const taking = paths.length ? changed.filter((change) => paths.includes(change.path)) : changed
+
+    let commits = []
+    if (options.after) {
+        const after = options.after
+        if (!/^[0-9a-f]{4,64}$/.test(after) || !gitQuiet(['cat-file', '-e', `${after}^{commit}`], source).ok) fail(`"${after}" is not a commit here.`)
+        if (!gitQuiet(['merge-base', '--is-ancestor', after, 'HEAD'], source).ok) fail(`${after.slice(0, 7)} is not one of ${label}'s commits: its commits after it cannot be told apart.`)
+        commits = gitQuiet(['rev-list', '--reverse', '--no-merges', `${after}..HEAD`], source).out.split('\n').filter(Boolean)
+    }
+    if (!taking.length && !commits.length) fail(`${label} has nothing uncommitted${options.after ? ', and no commits after that one,' : ''} to carry.`)
+
+    // The lane, as lane new makes it: on main's checkout's own commit for its files, on main's newest for a lane's.
+    const startAt = from ? base : git(['rev-parse', 'HEAD'], mainRepo)
+    log(`making ${name} to carry ${[commits.length ? `${commits.length} ${commits.length === 1 ? 'commit' : 'commits'}` : null, taking.length ? `${taking.length} uncommitted ${taking.length === 1 ? 'file' : 'files'}` : null].filter(Boolean).join(' and ')} from ${label}`)
+    const made = create(config, name, { ...options, base: startAt, carrying: true, startedFrom: from ? base : `${base}, where ${label} is` })
+    const laneDir = made.laneDir
+    const undo = (why) => {
+        spawnSync('git', ['worktree', 'remove', '--force', laneDir], { cwd: mainRepo })
+        spawnSync('git', ['branch', '-q', '-D', name], { cwd: mainRepo })
+        fail(why)
+    }
+
+    if (commits.length) {
+        const picked = spawnSync('git', ['cherry-pick', '--keep-redundant-commits', ...commits], { cwd: laneDir, stdio: 'inherit', env: { ...process.env, GIT_EDITOR: 'true' } })
+        if (picked.status !== 0) {
+            spawnSync('git', ['cherry-pick', '--abort'], { cwd: laneDir })
+            undo(`the ${commits.length === 1 ? 'commit' : `${commits.length} commits`} ${label} made after ${options.after.slice(0, 7)} ${commits.length === 1 ? 'does' : 'do'} not apply to ${base} as it is now.\n\n` +
+                `  Nothing was carried, and ${name} was not kept: ${label} is as it was. Rebase it by hand (git rebase --onto ${base} ${options.after.slice(0, 7)}, in the lane), or carry its files alone.`)
+        }
+        log(`replayed ${commits.length} ${commits.length === 1 ? 'commit' : 'commits'} on ${base}`)
+    }
+
+    if (taking.length) {
+        // The files, applied to the new lane first and only then cleared where they were begun: if they do not apply,
+        // nothing is cleared. What git tracks travels as a patch of every name a change touches (a rename's old one
+        // too), what it does not as a copy of each file; every path said literally, never as a pattern.
+        const literal = { ...process.env, GIT_LITERAL_PATHSPECS: '1' }
+        const tracked = [...new Set(taking.filter((change) => change.status !== '?').flatMap((change) => (change.from ? [change.path, change.from] : [change.path])))]
+        const fresh = taking.filter((change) => change.status === '?').map((change) => change.path)
+        const loose = fresh.length
+            ? spawnSync('git', ['ls-files', '--others', '--exclude-standard', '-z', '--', ...fresh], { cwd: source, encoding: 'utf8', env: literal }).stdout.split('\0').filter(Boolean)
+            : []
+        const emptied = () => { spawnSync('git', ['reset', '-q', '--hard'], { cwd: laneDir }); spawnSync('git', ['clean', '-q', '-f', '-d'], { cwd: laneDir }) }
+        if (tracked.length) {
+            const patch = spawnSync('git', ['diff', '--binary', '-M', 'HEAD', '--', ...tracked], { cwd: source, env: literal, maxBuffer: 1024 * 1024 * 1024 })
+            if (patch.status !== 0) undo(`git could not read ${label}'s changes: nothing was carried, and ${name} was not kept.`)
+            // Onto the very commit they were made on, from the main checkout; onto a newer one, from a lane, merged in three ways.
+            const applied = patch.stdout.length
+                ? spawnSync('git', ['apply', '--index', ...(from ? ['--3way'] : []), '-'], { cwd: laneDir, input: patch.stdout, encoding: 'buffer' })
+                : { status: 0 }
+            if (applied.status !== 0) {
+                emptied()
+                const said = String(applied.stderr ?? '').trim().split('\n').slice(0, 6).map((line) => `  ${line}`).join('\n')
+                undo(`${label}'s changes do not apply on ${base} as it is now${said ? `:\n\n${said}` : '.'}\n\n  Nothing was carried, and ${name} was not kept: ${label} is as it was.`)
+            }
+        }
+        for (const file of loose) {
+            const to = path.join(laneDir, file)
+            if (fs.existsSync(to)) { emptied(); undo(`${file} is in ${base} now as well, so ${label}'s own would replace it: nothing was carried, and ${name} was not kept.`) }
+            fs.mkdirSync(path.dirname(to), { recursive: true })
+            fs.cpSync(path.join(source, file), to, { verbatimSymlinks: true, errorOnExist: true, force: false })
+        }
+        // Then cleared where they were begun, as lane discard clears a file: back to its commit, or gone if it is new.
+        const restored = tracked.length ? spawnSync('git', ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked], { cwd: source, encoding: 'utf8', env: literal }) : { status: 0 }
+        const cleaned = fresh.length ? spawnSync('git', ['clean', '-q', '-f', '-d', '--', ...fresh], { cwd: source, encoding: 'utf8', env: literal }) : { status: 0 }
+        if (restored.status !== 0 || cleaned.status !== 0) {
+            log(`${YELLOW}${name} has the files, and ${label} still has some of them too${OFF} — ${String(restored.stderr || cleaned.stderr || '').trim().split('\n')[0]}`)
+        } else {
+            log(`moved ${taking.length} uncommitted ${taking.length === 1 ? 'file' : 'files'} out of ${label}`)
+        }
+    }
+
+    // The old lane, left as it was merged: its own copy of the commits carried goes, and what it did not carry stays.
+    if (commits.length) {
+        const reset = spawnSync('git', ['reset', '-q', '--keep', options.after], { cwd: source, encoding: 'utf8' })
+        if (reset.status === 0) log(`${label} is back at ${options.after.slice(0, 7)}, as it was merged`)
+        else log(`${YELLOW}${label} still has the commits it carried as well${OFF} — ${(reset.stderr ?? '').trim().split('\n')[0]}`)
+    }
+    const left = changesOf(source, config, { limit: Infinity }).length
+    sayReady(config, made, [`carried  from ${label}${left ? `, which keeps ${left} uncommitted ${left === 1 ? 'file' : 'files'} it did not carry` : ', which has none of it now'}`])
 }
 
 // ---------------------------------------------------------------------------
@@ -647,11 +777,14 @@ const uncommit = (config, name) => {
  * committed is touched. What is thrown away is gone; nothing keeps a copy.
  */
 const discard = (config, name, options) => {
-    const lane = laneNamed(config, name, 'discard')
-    const dir = lane.path
+    // With --main, the main checkout's own: what keeps it from taking a land or a pull.
+    if (options.main && name) fail('lane discard --main is about the main checkout: give no lane with it.')
+    const dir = options.main ? mainRepoFrom(process.cwd()) : laneNamed(config, name, 'discard').path
+    if (options.main) name = 'the main checkout'
     const paths = options.paths ?? []
-    if (!paths.length) fail(`lane discard needs the files: lane discard ${name} -- <file>…`)
+    if (!paths.length) fail(`lane discard needs the files: lane discard ${options.main ? '--main' : name} -- <file>…`)
     if (inRebase(dir)) fail(`${name} is part-way through a rebase: resolve and continue it, or abort it, instead.`)
+    if (fs.existsSync(path.join(path.resolve(dir, gitQuiet(['rev-parse', '--git-dir'], dir).out), 'MERGE_HEAD'))) fail(`${name} is part-way through a merge: finish or abort it first.`)
     const changed = changesOf(dir, config)
     const named = paths.map((file) => changed.find((change) => change.path === file) ?? { path: file, status: null })
     const stray = named.filter((change) => !change.status).map((change) => change.path)
@@ -779,9 +912,26 @@ const push = (config, name, options) => {
     if (upstream.ok) {
         const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${upstream.out}...${branch}`], dir).out.split(/\s+/).map(Number)
         if (!ahead && !behind) { log(`${branch} is pushed already: origin has what this lane has`); return }
+        // Behind and nothing new: somebody pushed to it, and pushing would take their commits away.
+        if (behind && !ahead) {
+            fail(`${upstream.out} has ${behind} ${behind === 1 ? 'commit' : 'commits'} this lane does not, and this lane has nothing new to send.\n\n` +
+                `  lane pull ${name} brings ${behind === 1 ? 'it' : 'them'} here, as a fast-forward.`)
+        }
         if (behind && !options.forceWithLease) {
             fail(`${upstream.out} has ${behind} ${behind === 1 ? 'commit' : 'commits'} this lane does not: it was rebased since it was pushed.\n\n` +
                 `  lane push ${name} --force-with-lease replaces them, unless somebody pushed to it since this lane last fetched.`)
+        }
+        // The lease protects against a push since the last fetch, and LaneKit fetches every few minutes: so what is
+        // there is looked at too. A rebased lane's old commits are each the same change as one of its new ones; any
+        // other is somebody's work, and is not replaced unless --force says so.
+        if (behind && !options.force) {
+            // Not main's own commits, either: a lane moved back along main leaves main's newer ones on origin's copy.
+            const mains = [config.integrationBranch, gitQuiet(['rev-parse', '--abbrev-ref', `${config.integrationBranch}@{upstream}`], dir).out].filter(Boolean)
+            const theirs = Number(gitQuiet(['rev-list', '--count', '--left-only', '--cherry-pick', `${upstream.out}...${branch}`, '--not', ...mains], dir).out || 0)
+            if (theirs) {
+                fail(`${upstream.out} has ${theirs} ${theirs === 1 ? 'commit' : 'commits'} that ${theirs === 1 ? 'is' : 'are'} not this lane's, rebased or not: somebody pushed to it.\n\n` +
+                    `  Bring ${theirs === 1 ? 'it' : 'them'} in first (git pull --rebase, in the lane), or add --force to replace ${theirs === 1 ? 'it' : 'them'} anyway.`)
+            }
         }
     }
     const args = ['push', ...(options.forceWithLease ? ['--force-with-lease'] : []), ...(upstream.ok ? [] : ['-u']), 'origin', branch]
@@ -932,20 +1082,66 @@ const merge = (config, name) => {
 }
 
 /**
- * Fast-forward the integration branch in the main checkout to what origin has, as of the
- * last fetch. Only a fast-forward: a main that has diverged from origin needs a person.
+ * Fetch where a branch is pushed, first, so a pull brings what is there now and not what was there at the last fetch.
+ * A fetch that fails (no network, no key) is said, and the pull goes on with what the last one brought.
  */
-const pull = (config) => {
+const fetchFor = (cwd, branch) => {
+    const remote = gitQuiet(['config', '--get', `branch.${branch}.remote`], cwd).out
+    if (!remote || remote === '.') return
+    log(`git fetch ${remote}`)
+    const fetched = spawnSync('git', ['fetch', '--quiet', remote], {
+        cwd, encoding: 'utf8', stdio: ['ignore', 'inherit', 'pipe'],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' }
+    })
+    if (fetched.status !== 0) log(`${YELLOW}could not fetch ${remote}${OFF} — ${(fetched.stderr ?? '').trim().split('\n').pop()}; pulling what the last fetch brought`)
+}
+
+/**
+ * Fast-forward a lane's branch to its copy on origin: what somebody else pushed to it (a colleague, GitHub's Update
+ * branch, a suggestion committed from a review). Only a fast-forward: a lane that has commits of its own origin lacks
+ * as well needs a person, and an uncommitted change in a file it would bring stops it, as git stops it.
+ */
+const pullLane = (config, name) => {
+    const lane = laneNamed(config, name, 'pull')
+    const dir = lane.path
+    const branch = lane.branch ?? name
+    if (inRebase(dir)) fail(`${name} is part-way through a rebase: finish or abort it first.`)
+    if (!gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir).ok) fail(`${branch} is not pushed, so origin has nothing of it to pull.`)
+    fetchFor(dir, branch)
+    const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir).out
+    const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${upstream}...${branch}`], dir).out.split(/\s+/).map(Number)
+    if (!behind) { log(`${branch} has everything ${upstream} has`); return }
+    if (ahead) {
+        fail(`${name} and ${upstream} have diverged: ${ahead} here, ${behind} there. That needs a person, not a fast-forward:\n` +
+            '  git pull --rebase, in the lane, replays this lane\'s commits on theirs.')
+    }
+    const was = git(['rev-parse', '--short', 'HEAD'], dir)
+    const merged = spawnSync('git', ['merge', '--ff-only', upstream], { cwd: dir, stdio: 'inherit' })
+    if (merged.status !== 0) fail('git merge --ff-only did not finish (above): an uncommitted change in a file it brings stops it.')
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}PULLED${OFF}  ·  ${name}  ·  ${was} -> ${git(['rev-parse', '--short', 'HEAD'], dir)}, ${behind} ${behind === 1 ? 'commit' : 'commits'}\n${rule}\n`)
+}
+
+/**
+ * Fast-forward the integration branch in the main checkout to what origin has, fetched first. Only a fast-forward: a
+ * main that has diverged from origin needs a person. With a lane's name, that lane instead (pullLane).
+ */
+const pull = (config, name) => {
+    if (name) return pullLane(config, name)
     const mainRepo = mainRepoFrom(process.cwd())
     const base = config.integrationBranch
     const current = gitQuiet(['rev-parse', '--abbrev-ref', 'HEAD'], mainRepo).out
     if (current !== base) fail(`${mainRepo} is on "${current}", not ${base}: a pull brings ${base}.`)
     const dirt = dirtIn(mainRepo, config)
-    if (dirt.length) fail(`${base} has uncommitted changes.\n\n${dirt.map((line) => `  ${line}`).join('\n')}\n\n  Commit or stash them first.`)
+    if (dirt.length) {
+        fail(`${base} has uncommitted changes.\n\n${dirt.map((line) => `  ${line}`).join('\n')}\n\n` +
+            '  Move them into a lane of their own (lane new <name> --carry), commit, or stash them first.')
+    }
     const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${base}@{upstream}`], mainRepo)
     if (!upstream.ok) fail(`${base} has no upstream to pull from.`)
+    fetchFor(mainRepo, base)
     const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${upstream.out}...${base}`], mainRepo).out.split(/\s+/).map(Number)
-    if (!behind) { log(`${base} has everything ${upstream.out} has, as of the last fetch`); return }
+    if (!behind) { log(`${base} has everything ${upstream.out} has`); return }
     if (ahead) fail(`${base} and ${upstream.out} have diverged: ${ahead} here, ${behind} there. That needs a person, not a fast-forward.`)
     const was = git(['rev-parse', '--short', 'HEAD'], mainRepo)
     const merged = spawnSync('git', ['merge', '--ff-only', upstream.out], { cwd: mainRepo, stdio: 'inherit' })
@@ -973,7 +1169,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -995,6 +1191,10 @@ const main = () => {
         push: argv.includes('--push'),
         reviewers: argv.includes('--reviewer') ? String(argv[argv.indexOf('--reviewer') + 1] ?? '').split(',').map((one) => one.trim()).filter(Boolean) : [],
         onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
+        // lane new --carry: work begun in the main checkout, or in a lane (--from), and its commits after one (--after).
+        carry: argv.includes('--carry'),
+        from: argv.includes('--from') ? argv[argv.indexOf('--from') + 1] : undefined,
+        after: argv.includes('--after') ? argv[argv.indexOf('--after') + 1] : undefined,
         amend: argv.includes('--amend'),
         reword: argv.includes('--reword'),
         message: argv.includes('-m') ? argv[argv.indexOf('-m') + 1] : undefined,
@@ -1002,7 +1202,7 @@ const main = () => {
         paths: argv.includes('--') ? argv.slice(argv.indexOf('--') + 1) : []
     }
     // What follows a flag that takes a value is the value, not a name; what follows `--` is a file.
-    const valued = new Set(['--base', '--onto', '-m', '--reviewer'])
+    const valued = new Set(['--base', '--onto', '-m', '--reviewer', '--from', '--after'])
     const flags = argv.includes('--') ? argv.slice(1, argv.indexOf('--')) : argv.slice(1)
     const positional = flags.filter((arg, i, all) => !arg.startsWith('-') && !valued.has(all[i - 1]))
     const name = positional[0] !== options.base ? positional[0] : positional[1]
@@ -1015,6 +1215,8 @@ const main = () => {
     }
 
     if (command === 'new' && !name) fail('lane new needs a name.')
+    if (command === 'new' && options.carry) return carry(config, name, options)
+    if (command === 'new' && (options.from || options.after)) fail('--from and --after go with --carry: lane new <name> --carry --from <lane>.')
     if (command === 'new') return create(config, name, options)
     if (command === 'list') return list(config)
     if (command === 'queue') return process.exit(queue(config, name))
@@ -1027,7 +1229,7 @@ const main = () => {
     if (command === 'push') return push(config, name, options)
     if (command === 'pr') return pr(config, name, options)
     if (command === 'merge') return merge(config, name)
-    if (command === 'pull') return pull(config, options)
+    if (command === 'pull') return pull(config, name)
     if (command === 'commit') return commitIn(config, name, options)
     if (command === 'uncommit') return uncommit(config, name, options)
     if (command === 'discard') return discard(config, name, options)

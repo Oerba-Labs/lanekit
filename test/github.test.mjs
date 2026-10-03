@@ -273,6 +273,50 @@ test('squashed on GitHub, a lane is said to be merged there, to drop; and the pa
     }
 })
 
+test('a lane whose pull request was merged says what it made since, takes no more from the page, and hands that work to a new lane', async () => {
+    const second = path.join(scratch, 'work', 'demo-second')
+    const merged = git(second, 'rev-parse', 'HEAD')
+    // Work goes on in the lane after GitHub merged it: a commit, and a file not committed yet.
+    fs.writeFileSync(path.join(second, 'after.txt'), 'made after the merge\n')
+    git(second, 'add', '-A')
+    git(second, 'commit', '-qm', 'After the merge')
+    fs.writeFileSync(path.join(second, 'wip.txt'), 'still being written\n')
+    const service = createService({ dirs: [path.join(scratch, 'work')] })
+    try {
+        forgetGithub(repo)
+        let read = null
+        for (let i = 0; i < 80; i++) {
+            read = (await service.state()).repos[0].lanes.find((candidate) => candidate.name === 'second')
+            if (read?.pull?.state === 'MERGED' && read.sinceMerge === 1) break
+            await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        assert.equal(read.pull.head, merged, 'the commit it was merged at')
+        assert.equal(read.sinceMerge, 1, 'one commit made since, which no pull request has')
+        assert.equal(read.dirty, 1)
+
+        const commit = await service.press({ repo: 'demo', verb: 'commit', lane: 'second', message: 'More' })
+        assert.equal(commit.status, 409)
+        assert.match(commit.body.error, /#\d+ was merged on GitHub, so a commit here would be in no pull request: move the work to a new lane instead/)
+        const push = await service.press({ repo: 'demo', verb: 'push', lane: 'second' })
+        assert.equal(push.status, 409)
+        assert.match(push.body.error, /what is pushed to its branch now would be in no pull request/)
+
+        const moved = await service.press({ repo: 'demo', verb: 'new', name: 'second-next', carry: true, from: 'second', after: read.pull.head })
+        assert.equal(moved.status, 202, JSON.stringify(moved.body))
+        for (let i = 0; i < 300 && service.job(moved.body.id)?.state !== 'done'; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+        assert.equal(service.job(moved.body.id).code, 0, service.job(moved.body.id).output)
+        const next = path.join(scratch, 'work', 'demo-second-next')
+        assert.equal(git(next, 'log', '--format=%s', 'main..HEAD'), 'After the merge')
+        assert.equal(fs.readFileSync(path.join(next, 'wip.txt'), 'utf8'), 'still being written\n')
+        assert.equal(git(second, 'rev-parse', 'HEAD'), merged, 'the old lane as GitHub merged it')
+        assert.equal(git(second, 'status', '--porcelain'), '', 'with nothing left in it: it is dropped next')
+        const after = (await service.state()).repos[0].lanes.find((candidate) => candidate.name === 'second')
+        assert.deepEqual([after.sinceMerge, after.dirty], [0, 0])
+    } finally {
+        service.dispose()
+    }
+})
+
 test('pull requests anywhere that wait on your review are asked of GitHub, newest first, and matched to the repositories here', async () => {
     const service = createService({ dirs: [path.join(scratch, 'work')] })
     try {
