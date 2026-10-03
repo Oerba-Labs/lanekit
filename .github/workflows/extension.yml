@@ -46,7 +46,24 @@ jobs:
           git config --global init.defaultBranch main
       - run: node --test
       - name: Pack
+        id: pack
         run: node vscode/pack.mjs --out "dist/lanekit-${{ steps.version.outputs.version }}.vsix"
+      # The file, on a GitHub release of its own, first: there whatever a store then says. Run again, it replaces it.
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          file="dist/lanekit-${{ steps.version.outputs.version }}.vsix"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$file" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$file" \
+              --title "LaneKit for VS Code ${{ steps.version.outputs.version }}" \
+              --notes "Install from the Extensions view (LaneKit, lanekit.lanekit), or this file: code --install-extension lanekit-${{ steps.version.outputs.version }}.vsix. Where there is no lanekit on the machine, it offers to install one in ~/.lanekit, and keeps it up to date from the branch stable."
+          fi
+      # Each store takes a version once: one there already is passed over, so a run can be run again after a store
+      # refused it, and the stores that took it are not asked twice.
       - name: Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -54,18 +71,12 @@ jobs:
           if [ -z "$OVSX_PAT" ]; then echo "::warning::No OVSX_PAT secret, so not published to Open VSX"; exit 0; fi
           # Its namespace, made the first time; there already, this says so and goes on.
           npx --yes ovsx@0 create-namespace lanekit -p "$OVSX_PAT" || true
-          npx --yes ovsx@0 publish "dist/lanekit-${{ steps.version.outputs.version }}.vsix" -p "$OVSX_PAT"
+          npx --yes ovsx@0 publish "dist/lanekit-${{ steps.version.outputs.version }}.vsix" -p "$OVSX_PAT" --skip-duplicate
       - name: VS Code Marketplace
+        # Tried whatever Open VSX said: one store refusing never keeps the other from it.
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           if [ -z "$VSCE_PAT" ]; then echo "::warning::No VSCE_PAT secret, so not published to the VS Code Marketplace"; exit 0; fi
-          npx --yes @vscode/vsce@3 publish --packagePath "dist/lanekit-${{ steps.version.outputs.version }}.vsix" -p "$VSCE_PAT"
-      - name: GitHub release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" "dist/lanekit-${{ steps.version.outputs.version }}.vsix" \
-            --title "LaneKit for VS Code ${{ steps.version.outputs.version }}" \
-            --notes "Install from the Extensions view (LaneKit, lanekit.lanekit), or this file: code --install-extension lanekit-${{ steps.version.outputs.version }}.vsix. Where there is no lanekit on the machine, it offers to install one in ~/.lanekit, and keeps it up to date from the branch stable."
+          npx --yes @vscode/vsce@3 publish --packagePath "dist/lanekit-${{ steps.version.outputs.version }}.vsix" -p "$VSCE_PAT" --skip-duplicate

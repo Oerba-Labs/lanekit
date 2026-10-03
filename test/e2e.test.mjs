@@ -161,7 +161,14 @@ const open = async (browser, url, { editor = false } = {}) => {
             await sleep(150)
         }
         const shown = await run(() => `${location.href}: ${document.body?.innerText.replace(/\s+/g, ' ').slice(0, 600)}`).catch((error) => error.message)
-        throw new Error(`waited ${timeout} ms for ${what}; last said ${JSON.stringify(last)}; the page showed ${shown}`)
+        // And what LaneKit ran meanwhile, the newest's output's end with it: where a press went wrong, it says why.
+        const ran = await run(async () => {
+            const jobs = (await (await fetch('api/state', { cache: 'no-store' })).json()).jobs ?? []
+            const newest = jobs[0] ? await (await fetch(`api/jobs/${jobs[0].id}`)).json() : null
+            return `${jobs.slice(0, 4).map((job) => `${job.verb}${job.lane ? ` ${job.lane}` : ''} ${job.state}${job.code === null ? '' : ` (exit ${job.code})`}`).join(', ') || 'nothing'}` +
+                (newest ? `; the newest printed: ${String(newest.output).slice(-800)}` : '')
+        }).catch((error) => error.message)
+        throw new Error(`waited ${timeout} ms for ${what}; last said ${JSON.stringify(last)}; the page showed ${shown}; LaneKit ran ${ran}`)
     }
     /** The pointer onto the middle of what `find` finds in the page (a function there that returns an element). */
     const pointAt = async (find, ...args) => {
@@ -170,10 +177,12 @@ const open = async (browser, url, { editor = false } = {}) => {
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
         return at
     }
+    // The pointer goes to it first, as a person's would (what shows only under the pointer shows), and then it is
+    // clicked as it is found at that moment: a page that redrew in between (an answer from GitHub coming in, and a
+    // line drawn above) would otherwise take the press somewhere else. Its click bubbles as a person's does.
     const click = async (find, ...args) => {
-        const at = await pointAt(find, ...args)
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', clickCount: 1 })
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 })
+        await pointAt(find, ...args)
+        await until(`(...args) => { const node = (${find})(...args); if (!node) return false; node.click(); return true }`, args, { what: `${find}, clicked` })
     }
     const type = (text) => send('Input.insertText', { text })
     // Closing a tab never holds a test past what it found: a failure's own words are what it reports.
