@@ -19,9 +19,10 @@
  * lanekit's LICENSE: the extension finds lanekit's checkout on the machine and runs the rest from there
  * (extension.js says why).
  *
- * FOR THE STORES TOO. The same file is what .github/workflows/extension.yml publishes to the VS Code
- * Marketplace and Open VSX, so its manifest carries what the Marketplace's own packer writes: tags, its
- * links, that it is public and free, its licence and its icon.
+ * FOR THE STORES TOO, AND FOR ITSELF. The same file is what .github/workflows/extension.yml publishes
+ * to Open VSX and attaches to a GitHub release, and what the extension builds from the copy of lanekit
+ * to update itself (extension.js); its manifest carries what the Marketplace's own packer writes: tags,
+ * its links, that it is public and free, its licence and its icon.
  */
 
 import crypto from 'node:crypto'
@@ -171,10 +172,11 @@ in, what it needs, and how many agents are at work.
 
 It runs lanekit from a copy on this machine (\`lanekit.path\`, else \`$LANEKIT\`, else
 \`/opt/lanekit\`, else \`~/.lanekit\`), so the editor and the \`lane\` commands are one version.
-Where there is none, it offers to install one in \`~/.lanekit\`, and keeps it up to date: fetched every
-few hours and fast-forwarded, never while it has changes or commits of its own
-(\`lanekit.updates\`, and **LaneKit: Update lanekit Now**). Apache License 2.0; the source is
-https://github.com/Oerba-Labs/lanekit.
+Where there is none, it offers to install one in \`~/.lanekit\`, and keeps it up to date from the
+branch \`stable\` (the commits whose tests passed): fetched every few hours and fast-forwarded,
+never while it has changes or commits of its own; and the extension with it, installed from that
+copy when it holds a newer build (\`lanekit.updates\`, and **LaneKit: Update lanekit Now**). Apache
+License 2.0; the source is https://github.com/Oerba-Labs/lanekit.
 `
     const bytes = zip([
         ['extension.vsixmanifest', vsixManifest],

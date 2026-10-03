@@ -97,4 +97,37 @@ const update = async (root) => {
     return { state: 'updated', count: seen.count, from, to: (await git(root, ['log', '-1', '--format=%h %s'])).out, upstream: seen.upstream }
 }
 
-module.exports = { REPOSITORY, STABLE, install, check, update, isLanekit }
+// ---------------------------------------------------------------------------
+// the extension itself, from the copy: no extension store needed to keep it current
+// ---------------------------------------------------------------------------
+
+/** x.y.z as three numbers, from a version or an editor range (^1.90.0, >=1.90.0); null for anything else. */
+const versionOf = (text) => {
+    const found = /^\s*[\^~>=v\s]*(\d+)\.(\d+)\.(\d+)/.exec(String(text ?? ''))
+    return found ? found.slice(1, 4).map(Number) : null
+}
+const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+
+/** The extension's manifest as the copy of lanekit holds it, or null. */
+const offeredLoader = (root) => {
+    try { return JSON.parse(fs.readFileSync(path.join(root, 'vscode', 'package.json'), 'utf8')) } catch { return null }
+}
+
+/**
+ * Whether the copy holds a newer build of the running extension: `{ newer: true, version }`, or `{ newer: false, why }`.
+ * Only the same extension (its publisher and name), only a newer x.y.z, and only one this editor can run (its
+ * engines.vscode), so a copy of somebody's fork, or one ahead of the editor, is never installed over it.
+ */
+const newerLoader = ({ running, offered, editor }) => {
+    if (!offered) return { newer: false, why: 'the copy holds no extension' }
+    const [want, has] = [`${running?.publisher}.${running?.name}`, `${offered.publisher}.${offered.name}`]
+    if (want !== has) return { newer: false, why: `the copy's extension is ${has}, not ${want}` }
+    const [mine, theirs] = [versionOf(running.version), versionOf(offered.version)]
+    if (!mine || !theirs) return { newer: false, why: 'a version is not x.y.z' }
+    if (compare(theirs, mine) <= 0) return { newer: false, why: `the copy's is ${offered.version}, and this is ${running.version}` }
+    const [needs, runs] = [versionOf(offered.engines?.vscode), versionOf(editor)]
+    if (needs && runs && compare(runs, needs) < 0) return { newer: false, why: `${offered.version} needs the editor at ${needs.join('.')} or later, and this is ${editor}` }
+    return { newer: true, version: offered.version }
+}
+
+module.exports = { REPOSITORY, STABLE, install, check, update, isLanekit, offeredLoader, newerLoader }

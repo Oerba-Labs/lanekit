@@ -3,7 +3,7 @@
   "displayName": "LaneKit",
   "description": "Every lane of every repository as a smartlog you act on inside the editor: open a lane's terminal with your files following, see which agent works where and which needs you, and gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -248,13 +248,13 @@
             "never"
           ],
           "enumDescriptions": [
-            "Ask once, the first time the copy of lanekit LaneKit runs from is behind what it follows. A copy LaneKit installed itself is kept up to date without asking.",
-            "Keep it up to date without asking.",
+            "Ask once, the first time the copy of lanekit LaneKit runs from, or the extension itself, has something new. A copy LaneKit installed itself is kept up to date without asking.",
+            "Keep them up to date without asking.",
             "Never move it on, and never ask: LaneKit: Update lanekit Now still does, when asked."
           ],
           "default": "ask",
           "scope": "machine",
-          "description": "Whether LaneKit keeps the copy of lanekit it runs from (lanekit.path, else ~/.lanekit) up to date by itself: fetched every few hours, and fast-forwarded only while it has no changes and no commits of its own. What came is used after a reload of the window."
+          "description": "Whether LaneKit keeps the copy of lanekit it runs from (lanekit.path, else ~/.lanekit) up to date by itself, and the extension with it: the copy fetched every few hours and fast-forwarded only while it has no changes and no commits of its own, and a newer build of the extension that the copy holds installed from it. What came is used after a reload of the window."
         },
         "lanekit.gateOnCommit": {
           "type": "boolean",

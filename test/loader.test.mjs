@@ -37,7 +37,7 @@ const saved = { HOME: process.env.HOME, LANEKIT: process.env.LANEKIT, LANEKIT_HO
 
 /** The editor, as far as the loader asks it: commands, messages answered by `answer`, a folder picker, settings and state. */
 const editor = () => {
-    const seen = { commands: new Map(), messages: [], executed: [], progress: [] }
+    const seen = { commands: new Map(), messages: [], executed: [], progress: [], installed: [] }
     const config = { path: '', updates: 'ask' }
     const state = new Map()
     const said = { answer: () => undefined, folder: null }
@@ -49,7 +49,12 @@ const editor = () => {
                 seen.commands.set(id, run)
                 return { dispose: () => { if (seen.commands.get(id) === run) seen.commands.delete(id) } }
             },
-            executeCommand: async (id, ...args) => { seen.executed.push(id); return seen.commands.get(id)?.(...args) }
+            executeCommand: async (id, ...args) => {
+                seen.executed.push(id)
+                // The editor installing a .vsix: what it was handed, read as it is handed.
+                if (id === 'workbench.extensions.installExtension') { seen.installed.push(fs.readFileSync(args[0].fsPath, 'utf8')); return undefined }
+                return seen.commands.get(id)?.(...args)
+            }
         },
         window: {
             showInformationMessage: message('info'), showWarningMessage: message('warning'), showErrorMessage: message('error'),
@@ -57,6 +62,9 @@ const editor = () => {
             withProgress: async (options, task) => { seen.progress.push(options.title); return task({ report() {} }) }
         },
         workspace: { getConfiguration: () => ({ get: (key) => config[key], update: async (key, value) => { config[key] = value } }) },
+        Uri: { file: (fsPath) => ({ scheme: 'file', fsPath }) },
+        env: { remoteName: undefined },
+        version: '1.105.1',
         ProgressLocation: { Notification: 15 },
         ConfigurationTarget: { Global: 1 }
     }
@@ -75,8 +83,12 @@ const load = (stand) => {
     vscodeModule.loaded = true
     Module._cache.vscode = vscodeModule
     for (const file of ['extension.js', 'updates.js']) delete require.cache[path.join(loaderDir, file)]
-    return require(path.join(loaderDir, 'extension.js'))
+    const loader = require(path.join(loaderDir, 'extension.js'))
+    loaded.push(loader)
+    return loader
 }
+// Every loader made, put away at the end even where a test stopped part-way: none is left holding the process open.
+const loaded = []
 const until = async (what, check, ms = 15_000) => {
     for (const by = Date.now() + ms; Date.now() < by; await sleep(25)) { const found = check(); if (found) return found }
     throw new Error(`waited for ${what}`)
@@ -109,6 +121,7 @@ before(() => {
 })
 
 after(() => {
+    for (const loader of loaded) loader.deactivate()
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
     delete Module._cache.vscode
     Module._resolveFilename = resolveFilename
@@ -197,7 +210,7 @@ test('a copy behind what it follows is moved on once the person says so, a reloa
     }
     await until('the reload offered', () => stand.seen.executed.includes('workbench.action.reloadWindow'))
     assert.match(stand.seen.messages.find((said) => said.items.includes('Keep It Up to Date')).text, /lanekit in ~\/\.lanekit is 1 new commit behind origin\/stable\. Keep it up to date by itself\?/)
-    assert.match(stand.seen.messages.find((said) => said.items.includes('Reload Window')).text, /lanekit took 1 new commit, and is at [0-9a-f]+ Something new\. Reload the window to use them\./)
+    assert.match(stand.seen.messages.find((said) => said.items.includes('Reload Window')).text, /lanekit took 1 new commit, and is at [0-9a-f]+ Something new\. Reload the window to use it\./)
     assert.equal(git(home, 'rev-parse', 'HEAD'), git(author, 'rev-parse', 'HEAD'))
     assert.equal(stand.state.get('lanekit.updatesAllowed'), 'yes')
     loader.deactivate()
@@ -241,4 +254,79 @@ test('LaneKit: Update lanekit Now moves it on whatever was answered, and says wh
     assert.equal(stand.seen.messages.at(-1).kind, 'warning')
     assert.match(stand.seen.messages.at(-1).text, /lanekit in ~\/\.lanekit was left as it is: it has uncommitted changes\./)
     loader.deactivate()
+})
+
+test('where the copy holds a newer build of the extension, it is built there and installed, once, and a reload offered', { skip }, async () => {
+    const home = path.join(process.env.HOME, '.lanekit')
+    git(home, 'checkout', '-q', '--', 'dev/lane.mjs')
+    // lanekit's next commit carries the extension's next version, and the packer that builds it.
+    const next = { ...manifest, version: '9.9.9' }
+    write(author, 'vscode/package.json', JSON.stringify(next, null, 2))
+    commit(author, 'vscode/pack.mjs', "export const build = () => ({ bytes: Buffer.from('LaneKit 9.9.9, built from the copy'), name: 'lanekit.lanekit', version: '9.9.9' })\n", 'LaneKit 9.9.9')
+    git(author, 'push', '-q', 'origin', 'main', 'main:stable')
+
+    const stand = editor()
+    stand.state.set('lanekit.updatesAllowed', 'yes')
+    const loader = load(stand)
+    await loader.activate(stand.context)
+    const done = await stand.vscode.commands.executeCommand('lanekit.update')
+    assert.equal(done.state, 'updated')
+    assert.deepEqual(done.loader, { state: 'installed', version: '9.9.9' })
+    assert.deepEqual(stand.seen.installed, ['LaneKit 9.9.9, built from the copy'], 'the editor handed the .vsix the copy built')
+    assert.match(stand.seen.messages.find((said) => said.items.includes('Reload Window')).text,
+        /lanekit took 2 new commits, and is at [0-9a-f]+ LaneKit 9\.9\.9; the extension is LaneKit 9\.9\.9 now\. Reload the window to use them\./)
+    assert.equal(stand.state.get('lanekit.loaderInstalled'), '9.9.9')
+    assert.ok(!fs.readdirSync(os.tmpdir()).some((file) => file.startsWith('lanekit-9.9.9-')), 'and its file taken away again')
+
+    // Asked again before the reload: installed already, by this window, so not again.
+    const again = await stand.vscode.commands.executeCommand('lanekit.update')
+    assert.deepEqual([again.loader.state, again.loader.already], ['installed', true])
+    assert.equal(stand.seen.installed.length, 1)
+    loader.deactivate()
+})
+
+test('the extension is never installed over by another extension in the copy, nor in a remote window, nor in a development host', { skip }, async () => {
+    const home = path.join(process.env.HOME, '.lanekit')
+    const ask = async (setup) => {
+        const stand = editor()
+        stand.state.set('lanekit.updatesAllowed', 'yes')
+        setup?.(stand)
+        const loader = load(stand)
+        await loader.activate(stand.context)
+        const done = await stand.vscode.commands.executeCommand('lanekit.update')
+        loader.deactivate()
+        return { done, stand }
+    }
+    const remote = await ask((stand) => { stand.vscode.env.remoteName = 'ssh-remote' })
+    assert.equal(remote.done.loader.state, 'own')
+    assert.equal(remote.stand.seen.installed.length, 0)
+
+    write(author, 'vscode/package.json', JSON.stringify({ ...manifest, publisher: 'someone-else', version: '10.0.0' }, null, 2))
+    commit(author, 'fork.txt', 'a fork\n', 'Somebody else\'s extension')
+    git(author, 'push', '-q', 'origin', 'main', 'main:stable')
+    const fork = await ask()
+    assert.equal(fork.done.loader.state, 'current')
+    assert.match(fork.done.loader.why, /the copy's extension is someone-else\.lanekit, not lanekit\.lanekit/)
+    assert.equal(fork.stand.seen.installed.length, 0)
+
+    // The loader run from the copy itself, as a development host runs it: the copy is the extension already.
+    const devHost = path.join(home, 'vscode-dev')
+    for (const file of ['extension.js', 'updates.js']) write(devHost, file, fs.readFileSync(path.join(loaderDir, file)))
+    write(devHost, 'package.json', JSON.stringify({ ...manifest, version: '0.0.1' }))
+    write(author, 'vscode/package.json', JSON.stringify({ ...manifest, version: '11.0.0' }, null, 2))
+    commit(author, 'more.txt', 'more\n', 'LaneKit 11')
+    git(author, 'push', '-q', 'origin', 'main', 'main:stable')
+    const stand = editor()
+    stand.state.set('lanekit.updatesAllowed', 'yes')
+    const vscodeModule = new Module('vscode')
+    vscodeModule.exports = stand.vscode
+    vscodeModule.loaded = true
+    Module._cache.vscode = vscodeModule
+    const own = require(path.join(devHost, 'extension.js'))
+    await own.activate(stand.context)
+    const done = await stand.vscode.commands.executeCommand('lanekit.update')
+    own.deactivate()
+    assert.equal(done.loader.state, 'own')
+    assert.equal(stand.seen.installed.length, 0)
+    fs.rmSync(devHost, { recursive: true, force: true })
 })

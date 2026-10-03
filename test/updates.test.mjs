@@ -18,7 +18,7 @@ import { after, before, test } from 'node:test'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const require = createRequire(import.meta.url)
-const { install, check, update, isLanekit, STABLE } = require(path.join(KIT, 'vscode', 'updates.js'))
+const { install, check, update, isLanekit, STABLE, newerLoader, offeredLoader } = require(path.join(KIT, 'vscode', 'updates.js'))
 
 const env = {
     ...process.env,
@@ -139,4 +139,20 @@ test('a copy that cannot be fetched, or is not its owner\'s to change, or is not
     }
     assert.match((await update(path.join(scratch, 'home-other', '.lanekit'))).why, /is not lanekit/)
     assert.equal((await update(to)).state, 'updated', 'and once it can be, it is')
+})
+
+test('the extension is updated from the copy only to a newer build of itself that this editor can run', () => {
+    const running = { publisher: 'lanekit', name: 'lanekit', version: '0.26.0', engines: { vscode: '^1.90.0' } }
+    const offered = (extra) => ({ ...running, ...extra })
+    assert.deepEqual(newerLoader({ running, offered: offered({ version: '0.27.0' }), editor: '1.105.1' }), { newer: true, version: '0.27.0' })
+    assert.deepEqual(newerLoader({ running, offered: offered({ version: '0.26.10' }), editor: '1.105.1' }), { newer: true, version: '0.26.10' }, 'by number, not by letter')
+    assert.match(newerLoader({ running, offered: offered({}), editor: '1.105.1' }).why, /the copy's is 0\.26\.0, and this is 0\.26\.0/)
+    assert.equal(newerLoader({ running, offered: offered({ version: '0.25.9' }), editor: '1.105.1' }).newer, false, 'never an older one')
+    assert.match(newerLoader({ running, offered: offered({ version: '0.27.0', publisher: 'someone' }), editor: '1.105.1' }).why, /the copy's extension is someone\.lanekit, not lanekit\.lanekit/)
+    assert.match(newerLoader({ running, offered: offered({ version: '0.27.0', engines: { vscode: '^1.200.0' } }), editor: '1.105.1' }).why, /needs the editor at 1\.200\.0 or later, and this is 1\.105\.1/)
+    assert.equal(newerLoader({ running, offered: offered({ version: 'next' }), editor: '1.105.1' }).newer, false)
+    assert.match(newerLoader({ running, offered: null, editor: '1.105.1' }).why, /holds no extension/)
+    assert.equal(newerLoader({ running, offered: offered({ version: '0.27.0', engines: {} }), editor: undefined }).newer, true, 'an editor that does not say its version is not held to one')
+    assert.equal(offeredLoader(path.join(KIT)).name, 'lanekit', 'read from the copy\'s vscode/package.json')
+    assert.equal(offeredLoader(path.join(scratch, 'nowhere')), null)
 })

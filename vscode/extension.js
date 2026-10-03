@@ -7,11 +7,12 @@
 // `git pull` of lanekit reaches the editor at its next window reload, and the .vsix only
 // changes when this file or the manifest beside it does (vscode/pack.mjs).
 //
-// AND WHAT A LOADER IS LEFT TO DO, since an extension store updates this and not the checkout:
-// where there is no lanekit (installed from a store, on a machine that never had it), it offers to
-// clone one into ~/.lanekit, where the shims look too; and, once allowed, it keeps the checkout
-// current: fetched every few hours, fast-forwarded when it may be (updates.js says when), and the
-// window offered a reload to use what came.
+// AND WHAT A LOADER IS LEFT TO DO: where there is no lanekit (installed from Open VSX or a release's
+// .vsix, on a machine that never had it), it offers to clone one into ~/.lanekit, where the shims look
+// too; and, once allowed, it keeps the checkout current, fetched every few hours and fast-forwarded when
+// it may be (updates.js says when), and itself with it: where the checkout holds a newer build of this
+// extension, it is built and installed from there. So everything LaneKit is, this file included, comes
+// from the branch stable, and no extension store is needed to keep it current.
 //
 // CommonJS, as VS Code loads an extension's entry; host.mjs is an ES module, imported.
 'use strict'
@@ -105,46 +106,106 @@ const allowed = (context) => {
     return answered === 'yes' ? true : answered === 'no' ? false : null
 }
 
+const isInside = (dir, root) => { const rel = path.relative(root, dir); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)) }
+
+/**
+ * The extension itself, kept current from the copy of lanekit as the copy is kept current from stable, with no
+ * extension store: where the copy holds a newer build of this extension (the same ID, one this editor can run), it is
+ * built there by the copy's own pack.mjs and installed as the editor installs any .vsix. Not where this file is the
+ * copy's own (a development host), nor in a remote window, whose editor would look for the file on its own machine.
+ * `may`: as checkForUpdate's, null to ask, which is the same yes as keeping the copy current.
+ */
+const upgradeLoader = async (context, root, may) => {
+    if (isInside(__dirname, root) || vscode.env?.remoteName) return { state: 'own' }
+    const seen = updates.newerLoader({ running: require('./package.json'), offered: updates.offeredLoader(root), editor: vscode.version })
+    if (!seen.newer) return { state: 'current', why: seen.why }
+    // Installed already, by this window or another: what is left is the reload.
+    if (context.globalState.get('lanekit.loaderInstalled') === seen.version) return { state: 'installed', version: seen.version, already: true }
+    if (may === false) return { state: 'off' }
+    if (may === null) {
+        const pick = await vscode.window.showInformationMessage(
+            `lanekit in ${tilde(root)} holds LaneKit ${seen.version}, and this window runs ${require('./package.json').version}. Install it, and keep LaneKit up to date by itself from now on?`,
+            'Keep It Up to Date', 'Not Now')
+        if (pick === 'Not Now') await context.globalState.update('lanekit.updatesAllowed', 'no')
+        if (pick !== 'Keep It Up to Date') return { state: 'declined' }
+        await context.globalState.update('lanekit.updatesAllowed', 'yes')
+    }
+    const file = path.join(os.tmpdir(), `lanekit-${seen.version}-${process.pid}.vsix`)
+    try {
+        // Asked of the copy as it is now: a copy moved on while the window was open is read again, not remembered.
+        const { build } = await import(`${pathToFileURL(path.join(root, 'vscode', 'pack.mjs')).href}?at=${Date.now()}`)
+        fs.writeFileSync(file, build().bytes)
+        await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file))
+    } catch (error) {
+        return { state: 'left', why: `LaneKit ${seen.version} could not be installed from it: ${error.message}` }
+    } finally {
+        fs.rmSync(file, { force: true })
+    }
+    await context.globalState.update('lanekit.loaderInstalled', seen.version)
+    return { state: 'installed', version: seen.version }
+}
+
+/** What came, in one message, with the reload that uses it: what runs in this window was read before it came. */
+const sayWhatCame = (done, loader) => {
+    const took = done?.state === 'updated' ? `lanekit took ${newCommits(done.count)}, and is at ${done.to}` : null
+    const installed = loader?.state === 'installed' ? `the extension is LaneKit ${loader.version} now` : null
+    if (!took && !installed) return
+    const words = [took, installed].filter(Boolean).join('; ')
+    vscode.window.showInformationMessage(`LaneKit: ${words}. Reload the window to use ${took && !installed && done.count === 1 ? 'it' : 'them'}.`, 'Reload Window')
+        .then((pick) => (pick === 'Reload Window' ? vscode.commands.executeCommand('workbench.action.reloadWindow') : null))
+}
+
 let checking = null
 /**
  * Fetch the checkout, and fast-forward it where it may be: asked once (the first time there is something new), and
- * not again after Not Now, unless `asked` (LaneKit: Update lanekit Now) says to, for this once. What came is said, with
- * a reload to use it: what runs in this window was read before it came.
+ * not again after Not Now, unless `asked` (LaneKit: Update lanekit Now) says to, for this once. Then the extension
+ * itself, from the copy as it now is. What came is said, with a reload to use it.
  */
 const checkForUpdate = (context, root, { asked = false } = {}) => {
     if (checking) return checking
     checking = (async () => {
-        const may = asked ? true : allowed(context)
+        let may = asked ? true : allowed(context)
         if (may === false) return { state: 'off' }
         await context.globalState.update('lanekit.updateCheckedAt', Date.now())
-        const seen = await updates.check(root)
-        if (seen.state !== 'behind') return seen
-        if (may === null) {
-            const pick = await vscode.window.showInformationMessage(
-                `lanekit in ${tilde(root)} is ${newCommits(seen.count)} behind ${seen.upstream}. Keep it up to date by itself? Only ever a fast-forward, and never while it has changes or commits of its own.`,
-                'Keep It Up to Date', 'Not Now')
-            if (pick === 'Not Now') await context.globalState.update('lanekit.updatesAllowed', 'no')
-            if (pick !== 'Keep It Up to Date') return { state: 'declined' }
-            await context.globalState.update('lanekit.updatesAllowed', 'yes')
+        let done = await updates.check(root)
+        if (done.state === 'behind') {
+            if (may === null) {
+                const pick = await vscode.window.showInformationMessage(
+                    `lanekit in ${tilde(root)} is ${newCommits(done.count)} behind ${done.upstream}. Keep it up to date by itself? Only ever a fast-forward, and never while it has changes or commits of its own.`,
+                    'Keep It Up to Date', 'Not Now')
+                if (pick === 'Not Now') await context.globalState.update('lanekit.updatesAllowed', 'no')
+                if (pick !== 'Keep It Up to Date') return { state: 'declined' }
+                await context.globalState.update('lanekit.updatesAllowed', 'yes')
+                may = true
+            }
+            done = await updates.update(root)
         }
-        const done = await updates.update(root)
-        if (done.state === 'updated') {
-            vscode.window.showInformationMessage(`LaneKit: lanekit took ${newCommits(done.count)}, and is at ${done.to}. Reload the window to use them.`, 'Reload Window')
-                .then((pick) => (pick === 'Reload Window' ? vscode.commands.executeCommand('workbench.action.reloadWindow') : null))
-        }
-        return done
+        // The extension, where the copy (moved on now, or by somebody's own pull) holds a newer build of it.
+        const loader = await upgradeLoader(context, root, may)
+        sayWhatCame(done, loader)
+        return { ...done, loader }
     })().finally(() => { checking = null })
     return checking
 }
 
-/** A check soon after the window opens, unless one was made lately, and then every hour, as long as it is open. */
+/**
+ * Soon after the window opens and then every hour: the copy fetched, unless that was done lately (it costs a fetch, so
+ * once every few hours for every window); and the extension compared with the copy each time, which costs a file read.
+ */
 const keepCurrent = (context, root) => {
     const due = () => Date.now() - (context.globalState.get('lanekit.updateCheckedAt') ?? 0) >= CHECK_EVERY_MS
-    const quietly = () => { if (due()) checkForUpdate(context, root).catch(() => {}) }
+    const quietly = () => {
+        if (due()) { checkForUpdate(context, root).catch(() => {}); return }
+        const may = allowed(context)
+        if (may !== false && !checking) upgradeLoader(context, root, may).then((loader) => sayWhatCame(null, loader), () => {})
+    }
     clearInterval(timer)
     clearTimeout(soon)
+    // Never what keeps a process open: the editor's, or a test's.
     timer = setInterval(quietly, 60 * 60 * 1000)
     soon = setTimeout(quietly, 30 * 1000)
+    timer.unref?.()
+    soon.unref?.()
 }
 
 /** LaneKit: Update lanekit Now: a check now, whatever was answered before, and what it found said either way. */
@@ -152,8 +213,9 @@ const updateNow = async (context) => {
     const root = lanekitRoot()
     if (!root) return offerInstall(context, { asked: true })
     const done = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'LaneKit: fetching lanekit…' }, () => checkForUpdate(context, root, { asked: true }))
-    if (done.state === 'current') vscode.window.showInformationMessage(`LaneKit: lanekit in ${tilde(root)} has everything ${done.upstream} has.`)
+    if (done.state === 'current' && done.loader?.state !== 'installed') vscode.window.showInformationMessage(`LaneKit: lanekit in ${tilde(root)} has everything ${done.upstream} has, and the extension is its newest.`)
     else if (done.state === 'left') vscode.window.showWarningMessage(`LaneKit: lanekit in ${tilde(root)} was left as it is: ${done.why}.`)
+    if (done.loader?.state === 'left') vscode.window.showWarningMessage(`LaneKit: ${done.loader.why}.`)
     return done
 }
 
