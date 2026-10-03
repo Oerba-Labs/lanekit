@@ -73,7 +73,10 @@ The shim looks in the same places in the same order. If none exists:
 
 ```sh
 git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit
+git -C ~/.lanekit switch --track origin/stable    # the commits of main whose tests passed
 ```
+
+If the repository has no `stable` branch yet, the second line fails: stay on `main`.
 
 If one exists and is a git checkout with no local changes, bring it up to date with
 `git -C <it> pull --ff-only`; if it has local changes, leave it and say so. The folder you settled

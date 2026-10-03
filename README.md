@@ -140,8 +140,12 @@ does not grow a `node_modules` to use it.
 
 ```
 git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit
+git -C ~/.lanekit switch --track origin/stable       # optional: only the commits whose tests passed
 ln -s ~/.lanekit/dev/lane.mjs ~/.local/bin/lane      # optional: one `lane` for every repository
 ```
+
+Or install the editor extension (*In your editor*, below), which clones it there for you and keeps it
+up to date.
 
 With `lane` on your PATH, it does in a repository with lanes what the project's shim does, and
 anywhere it starts one: `lane init` and `lane adopt`, below.
@@ -429,7 +433,9 @@ in the picture. There its clicks drive the editor:
   checks, and a press that ends while LaneKit is out of sight says how it ended;
 - `lanekit.opensIn`, `tab` by default, says where the icon, the status bar's lane menu and a
   notification's **Show** open LaneKit: an editor tab, or `sideBar`;
-- `lanekit.gateOnCommit`, off by default, gates a lane by itself when a commit lands in it.
+- `lanekit.gateOnCommit`, off by default, gates a lane by itself when a commit lands in it;
+- `lanekit.updates`, `ask` by default, says whether LaneKit keeps the copy of lanekit it runs from up
+  to date by itself (below): `always`, `never`, or ask once, the first time there is something new.
 
 No server and no port: the extension runs the page's service itself, reads git in a worker
 thread so the editor never waits, tells every page open when anything changed, and finds
@@ -439,9 +445,23 @@ from the checkout on the machine (`lanekit.path`, else the places the shim looks
 off in a folder the editor has not been told to trust, since it runs the repository's own
 commands.
 
+**Installing it.** Each version is published to the VS Code Marketplace, and to Open VSX for
+code-server, Cursor, VSCodium and Windsurf, as *LaneKit* (`lanekit.lanekit`), and the editor keeps
+it up to date as it keeps any extension; or build the `.vsix` yourself (below). What the store
+installs is only a loader: on a machine with no lanekit, it offers to install it in `~/.lanekit` (a
+clone, which the projects' shims find too) or to use a copy you have, and a LaneKit command asked
+for meanwhile does what it was asked once lanekit is there.
+
+**Keeping it current.** It keeps the copy of lanekit it runs from up to date by itself: fetched
+every few hours, fast-forwarded only while it has no uncommitted changes and no commits of its own,
+and the window offered a reload to use what came. A copy it installed follows `stable`, the commits
+of main whose tests passed on Linux and macOS, and is kept current without asking; one you cloned
+follows whatever its branch follows, and is asked about once (`lanekit.updates`). **LaneKit: Update
+lanekit Now** does it whenever asked, and says why when it leaves a copy as it is.
+
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
-code --install-extension ~/.lanekit/vscode/lanekit-0.16.0.vsix
+code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ```
 
 <br clear="right">
@@ -560,6 +580,14 @@ expensive.
 a headless Chrome over the DevTools protocol, and is skipped where there is none (`LANEKIT_CHROME`
 names one). [docs/use-cases.md](docs/use-cases.md) lists what LaneKit is for and the tests that show
 each works. lanekit is plain JavaScript with no dependencies and no build step, and is kept that way.
+
+A push to main runs the tests on Linux and macOS ([test.yml](.github/workflows/test.yml)) and, when
+they pass, moves `stable` to it: what every editor's own copy of lanekit is brought up to. The
+extension is released by a tag `vscode-v<version>`, the version in `vscode/package.json`
+([extension.yml](.github/workflows/extension.yml)): the tests, the `.vsix` from `pack.mjs`, Open VSX
+and the Marketplace where their tokens are set (`OVSX_PAT`, `VSCE_PAT`), and a GitHub release with
+the file. Since the extension is only its loader, it needs a release only when `vscode/extension.js`,
+`vscode/updates.js` or the manifest changes.
 
 ## Licence
 

@@ -16,10 +16,12 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | [e2e](../test/e2e.test.mjs) | the page in Chrome, pointer and keyboard |
 | [flow](../test/flow.test.mjs) | a lane between being made and landing |
 | [github](../test/github.test.mjs) | pull requests, through `gh` |
+| [loader](../test/loader.test.mjs) | the extension's loader: installing lanekit, and keeping it current |
 | [page](../test/page.test.mjs) | what the page decides from the state alone |
 | [rebase](../test/rebase.test.mjs) | moving a lane along main |
 | [service](../test/service.test.mjs) | what the page is told, and what it may open |
 | [tidy](../test/tidy.test.mjs) | lanes set aside, quiet, or dropped; home |
+| [updates](../test/updates.test.mjs) | the editor's own copy of lanekit, cloned and fast-forwarded |
 | [vscode](../test/vscode.test.mjs) | the editor's extension |
 | [web](../test/web.test.mjs) | `lane web`, over HTTP |
 
@@ -100,6 +102,15 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 41 | Press while something runs: the press waits its turn, and can be cancelled | the command bar | web 10, rebase 6 |
 | 42 | See main's uncommitted files where they are, on main's line, as a lane's are | the main checkout's node | carry 1, e2e 5 |
 
+## Installing and updating
+
+| | use case | how | tests |
+|---|---|---|---|
+| 43 | **new** Install LaneKit from an extension store on a machine that has no lanekit: it offers to clone it into `~/.lanekit`, or to use a copy you have, and a command asked for meanwhile does what it was asked once lanekit is there | the offer, once by itself and on any command | loader 1–3, updates 1, 3 |
+| 44 | **new** Keep the copy of lanekit the editor runs from current: fetched every few hours, fast-forwarded only while it has no changes and no commits of its own, asked once (a copy it installed, never), a reload offered | `lanekit.updates`; **LaneKit: Update lanekit Now** | loader 4–5, updates 4–6 |
+| 45 | **new** Reach editors only with commits whose tests passed: a copy LaneKit installs follows `stable`, which CI moves to each commit of main that passed | `.github/workflows/test.yml` | updates 2 |
+| 46 | **new** Release the extension to Open VSX and the Marketplace, and as a file, by a tag | `.github/workflows/extension.yml` | vscode 18 (the `.vsix` as the stores take it) |
+
 ## Not covered, or not done
 
 - **Fold commits into each other**, ISL's *Fold*/*Combine*: LaneKit has none. **Amend** folds uncommitted files into a
@@ -112,3 +123,5 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 - **The side bar's layout** is looked at in screenshots only, and **dragging a lane** onto a commit is tested at the
   service and in `ontoOf`, not by a drag in the browser.
 - The README's screenshots predate this round: they still show *You are here* and *Goto*.
+- **The workflows** (`.github/workflows/`) run on GitHub only: `node --test` does not run them, and the stores
+  take the `.vsix` only once their tokens are set (`OVSX_PAT`, `VSCE_PAT`).
