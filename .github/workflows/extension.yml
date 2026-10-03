@@ -1,17 +1,19 @@
-# LaneKit's editor extension, published: a tag vscode-v<version> (the version in vscode/package.json) runs the tests,
-# packs the .vsix with vscode/pack.mjs (the same bytes every time, no dependency), publishes that one file to Open
-# VSX (code-server, Cursor, VSCodium, Windsurf) and to the VS Code Marketplace, and attaches it to a GitHub release.
-#
-# Each store is published to only where its token is set as a secret of the repository: OVSX_PAT (open-vsx.org, a
-# token of a member of the lanekit namespace) and VSCE_PAT (an Azure DevOps token, Marketplace: Manage, of the
-# publisher lanekit). Without one, that store is said to be left out and the rest goes on. The publishing tools are
-# fetched here, for this, and are never a dependency of lanekit.
+# LaneKit's editor extension, released: a tag vscode-v<version> (the version in vscode/package.json) runs the tests,
+# packs the .vsix with vscode/pack.mjs (the same bytes every time, no dependency), attaches it to a GitHub release,
+# both as lanekit-<version>.vsix and as lanekit.vsix (so .../releases/latest/download/lanekit.vsix is always the
+# newest), and publishes it to Open VSX, where code-server, Cursor, VSCodium and Windsurf find it.
 #
 #     edit "version" in vscode/package.json, commit, then:
-#     git tag vscode-v0.25.0 && git push origin vscode-v0.25.0
+#     git tag vscode-v0.26.0 && git push origin vscode-v0.26.0
 #
-# The extension is only its loader: what it runs comes from the copy of lanekit on each machine, which it keeps up
-# to date from the branch stable (test.yml). So a release is needed only when the loader or its manifest changes.
+# NOT THE VS CODE MARKETPLACE. VS Code installs it once from the release's file; from then on the extension keeps
+# itself up to date from the copy of lanekit on the machine, which follows the branch stable (test.yml): it builds a
+# newer version of itself that the copy holds and installs it (vscode/extension.js). So a release is for a first
+# install and for Open VSX, and is needed only when the loader or its manifest changes.
+#
+# Open VSX is published to only where OVSX_PAT, an open-vsx.org access token, is set as a secret of the repository;
+# its namespace is "publisher" in vscode/package.json, made by the first publish. ovsx is fetched here, for this,
+# and is never a dependency of lanekit.
 name: Extension
 
 on:
@@ -35,6 +37,8 @@ jobs:
         run: |
           version=$(node -p "require('./vscode/package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publisher=$(node -p "require('./vscode/package.json').publisher")" >> "$GITHUB_OUTPUT"
+          echo "id=$(node -p "const m = require('./vscode/package.json'); m.publisher + '.' + m.name")" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "vscode-v$version" ]; then
             echo "::error::The tag is $GITHUB_REF_NAME, and vscode/package.json says $version: tag vscode-v$version, or change the version"
             exit 1
@@ -47,36 +51,33 @@ jobs:
       - run: node --test
       - name: Pack
         id: pack
-        run: node vscode/pack.mjs --out "dist/lanekit-${{ steps.version.outputs.version }}.vsix"
-      # The file, on a GitHub release of its own, first: there whatever a store then says. Run again, it replaces it.
+        run: |
+          node vscode/pack.mjs --out "dist/lanekit-${{ steps.version.outputs.version }}.vsix"
+          cp "dist/lanekit-${{ steps.version.outputs.version }}.vsix" dist/lanekit.vsix
+      # The file, on a GitHub release of its own, first: there whatever Open VSX then says. Run again, it replaces it.
       - name: GitHub release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES: |
+            In VS Code: `curl -fsSLo /tmp/lanekit.vsix https://github.com/Oerba-Labs/lanekit/releases/latest/download/lanekit.vsix && code --install-extension /tmp/lanekit.vsix`
+
+            In code-server, Cursor, VSCodium or Windsurf: LaneKit (${{ steps.version.outputs.id }}) in the Extensions view, from Open VSX.
+
+            Where there is no lanekit on the machine, it offers to install one in ~/.lanekit, and keeps that and itself up to date from the branch stable.
         run: |
-          file="dist/lanekit-${{ steps.version.outputs.version }}.vsix"
+          files=("dist/lanekit-${{ steps.version.outputs.version }}.vsix" dist/lanekit.vsix)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$file" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$file" \
-              --title "LaneKit for VS Code ${{ steps.version.outputs.version }}" \
-              --notes "Install from the Extensions view (LaneKit, lanekit.lanekit), or this file: code --install-extension lanekit-${{ steps.version.outputs.version }}.vsix. Where there is no lanekit on the machine, it offers to install one in ~/.lanekit, and keeps it up to date from the branch stable."
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --latest --title "LaneKit for VS Code ${{ steps.version.outputs.version }}" --notes "$NOTES"
           fi
-      # Each store takes a version once: one there already is passed over, so a run can be run again after a store
-      # refused it, and the stores that took it are not asked twice.
+      # A version Open VSX has already is passed over, so a run can be run again.
       - name: Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           if [ -z "$OVSX_PAT" ]; then echo "::warning::No OVSX_PAT secret, so not published to Open VSX"; exit 0; fi
           # Its namespace, made the first time; there already, this says so and goes on.
-          npx --yes ovsx@0 create-namespace lanekit -p "$OVSX_PAT" || true
+          npx --yes ovsx@0 create-namespace "${{ steps.version.outputs.publisher }}" -p "$OVSX_PAT" || true
           npx --yes ovsx@0 publish "dist/lanekit-${{ steps.version.outputs.version }}.vsix" -p "$OVSX_PAT" --skip-duplicate
-      - name: VS Code Marketplace
-        # Tried whatever Open VSX said: one store refusing never keeps the other from it.
-        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          if [ -z "$VSCE_PAT" ]; then echo "::warning::No VSCE_PAT secret, so not published to the VS Code Marketplace"; exit 0; fi
-          npx --yes @vscode/vsce@3 publish --packagePath "dist/lanekit-${{ steps.version.outputs.version }}.vsix" -p "$VSCE_PAT" --skip-duplicate

@@ -445,19 +445,31 @@ from the checkout on the machine (`lanekit.path`, else the places the shim looks
 off in a folder the editor has not been told to trust, since it runs the repository's own
 commands.
 
-**Installing it.** Each version is published to the VS Code Marketplace, and to Open VSX for
-code-server, Cursor, VSCodium and Windsurf, as *LaneKit* (`lanekit.lanekit`), and the editor keeps
-it up to date as it keeps any extension; or build the `.vsix` yourself (below). What the store
-installs is only a loader: on a machine with no lanekit, it offers to install it in `~/.lanekit` (a
-clone, which the projects' shims find too) or to use a copy you have, and a LaneKit command asked
-for meanwhile does what it was asked once lanekit is there.
+**Installing it.** In code-server, Cursor, VSCodium or Windsurf, it is *LaneKit* (`lanekit.lanekit`)
+in the Extensions view, from Open VSX. In VS Code, install it once from its newest release:
+
+```
+curl -fsSLo /tmp/lanekit.vsix https://github.com/Oerba-Labs/lanekit/releases/latest/download/lanekit.vsix
+code --install-extension /tmp/lanekit.vsix
+```
+
+What that installs is only a loader: on a machine with no lanekit, it offers to install it in
+`~/.lanekit` (a clone, which the projects' shims find too) or to use a copy you have, and a LaneKit
+command asked for meanwhile does what it was asked once lanekit is there. It is not in the VS Code
+Marketplace, and needs no store to stay current.
 
 **Keeping it current.** It keeps the copy of lanekit it runs from up to date by itself: fetched
 every few hours, fast-forwarded only while it has no uncommitted changes and no commits of its own,
 and the window offered a reload to use what came. A copy it installed follows `stable`, the commits
 of main whose tests passed on Linux and macOS, and is kept current without asking; one you cloned
-follows whatever its branch follows, and is asked about once (`lanekit.updates`). **LaneKit: Update
-lanekit Now** does it whenever asked, and says why when it leaves a copy as it is.
+follows whatever its branch follows, and is asked about once (`lanekit.updates`). And the extension
+with it: where the copy holds a newer version of the extension itself, it is built there and
+installed as any `.vsix` is, so every part of LaneKit comes from `stable`. Never another extension
+in its place (a fork's, say), never one the editor is too old for, and not in a remote window, whose
+editor installs on its own machine. **LaneKit: Update lanekit Now** does it whenever asked, and says
+why when it leaves a copy as it is.
+
+To build the `.vsix` yourself, from any copy of lanekit:
 
 ```
 node ~/.lanekit/vscode/pack.mjs       # writes vscode/lanekit-<version>.vsix, no dependencies
@@ -584,9 +596,10 @@ each works. lanekit is plain JavaScript with no dependencies and no build step, 
 A push to main runs the tests on Linux and macOS ([test.yml](.github/workflows/test.yml)) and, when
 they pass, moves `stable` to it: what every editor's own copy of lanekit is brought up to. The
 extension is released by a tag `vscode-v<version>`, the version in `vscode/package.json`
-([extension.yml](.github/workflows/extension.yml)): the tests, the `.vsix` from `pack.mjs`, Open VSX
-and the Marketplace where their tokens are set (`OVSX_PAT`, `VSCE_PAT`), and a GitHub release with
-the file. Since the extension is only its loader, it needs a release only when `vscode/extension.js`,
+([extension.yml](.github/workflows/extension.yml)): the tests, the `.vsix` from `pack.mjs` on a GitHub
+release (also as `lanekit.vsix`, which `releases/latest/download/` always names), and Open VSX where its
+token is set (`OVSX_PAT`). An installed extension updates itself from `stable` whatever is released, so
+a release is for a first install and for Open VSX, and needs making only when `vscode/extension.js`,
 `vscode/updates.js` or the manifest changes.
 
 ## Licence

@@ -106,10 +106,11 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 
 | | use case | how | tests |
 |---|---|---|---|
-| 43 | **new** Install LaneKit from an extension store on a machine that has no lanekit: it offers to clone it into `~/.lanekit`, or to use a copy you have, and a command asked for meanwhile does what it was asked once lanekit is there | the offer, once by itself and on any command | loader 1–3, updates 1, 3 |
+| 43 | **new** Install LaneKit (from Open VSX, or a release's `.vsix` in VS Code) on a machine that has no lanekit: it offers to clone it into `~/.lanekit`, or to use a copy you have, and a command asked for meanwhile does what it was asked once lanekit is there | the offer, once by itself and on any command | loader 1–3, updates 1, 3 |
 | 44 | **new** Keep the copy of lanekit the editor runs from current: fetched every few hours, fast-forwarded only while it has no changes and no commits of its own, asked once (a copy it installed, never), a reload offered | `lanekit.updates`; **LaneKit: Update lanekit Now** | loader 4–5, updates 4–6 |
 | 45 | **new** Reach editors only with commits whose tests passed: a copy LaneKit installs follows `stable`, which CI moves to each commit of main that passed | `.github/workflows/test.yml` | updates 2 |
-| 46 | **new** Release the extension to Open VSX and the Marketplace, and as a file, by a tag | `.github/workflows/extension.yml` | vscode 18 (the `.vsix` as the stores take it) |
+| 46 | **new** Release the extension to Open VSX, and as a file on a GitHub release (`releases/latest/download/lanekit.vsix`), by a tag | `.github/workflows/extension.yml` | vscode 18 (the `.vsix` as the stores take it) |
+| 47 | **new** Keep the extension itself current with no extension store: a newer build of it in the copy of lanekit is built there and installed, once, with a reload offered; never another extension's, one the editor is too old for, in a remote window, or in a development host | the same check as 44 | loader 6–7, updates 7 |
 
 ## Not covered, or not done
 
@@ -123,5 +124,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 - **The side bar's layout** is looked at in screenshots only, and **dragging a lane** onto a commit is tested at the
   service and in `ontoOf`, not by a drag in the browser.
 - The README's screenshots predate this round: they still show *You are here* and *Goto*.
-- **The workflows** (`.github/workflows/`) run on GitHub only: `node --test` does not run them, and the stores
-  take the `.vsix` only once their tokens are set (`OVSX_PAT`, `VSCE_PAT`).
+- **The workflows** (`.github/workflows/`) run on GitHub only: `node --test` does not run them, and Open VSX
+  takes the `.vsix` only where its token is set (`OVSX_PAT`).
+- **The VS Code Marketplace** is not published to: VS Code installs the extension from a release's file, and it
+  keeps itself current from `stable` (47). Its install command, run in a real editor, is tested only in a stand-in.
