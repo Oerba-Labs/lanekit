@@ -360,14 +360,14 @@ test('conflicts are opened only where git says there are some', async () => {
     assert.match(reply.error, /no conflicts left/)
 })
 
-test('Goto is the way to a lane\'s terminal: with none open, one opens there, and takes the focus', async () => {
+test('a lane\'s terminal (the page\'s terminal icon, once Goto): with none open, one opens there, and takes the focus', async () => {
     const reply = await editor.ask('open', { what: 'goto', repo, lane: 'working' })
     assert.equal(reply.ok, true, reply.error)
     assert.equal(reply.value.terminal, 'opened')
     assert.equal(editor.seen.terminals.at(-1).cwd, working)
     assert.deepEqual(editor.seen.made.at(-1).shown, { preserveFocus: false })
     const gone = await editor.ask('open', { what: 'terminal', repo, lane: 'working' })
-    assert.equal(gone.ok, false, 'Terminal is Goto now, and asked for by itself is refused')
+    assert.equal(gone.ok, false, 'one way to a lane\'s terminal, asked for as goto; terminal by itself is refused')
 })
 
 test('anything the page did not show is refused, and said', async () => {
@@ -547,7 +547,7 @@ test('the page is answered a commit\'s details, and a cancel of a press that is 
     assert.equal(cancelled.value, false)
 })
 
-test('Goto moves the files you have open to a lane, leaves one with unsaved changes, and opens no window', async () => {
+test('a lane\'s terminal moves the files you have open to the lane, leaves one with unsaved changes, and opens no window', async () => {
     const { vscode } = editor
     class TabInputText { constructor (uri) { this.uri = uri } }
     vscode.TabInputText = TabInputText
@@ -625,15 +625,15 @@ test('with gateOnCommit, a commit landing in a lane gates it by itself', async (
 
 test('the status bar\'s menu offers what can be done with the lane in front, and does the one picked', async () => {
     editor.seen.picks.length = 0
-    editor.answers.pick = 'Goto'
+    editor.answers.pick = 'Terminal'
     for (const made of [...editor.vscode.window.terminals]) editor.closeTerminal(made)
     const terminals = editor.seen.terminals.length
     await editor.seen.commands.get('lanekit.laneMenu')({ repo: 'demo', lane: 'working' })
     const labels = editor.seen.picks.at(-1).map((item) => item.label)
-    for (const want of ['Show in LaneKit', 'Goto', 'Start agent', 'New lane from here', 'Open in a new window']) {
+    for (const want of ['Show in LaneKit', 'Terminal', 'Start agent', 'New lane from here', 'Open in a new window']) {
         assert.ok(labels.some((label) => label.includes(want)), `${want} in ${labels.join(', ')}`)
     }
-    assert.ok(!labels.some((label) => label.includes('Terminal')), 'no Terminal beside Goto')
+    assert.ok(!labels.some((label) => label.includes('Goto')), 'Terminal, not Goto, as the page says it')
     assert.equal(editor.seen.terminals.length, terminals + 1)
     assert.equal(editor.seen.terminals.at(-1).cwd, working)
     editor.answers.pick = undefined
@@ -653,14 +653,16 @@ test('New lane from here starts on top of the lane in front', async () => {
     editor.answers.input = undefined
 })
 
-test('the pages are told where the editor is, for their You are here', async () => {
+test('the pages are not told where the editor is: work goes on in many places at once, so none is "here"', async () => {
     editor.seen.posted.length = 0
     editor.setActive(path.join(working, 'feature.txt'))
     await editor.ask('state')
-    assert.ok(editor.seen.posted.some((m) => m.type === 'here' && m.repo === 'demo' && m.lane === 'working'), JSON.stringify(editor.seen.posted.filter((m) => m.type === 'here')))
     editor.setActive(path.join(repo, 'app.txt'))
     await editor.ask('state')
-    assert.ok(editor.seen.posted.some((m) => m.type === 'here' && m.repo === 'demo' && m.lane === null), 'the main checkout')
+    assert.ok(!editor.seen.posted.some((m) => m.type === 'here'), JSON.stringify(editor.seen.posted.filter((m) => m.type === 'here')))
+    // The status bar still names the lane the file in front is in.
+    editor.setActive(path.join(working, 'feature.txt'))
+    await editor.ask('state')
 })
 
 test('one uncommitted file opens as its own diff', async () => {
@@ -676,7 +678,7 @@ test('one uncommitted file opens as its own diff', async () => {
 /** No terminal open, as at the start of a test that counts them. */
 const closeAllTerminals = () => { for (const made of [...editor.vscode.window.terminals]) editor.closeTerminal(made) }
 
-test('Goto sends a shell waiting at its prompt to the same folder in the lane, or to the lane\'s top where it has none', async () => {
+test('a lane\'s terminal is a shell waiting at its prompt sent to the same folder in the lane, or to the lane\'s top where it has none', async () => {
     closeAllTerminals()
     fs.mkdirSync(path.join(repo, 'web'), { recursive: true })
     fs.mkdirSync(path.join(working, 'web'), { recursive: true })
@@ -710,7 +712,7 @@ test('Goto sends a shell waiting at its prompt to the same folder in the lane, o
     closeAllTerminals()
 })
 
-test('Goto types nothing into a terminal running something, or one it cannot read, and brings forward the lane\'s instead', async () => {
+test('a lane\'s terminal types nothing into one running something, or one it cannot read, and brings forward the lane\'s instead', async () => {
     closeAllTerminals()
     const busy = editor.openTerminal(repo, { shell: repo })
     editor.useTerminal(busy)

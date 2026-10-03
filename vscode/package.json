@@ -1,9 +1,9 @@
 {
   "name": "lanekit",
   "displayName": "LaneKit",
-  "description": "Every lane of every repository as a smartlog you act on inside the editor: go to a lane with your files and terminal, see which agent works where and which needs you, and gate, land and sweep.",
+  "description": "Every lane of every repository as a smartlog you act on inside the editor: open a lane's terminal with your files following, see which agent works where and which needs you, and gate, land and sweep.",
   "publisher": "lanekit",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -112,9 +112,9 @@
       },
       {
         "command": "lanekit.goto",
-        "title": "Go to a Lane\u2026",
+        "title": "Terminal in a Lane\u2026",
         "category": "LaneKit",
-        "icon": "$(arrow-right)"
+        "icon": "$(terminal)"
       },
       {
         "command": "lanekit.openLane",

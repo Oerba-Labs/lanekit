@@ -181,7 +181,8 @@ const opens = (node, title, action) => {
     node.setAttribute('role', 'button')
     node.tabIndex = 0
     node.title = title
-    node.addEventListener('click', (event) => { if (!event.target.closest('a, button')) action() })
+    // What has a click of its own keeps it: a file's tick only ticks, and never opens its diff as well.
+    node.addEventListener('click', (event) => { if (!event.target.closest('a, button, input, label, select, textarea')) action() })
     node.addEventListener('keydown', (event) => {
         if (event.target === node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); action() }
     })
@@ -197,8 +198,8 @@ let lastDrawn = ''
 let lastDrawnAt = 0
 /** Keep a part of what this page remembers across a reload of its tab: the editor keeps one value for the whole page. */
 const keep = (part) => host.remember({ ...(host.recall() ?? {}), ...part })
-// `${repo}/${lane}` showing every commit, `…:files` showing files; never a lane's ⋯ menu left open by a page before.
-const expanded = new Set((host.recall()?.expanded ?? []).filter((key) => !key.endsWith(':more')))
+// `${repo}/${lane}` showing every commit, `…:changes` every uncommitted file; never a lane's ⋯ menu left open by a page before.
+const expanded = new Set((host.recall()?.expanded ?? []).filter((key) => !key.endsWith(':more') && !key.endsWith(':files')))
 const toggle = (key) => {
     if (expanded.has(key)) expanded.delete(key); else expanded.add(key)
     keep({ expanded: [...expanded] })
@@ -216,7 +217,6 @@ const firstShown = () => {
 let only = firstShown()
 const pending = new Map()       // `${repo}/${lane}` -> { verb, stage, jobId }
 let naming = null               // { repo, sha, from }: the commit row a new lane is being named on
-let here = null                 // { repo, lane }: where the editor is, the file in front's lane (null lane: main)
 const sections = new Map()      // repo id -> the parts of its section that are kept
 let shownJob = null
 let shownFrom = 0
@@ -318,12 +318,6 @@ setInterval(() => {
     for (const node of document.querySelectorAll('.live-clock')) node.textContent = secondsSince(Number(node.dataset.since))
 }, 1000)
 host.on('focus', (message) => focusLane(message.repo, message.lane))
-host.on('here', (message) => {
-    const next = message.repo ? { repo: message.repo, lane: message.lane ?? null } : null
-    if (JSON.stringify(next) !== JSON.stringify(here)) { here = next; draw(true) }
-})
-const isHere = (repo, lane) => here && here.repo === repo.id && (here.lane ?? null) === (lane?.name ?? null)
-const herePill = () => el('span', { class: 'here', text: 'You are here', title: 'The file in front of you in the editor is in this checkout' })
 
 const press = async (body) => {
     let pressed
@@ -422,7 +416,7 @@ const statusOf = (lane) => {
     if (lane.kind === 'missing') return ['risk', 'Folder is gone', 'git worktree prune, in the main checkout, clears it away']
     if (lane.aside) return ['quiet', 'Set aside', null]
     if (lane.operation) return ['warn', lane.operation === 'rebase' ? 'Mid-rebase' : 'Mid-merge', 'Finish or abort it in the lane before anything else']
-    if (lane.kind === 'landed') return lane.dirty ? ['warn', 'Landed, with uncommitted changes', 'A sweep would delete them'] : ['done', 'Landed', null]
+    if (lane.kind === 'landed') return lane.dirty ? ['warn', 'Landed, with work since', 'Move it to a new lane before this one is swept: a sweep would delete it'] : ['done', 'Landed', null]
     if (lane.kind === 'fresh' && !lane.dirty) return ['quiet', 'Nothing committed yet', null]
     const queue = lane.queue
     if (!queue) return ['quiet', 'Not planned', null]
@@ -444,25 +438,42 @@ const statusOf = (lane) => {
 const byPullRequest = (repo) => repo.github?.rules?.push?.allowed === false
 /**
  * A lane going on by its pull request: its state in a word, and the one thing to press next (`next`: pr, push,
- * push-force, ready, review, merge, rebase, pull or drop), or none while it waits on somebody. A pull request merged on
- * GitHub is said wherever main lands; the rest only where main lands by pull request, and only once nothing here comes
- * first (uncommitted work, a conflict with main, a lane part-way). Null where the usual words say it. Plain data in
- * and out, so lanekit's tests run it as it is written here (test/github.test.mjs).
+ * push-force, update, ready, review, merge, rebase, pull, carry or drop), or none while it waits on somebody.
+ *
+ * Said wherever main lands: a pull request merged on GitHub, with any work made since (commits after the one it was
+ * merged at, or files not committed) to carry into a new lane, since none of it is in a pull request now; and a lane
+ * whose copy on origin has commits it lacks, which pushing would take away. The rest only where main lands by pull
+ * request, and only once nothing here comes first (uncommitted work, a conflict with main, a lane part-way). Null where
+ * the usual words say it. Plain data in and out, so lanekit's tests run it as it is written here (test/github.test.mjs).
  */
 const prStepOf = (repo, lane) => {
-    if (lane.kind !== 'working' || lane.operation || lane.dirty) return null
     const pr = lane.pull
     const base = repo.integrationBranch
+    const up = lane.upstream
+    if (lane.kind !== 'working' || lane.operation) return null
     if (pr?.state === 'MERGED') {
-        return repo.main?.upstream?.behind
+        const behind = repo.main?.upstream?.behind > 0
+        const since = lane.sinceMerge ?? 0
+        const left = [since ? `${since} ${since === 1 ? 'commit' : 'commits'} made since` : null, lane.dirty ? `${lane.dirty} uncommitted ${lane.dirty === 1 ? 'file' : 'files'}` : null].filter(Boolean)
+        if (left.length) {
+            return {
+                tone: 'risk', word: 'Merged on GitHub, with work since',
+                detail: `#${pr.number} was merged without ${left.join(' and ')}, which no pull request has: ${behind ? `pull ${base}, then ` : ''}move ${left.length > 1 || since > 1 || lane.dirty > 1 ? 'them' : 'it'} to a new lane`,
+                next: behind ? 'pull' : 'carry'
+            }
+        }
+        return behind
             ? { tone: 'done', word: 'Merged on GitHub', detail: `Pull ${base} to bring it here`, next: 'pull' }
             : { tone: 'done', word: 'Merged on GitHub', detail: `Squashed or rebased there, so its commits are not ${base}'s own: drop it, and its branch stays`, next: 'drop' }
     }
+    if (lane.dirty) return null
+    // Its copy on origin has commits this lane lacks: brought here first, never pushed over.
+    if (up && up.behind > 0 && !up.ahead) return { tone: 'info', word: `${up.behind} new on ${up.name}`, detail: 'Somebody pushed to it: pull, and it fast-forwards', next: 'update' }
+    if (up && up.behind > 0 && up.foreign) return { tone: 'risk', word: `Diverged from ${up.name}`, detail: `${up.name} has ${up.foreign} ${up.foreign === 1 ? 'commit' : 'commits'} of somebody else's that this lane lacks: bring ${up.foreign === 1 ? 'it' : 'them'} in (git pull --rebase, in the lane) before pushing`, next: null }
     if (repo.github?.rules?.push?.allowed !== false) return null
     const verdict = lane.queue?.verdict
     if (verdict === 'commit first' || verdict === 'rebase first' || verdict === 'parked') return null
     const open = pr?.state === 'OPEN' ? pr : null
-    const up = lane.upstream
     if (!open) return verdict === 'land now' ? { tone: 'done', word: 'Ready for a pull request', detail: `${base} takes its changes by pull request`, next: 'pr' } : null
     if (up && up.behind > 0) return { tone: 'warn', word: 'Rebased since it was pushed', detail: `#${open.number} has its old commits until it is pushed again`, next: 'push-force' }
     if (!up || up.ahead > 0) return { tone: 'info', word: `Not all on #${open.number} yet`, detail: 'Push what is new, and the pull request has it', next: 'push' }
@@ -474,6 +485,58 @@ const prStepOf = (repo, lane) => {
     if (open.review === 'REVIEW_REQUIRED') return { tone: 'info', word: 'Waiting for review', detail: null, next: open.requested?.length ? null : 'review' }
     if (open.checks === 'pending') return { tone: 'info', word: 'Checks running on GitHub', detail: null, next: null }
     return { tone: 'done', word: open.review === 'APPROVED' ? 'Approved: ready to merge' : 'Ready to merge', detail: null, next: 'merge' }
+}
+
+/**
+ * Why a lane's buttons are not pressable yet, in a few words, or null where they are: they are drawn either way, so
+ * what a lane still needs is said on the button itself (the owner, 2 Oct). Plain data in and out, so lanekit's tests
+ * run them as they are written here (test/page.test.mjs).
+ *
+ * The main checkout first, for whatever lands or pulls there: on the integration branch, not part-way, and clean.
+ */
+const mainBlockOf = (repo) => {
+    const main = repo.main ?? {}
+    const base = repo.integrationBranch
+    if (main.onIntegration === false) return `The main checkout is on ${main.branch}, not ${base}`
+    if (main.operation) return `The main checkout is part-way through a ${main.operation}`
+    if (main.dirty) return `The main checkout has ${main.dirty} uncommitted ${main.dirty === 1 ? 'file' : 'files'}: move them to a lane, or discard them, first`
+    return null
+}
+/** A gate names a commit: one of the lane's own, with nothing uncommitted beside it. */
+const gateBlockOf = (lane) => {
+    if (lane.operation) return `Finish its ${lane.operation} first`
+    if (lane.pull?.state === 'MERGED') return `#${lane.pull.number} is merged on GitHub already`
+    if (lane.dirty) return 'Commit first: a gate result names a commit, and uncommitted changes are in none'
+    if (!(lane.ahead > 0)) return 'Nothing committed yet to gate'
+    return null
+}
+/** A land needs a lane gated green on its newest commit, first among those it collides with, and a main ready for it. */
+const landBlockOf = (repo, lane) => {
+    const base = repo.integrationBranch
+    if (lane.operation) return `Finish its ${lane.operation} first`
+    if (lane.pull?.state === 'MERGED') return `#${lane.pull.number} is merged on GitHub already`
+    if (lane.dirty) return 'Commit first: a land takes commits, and uncommitted changes are in none'
+    if (!(lane.ahead > 0)) return 'Nothing committed yet to land'
+    const main = mainBlockOf(repo)
+    if (main) return main
+    const queue = lane.queue
+    switch (queue?.verdict) {
+        case 'land now': return null
+        case 'gate now': return lane.gate?.current && lane.gate.result === 'failed' ? 'Its gate failed on this commit: fix it, commit, and gate it again' : 'Gate it first: a land needs a green gate on its newest commit'
+        case 'hold the gate': return `Wait for ${(queue.collisions ?? []).map((collision) => collision.lane).join(' and ') || 'another lane'} to land first: they change the same files`
+        case 'rebase first': return `Rebase it first: it no longer merges cleanly with ${base}`
+        case 'commit first': return 'Commit first: a land takes commits, and uncommitted changes are in none'
+        case 'parked': return 'Finish its rebase first'
+        default: return 'The landing order has no word on it yet'
+    }
+}
+/** Pull, for main: a fast-forward to origin's, so main behind it, not ahead as well, and its checkout ready. */
+const pullBlockOf = (repo) => {
+    const up = repo.main?.upstream
+    const base = repo.integrationBranch
+    if (!up?.behind) return 'Nothing to pull'
+    if (up.ahead) return `${base} and ${up.name} have diverged, ${up.ahead} here and ${up.behind} there: that needs a person, not a fast-forward`
+    return mainBlockOf(repo)
 }
 
 /** A lane's last gate, where there is one. None is not said: the lane's state says what it needs instead. */
@@ -494,8 +557,10 @@ const gateOf = (lane) => {
 const pushedOf = (lane) => {
     const up = lane.upstream
     if (!up) return el('span', { text: 'Not pushed' })
+    if (up.behind && up.ahead && up.foreign) return state('risk', `Diverged from ${up.name}: ${up.ahead} here, ${up.behind} there`, 'small')
+    if (up.behind && up.ahead) return el('span', { text: `Rebased since it was pushed`, title: `${up.name} has its old commits until it is pushed again` })
     if (up.ahead) return el('span', { text: `${plural(up.ahead, 'commit')} not pushed` })
-    if (up.behind) return el('span', { text: `${up.behind} behind ${up.name}` })
+    if (up.behind) return state('info', `${up.behind} new on ${up.name}`, 'small')
     return el('span', { text: 'Pushed' })
 }
 
@@ -558,11 +623,11 @@ document.addEventListener('click', (event) => { if (!event.target.closest?.('.mo
 // Escape closes one wherever the keyboard is, its own ⋯ button included.
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && closeMenus()) { event.preventDefault(); draw(true) } })
 
-/** A lane's name; in the editor a click on it is Goto, the thing most often done with a lane (the owner, 1 Oct). */
+/** A lane's name; in the editor a click on it is its terminal, the thing most often done with a lane (the owner, 1 Oct). */
 const laneName = (repo, lane) => {
     const name = el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) })
     if (!host.inEditor || !lane.exists) return name
-    return opens(name, `${portOf(lane)}. Click to go to it: the files you have open and your terminal move to ${lane.name}`,
+    return opens(name, `${portOf(lane)}. Click for its terminal: your terminal moves to ${lane.name}, and the files you have open reopen from it`,
         () => openIn('goto', { repo: repo.path, lane: lane.name }))
 }
 
@@ -596,23 +661,22 @@ const drawAgents = () => {
 }
 
 /**
- * Goto, ISL's way, in the editor: where you are moves to this lane (or, with no lane, to the main checkout). The files
- * open from elsewhere reopen from it, and the terminal in use follows and takes the focus, or one opens there; no
- * window opens. It is also how a lane's terminal is reached (the owner, 1 Oct: Terminal and Goto did the same thing),
- * so it is offered where you are too, where it brings your terminal there forward.
+ * A lane's terminal, in the editor, as an icon: the terminal in use follows to this lane (or, with no lane, to the main
+ * checkout) and takes the focus, or one opens there, and the files open from elsewhere reopen from it; no window opens.
+ * It was called Goto, after ISL's, until the owner said (2 Oct) that a terminal is what it is for: work goes on in many
+ * places at once, so there is no one place you are to move.
  */
-const gotoButton = (repo, lane, extra = {}) => host.inEditor && (!lane || lane.exists)
-    ? iconButton('goto', 'Goto', {
+const terminalButton = (repo, lane, extra = {}) => host.inEditor && (!lane || lane.exists)
+    ? iconButton('terminal', `Terminal in ${lane ? lane.name : `${repo.id}'s main checkout`}`, {
         ...extra,
-        title: isHere(repo, lane) ? `You are here: your terminal in ${lane ? lane.name : `${repo.id}'s main checkout`}, in front`
-            : lane ? `Move here: the files you have open reopen from ${lane.name}, and your terminal follows` : `Back to ${repo.id}'s main checkout: the files you have open reopen from it, and your terminal follows`,
+        title: `Terminal in ${lane ? lane.name : `${repo.id}'s main checkout`}: your terminal moves there and comes forward, and the files you have open reopen from it`,
         onclick: (event) => { event.stopPropagation(); openIn('goto', { repo: repo.path, lane: lane?.name }) }
-    })
+    }, true)
     : null
 
 const openLinks = (repo, lane) => {
     if (host.inEditor) {
-        // In the editor: its changes as diffs, an agent in it, and Goto, which is also the way to its terminal.
+        // In the editor: its changes as diffs, an agent in it, and its terminal.
         if (!lane.exists) return []
         const holds = lane.kind === 'working' || lane.dirty > 0
         return [
@@ -624,7 +688,7 @@ const openLinks = (repo, lane) => {
                 title: `Start Claude Code or OpenCode in ${lane.name}, in a terminal named for it and in its colour`,
                 onclick: () => openIn('agent', { repo: repo.path, lane: lane.name })
             }),
-            gotoButton(repo, lane)
+            terminalButton(repo, lane)
         ]
     }
     const links = []
@@ -731,7 +795,7 @@ const rowActions = (repo, commit, from = null, lane = null) => {
     const newest = Boolean(lane && lane.stack?.[0]?.sha === commit.sha && lane.ahead > 0 && !lane.operation && !lane.pending)
     const tip = !lane && repo.spine?.[0]?.sha === commit.sha
     return el('span', { class: 'row-actions' },
-        newest || tip ? gotoButton(repo, lane, { class: 'btn solid' }) : null,
+        newest || tip ? terminalButton(repo, lane, { class: 'btn quiet' }) : null,
         newest ? iconButton('uncommit', 'Uncommit', {
             class: 'btn solid', disabled: busyIn(repo.id),
             title: 'Take this commit back out, its changes left uncommitted',
@@ -784,8 +848,8 @@ const previewAt = (log, row) => {
     const where = move.way === 'back' ? `would move back here, ${plural(move.count, 'commit')} of ${repo.integrationBranch} fewer under it`
         : move.way === 'forward' && move.count ? `would move forward here, onto ${plural(move.count, 'newer commit')}` : 'would start here'
     const shadow = el('li', { class: 'lane drag-ghost', 'data-sha': row.dataset.sha, 'aria-hidden': 'true' },
-        el('div', { class: 'lane-head' }, el('span', { class: 'tag lane-name', text: lane.name }), el('span', { class: 'muted small', text: where })),
         el('ul', { class: 'stack' }, (lane.stack ?? []).slice(0, STACK_SHOWN).map((commit) => el('li', { class: 'stack-commit' }, el('span', { class: 'subject', text: commit.subject })))),
+        el('div', { class: 'lane-head' }, el('div', { class: 'lane-title' }, el('span', { class: 'tag lane-name', text: lane.name }), el('span', { class: 'muted small', text: where }))),
         forkCurve())
     row.before(shadow)
 }
@@ -820,7 +884,6 @@ const commitRow = (repo, commit, className, label) => {
     const upstream = repo.main?.upstream
     const remote = upstream?.sha === commit.sha ? upstream.name : null
     const row = el('li', { class: `commit ${className}`, 'data-sha': commit.sha },
-        label && isHere(repo, null) ? herePill() : null,
         label ? el('span', { class: 'tag', text: label }) : null,
         remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch` }) : null,
         isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
@@ -854,10 +917,19 @@ const pathsFor = (key, lane) => {
 const verbLink = (name, label, title, onclick, disabled = false) => el('button', { type: 'button', class: 'btn link verb', disabled, title, onclick },
     icon(name), el('span', { text: label }))
 
+/** The main checkout, as changesOf draws a lane's uncommitted files: its own files, and no commit of its own to amend. */
+const mainCheckoutOf = (repo) => ({
+    name: repo.integrationBranch, path: repo.main.path, isMain: true, changes: repo.main.changes ?? [], dirty: repo.main.dirty,
+    operation: repo.main.operation, ahead: 0, pending: repo.main.pending ?? null
+})
+const isMerged = (lane) => !lane.isMain && lane.pull?.state === 'MERGED'
+
 /**
- * What is uncommitted in a lane, as ISL draws its working copy: a node on the lane's line, a row of things to do
- * (View changes, Select all, Deselect all, Discard…), each file ticked or not, in the colour of what happened to
- * it, and + Commit… and ↓ Amend under them, which open the message form for the ticked files.
+ * What is uncommitted in a lane, or in the main checkout, as ISL draws its working copy: a node on its line, a row of
+ * things to do (View changes, Select all, Deselect all, Discard…), each file ticked or not (every one, at first), in the
+ * colour of what happened to it, and under them what takes the ticked files: + Commit… and ↓ Amend… in a lane, which
+ * open the message form; Move to a new lane… in the main checkout, where nothing is committed without a gate, and in a
+ * lane whose pull request was merged, where a commit would be in no pull request.
  */
 const changesOf = (repo, lane, key) => {
     const files = lane.changes ?? []
@@ -867,18 +939,23 @@ const changesOf = (repo, lane, key) => {
     const busy = busyIn(repo.id) || Boolean(lane.pending)
     const chosen = chosenOf(key, lane)
     const some = chosen.length > 0 && chosen.length < files.length
-    const writing = selected?.repo === repo.id && selected?.lane === lane.name && (selected.form === 'commit' || selected.form === 'amend')
+    const writing = !lane.isMain && selected?.repo === repo.id && selected?.lane === lane.name && (selected.form === 'commit' || selected.form === 'amend')
     const count = some ? ` ${chosen.length} of ${files.length}` : ''
+    const who = lane.isMain ? `${repo.id}'s main checkout` : lane.name
+    const waiting = pending.get(key)
+    const here = waiting?.where === 'changes' ? waiting : null
+    const moving = lane.isMain || isMerged(lane)
+    const carry = () => { pending.set(key, { verb: 'carry', stage: 'form', where: 'changes' }); draw(true) }
     return el('div', { class: `changes${writing ? ' writing' : ''}` },
         el('div', { class: 'changes-actions tools' },
-            host.inEditor ? verbLink('diff', 'View changes', `Everything uncommitted in ${lane.name}, side by side`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: lane.name })) : null,
+            host.inEditor ? verbLink('diff', 'View changes', `Everything uncommitted in ${who}, side by side`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: who })) : null,
             verbLink('checkall', 'Select all', 'Tick every file', () => setChosen(key, lane, files.map((change) => change.path)), chosen.length === files.length),
             verbLink('box', 'Deselect all', 'Untick every file', () => setChosen(key, lane, []), chosen.length === 0),
-            verbLink('trash', 'Discard…', 'Throw away what is uncommitted in the ticked files, after a look', () => { pending.set(key, { verb: 'discard', stage: 'confirm', paths: chosen }); draw(true) }, busy || !chosen.length)),
-        el('ul', { class: 'change-list', 'aria-label': `${plural(lane.dirty, 'uncommitted file')} in ${lane.name}` }, shown.map((file) => {
+            verbLink('trash', 'Discard…', 'Throw away what is uncommitted in the ticked files, after a look', () => { pending.set(key, { verb: 'discard', stage: 'confirm', where: 'changes', paths: chosen }); draw(true) }, busy || !chosen.length)),
+        el('ul', { class: 'change-list', 'aria-label': `${plural(lane.dirty, 'uncommitted file')} in ${who}` }, shown.map((file) => {
             const status = file.status === '?' ? 'new' : file.status
             const tick = el('input', {
-                type: 'checkbox', class: 'tick', checked: chosen.includes(file.path) ? true : null, 'aria-label': `Take ${file.path} in the next commit`,
+                type: 'checkbox', class: 'tick', checked: chosen.includes(file.path) ? true : null, 'aria-label': `Take ${file.path}`,
                 onchange: (event) => {
                     const out = unchecked.get(key) ?? new Set()
                     if (event.target.checked) out.delete(file.path); else out.add(file.path)
@@ -889,14 +966,100 @@ const changesOf = (repo, lane, key) => {
             return opens(el('li', {},
                 tick,
                 el('span', { class: `change-status s-${status}`, text: file.status === '?' ? 'U' : file.status, title: STATUS_WORD[file.status] ?? file.status }),
-                el('span', { class: `change-path s-${status}`, text: file.path })),
-            `Show what is uncommitted in ${file.path}`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: lane.name, path: file.path }))
+                el('span', { class: `change-path s-${status}`, text: file.from ? `${file.from} → ${file.path}` : file.path })),
+            `Show what is uncommitted in ${file.path}`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: who, path: file.path }))
         })),
         files.length > CHANGES_SHOWN ? el('button', { type: 'button', class: 'btn link', text: all ? 'Show fewer' : `Show ${files.length - CHANGES_SHOWN} more`, onclick: () => toggle(`${key}:changes`) }) : null,
-        el('div', { class: 'changes-actions' },
-            verbLink('plus', `Commit${count}…`, some ? 'Commit the ticked files, with a message' : 'Commit every file above, with a message', () => select({ repo: repo.id, lane: lane.name, form: 'commit' }), busy || !chosen.length),
-            lane.ahead ? verbLink('amend', `Amend${count}…`, `Fold the ticked files into ${lane.name}'s newest commit`, () => select({ repo: repo.id, lane: lane.name, form: 'amend' }), busy || !chosen.length) : null),
+        here?.verb === 'discard' ? discardConfirm(repo, lane, key, here) : null,
+        here?.verb === 'carry' ? carryForm(repo, lane, key) : null,
+        el('div', { class: 'changes-actions' }, moving
+            ? verbLink('branch', `Move${count} to a new lane…`, lane.isMain
+                ? `A lane of their own, from the commit of ${repo.integrationBranch} they were made on: the ticked files leave the main checkout`
+                : `#${lane.pull.number} is merged: a lane of their own, from ${repo.integrationBranch}'s newest commit`, carry, busy || !chosen.length || here?.verb === 'carry')
+            : [
+                verbLink('plus', `Commit${count}…`, some ? 'Commit the ticked files, with a message' : 'Commit every file above, with a message', () => select({ repo: repo.id, lane: lane.name, form: 'commit' }), busy || !chosen.length),
+                lane.ahead ? verbLink('amend', `Amend${count}…`, `Fold the ticked files into ${lane.name}'s newest commit`, () => select({ repo: repo.id, lane: lane.name, form: 'amend' }), busy || !chosen.length) : null
+            ]),
+        isMerged(lane) ? el('p', { class: 'muted small merged-note', text: `#${lane.pull.number} was merged on GitHub, so a commit here would be in no pull request.` }) : null,
         IN_SIDEBAR && writing ? messageForm(repo, lane) : null)
+}
+
+/** Discard, asked beside the files it throws away: what each goes back to, and that nothing keeps a copy. */
+const discardConfirm = (repo, lane, key, waiting) => {
+    const files = waiting.paths ?? []
+    const fresh = files.filter((file) => (lane.changes ?? []).find((change) => change.path === file)?.status === '?')
+    const named = files.length === 1 ? files[0] : `${files.length} files`
+    const backTo = lane.isMain ? repo.main.head?.subject ?? `${repo.integrationBranch}'s commit` : lane.stack?.[0]?.subject ?? `${repo.integrationBranch}'s commit`
+    return el('div', { class: 'confirm danger' },
+        el('p', { text: `Discard what is uncommitted in ${named}? A changed file goes back to "${backTo}"` +
+            `${fresh.length ? `, and ${fresh.length === files.length ? (files.length === 1 ? 'it is new, so it is deleted' : 'they are new, so they are deleted') : `${plural(fresh.length, 'new file')} ${fresh.length === 1 ? 'is' : 'are'} deleted`}` : ''}. Nothing keeps a copy.` }),
+        el('button', {
+            type: 'button', class: 'btn danger', text: files.length === 1 ? 'Discard it' : 'Discard them', disabled: busyIn(repo.id),
+            onclick: async () => {
+                pending.delete(key)
+                unchecked.delete(key)
+                draw(true)
+                await press({ repo: repo.id, verb: 'discard', ...(lane.isMain ? { main: true } : { lane: lane.name }), paths: files })
+            }
+        }),
+        el('button', { type: 'button', class: 'btn quiet', text: 'Cancel', onclick: () => { pending.delete(key); draw(true) } }))
+}
+
+/**
+ * Move to a new lane, named where it is asked: the main checkout's ticked files, or what a lane holds that is in no pull
+ * request (its files, and the commits it made after the one its pull request was merged at). `lane new <name> --carry`,
+ * which moves nothing unless all of it applies.
+ */
+const carryForm = (repo, lane, key) => {
+    const draftKey = `carry:${key}`
+    const base = repo.integrationBranch
+    const since = isMerged(lane) && lane.sinceMerge > 0 && lane.pull.head ? lane.sinceMerge : 0
+    const chosen = lane.dirty ? chosenOf(key, lane) : []
+    const what = [since ? `${plural(since, 'commit')} made since #${lane.pull.number} was merged` : null,
+        chosen.length ? plural(chosen.length, lane.isMain ? 'ticked file' : 'uncommitted file') : null].filter(Boolean).join(' and ') || 'nothing'
+    const input = el('input', {
+        name: 'name', class: 'carry-name', placeholder: 'its name, like practice-mode', autocomplete: 'off', spellcheck: 'false', pattern: '[a-z0-9][a-z0-9\\-]*', required: true,
+        'data-draft': draftKey, oninput: (event) => drafts.set(draftKey, { title: event.target.value }),
+        title: 'Lowercase letters, digits and dashes: it becomes a folder and a branch', 'aria-label': 'A name for the new lane'
+    })
+    input.value = drafts.get(draftKey)?.title ?? ''
+    const cancel = () => { pending.delete(key); draw(true) }
+    const form = el('form', {
+        class: 'confirm carry',
+        onsubmit: async (event) => {
+            event.preventDefault()
+            if (!form.reportValidity()) return
+            const name = input.value.trim()
+            const paths = lane.dirty ? pathsFor(key, lane) : undefined
+            pending.delete(key)
+            drafts.delete(draftKey)
+            unchecked.delete(key)
+            draw(true)
+            await press({ repo: repo.id, verb: 'new', name, carry: true, ...(lane.isMain ? {} : { from: lane.name }), ...(since ? { after: lane.pull.head } : {}), ...(paths ? { paths } : {}) })
+        },
+        onkeydown: (event) => { if (event.key === 'Escape') { event.preventDefault(); cancel() } }
+    },
+    el('p', {
+        text: lane.isMain
+            ? `Move the ${what} out of the main checkout into a lane of their own, which starts from the commit of ${base} they were made on.`
+            : `Move ${what} into a lane of their own, from ${base}'s newest commit. ${lane.name} is left as ${isMerged(lane) ? `#${lane.pull.number} merged it` : 'it landed'}, to clear away. If they no longer apply there, nothing moves.`
+    }),
+    input,
+    el('button', { type: 'submit', class: 'btn primary', text: 'Move them', disabled: busyIn(repo.id) }),
+    el('button', { type: 'button', class: 'btn quiet', text: 'Cancel', onclick: cancel }))
+    if (!input.value) setTimeout(() => input.focus(), 0)
+    return form
+}
+
+/** The main checkout's uncommitted files, on main's line just above its newest commit, drawn as a lane's are. */
+const mainChangesRow = (repo) => {
+    const main = repo.main
+    if (!main?.dirty || main.operation || !main.onIntegration || !(main.changes ?? []).length) return null
+    return el('li', { class: 'main-changes' },
+        el('div', { class: 'main-changes-head' },
+            state('warn', `${plural(main.dirty, 'uncommitted file')} in the main checkout`, 'small'),
+            el('span', { class: 'muted small', text: `Land and Pull wait until ${main.dirty === 1 ? 'it is' : 'they are'} moved to a lane or discarded` })),
+        changesOf(repo, mainCheckoutOf(repo), `${repo.id}:main`))
 }
 
 const uncommittedOf = (repo, checkout, name, count, words = `${count} uncommitted`) =>
@@ -907,7 +1070,7 @@ const uncommittedOf = (repo, checkout, name, count, words = `${count} uncommitte
 // what a press will do, drawn before it has: ISL moves the graph at once
 // ---------------------------------------------------------------------------
 
-const FORESEEN = new Set(['new', 'rebase', 'commit', 'uncommit', 'discard', 'resolve', 'land', 'sweep', 'push', 'pr'])
+const FORESEEN = new Set(['new', 'rebase', 'commit', 'uncommit', 'discard', 'resolve', 'land', 'sweep', 'push', 'pr', 'merge', 'pull'])
 /** A press accepted: what it will do is drawn from now until a reading taken after it ended says what it did. */
 const expect = (body, job) => {
     if (!FORESEEN.has(body.verb) || body.dryRun) return
@@ -926,7 +1089,15 @@ const viewOf = (repo) => {
     if (!mine.length || repo.error) return repo
     const view = {
         ...repo,
+        main: repo.main ? { ...repo.main, changes: [...(repo.main.changes ?? [])] } : repo.main,
         lanes: repo.lanes.map((lane) => ({ ...lane, stack: [...(lane.stack ?? [])], changes: [...(lane.changes ?? [])], conflicts: [...(lane.conflicts ?? [])] }))
+    }
+    /** Files leaving a checkout (a lane, or the main one): those named, or every one. */
+    const leave = (where, paths) => {
+        const going = (where.changes ?? []).filter((change) => !paths?.length || paths.includes(change.path))
+        where.changes = (where.changes ?? []).filter((change) => !going.includes(change))
+        where.dirty = where.changes.length
+        return going
     }
     for (const { body, at } of mine) {
         const lane = view.lanes.find((candidate) => candidate.name === body.lane)
@@ -934,7 +1105,10 @@ const viewOf = (repo) => {
         switch (body.verb) {
             case 'new':
                 if (!view.lanes.some((candidate) => candidate.name === body.name)) {
-                    view.lanes.push({ name: body.name, branch: body.name, kind: 'fresh', exists: false, base: body.base ?? repo.spine[0]?.sha, stack: [], changes: [], conflicts: [], dirty: 0, ahead: 0, behind: 0, pending: 'Making it…' })
+                    // Carrying work, it is drawn with the files it takes, and they leave where they were.
+                    const from = body.carry ? (body.from ? view.lanes.find((candidate) => candidate.name === body.from) : view.main) : null
+                    const carried = from ? leave(from, body.paths) : []
+                    view.lanes.push({ name: body.name, branch: body.name, kind: 'fresh', exists: false, base: body.base ?? repo.spine[0]?.sha, stack: [], changes: carried, conflicts: [], dirty: carried.length, ahead: 0, behind: 0, pending: body.carry ? 'Moving the work…' : 'Making it…' })
                 }
                 break
             case 'rebase':
@@ -967,6 +1141,7 @@ const viewOf = (repo) => {
                 lane.pending = 'Uncommitting…'
                 break
             case 'discard':
+                if (body.main && view.main) { leave(view.main, body.paths ?? []); break }
                 if (!lane) break
                 lane.changes = lane.changes.filter((change) => !(body.paths ?? []).includes(change.path))
                 lane.dirty = lane.changes.length
@@ -977,8 +1152,8 @@ const viewOf = (repo) => {
                 lane.conflicts = lane.conflicts.filter((file) => !(body.paths ?? []).includes(file))
                 lane.pending = 'Marking it resolved…'
                 break
-            case 'land': case 'sweep': case 'push': case 'merge':
-                if (lane) lane.pending = { land: 'Landing…', sweep: 'Sweeping…', push: 'Pushing…', merge: 'Merging on GitHub…' }[body.verb]
+            case 'land': case 'sweep': case 'push': case 'merge': case 'pull':
+                if (lane) lane.pending = { land: 'Landing…', sweep: 'Sweeping…', push: 'Pushing…', merge: 'Merging on GitHub…', pull: 'Pulling…' }[body.verb]
                 break
             case 'pr':
                 if (lane) lane.pending = body.ready ? 'Marking it ready…' : lane.pull?.state === 'OPEN' ? 'Asking for review…' : 'Opening a pull request…'
@@ -1056,7 +1231,6 @@ const commitPane = (repo, commit, laneName) => {
     return el('div', { class: 'pane-commit' },
         el('div', { class: 'details-head' }, el('h3', { text: commit.subject }), IN_SIDEBAR ? null : closeButton()),
         el('div', { class: 'details-meta' },
-            newest && isHere(repo, lane) ? herePill() : null,
             lane ? el('span', { class: 'tag', text: lane.name }) : tip ? el('span', { class: 'tag', text: repo.integrationBranch }) : null,
             el('span', { class: 'mono', text: commit.short }),
             el('span', { text: commit.author || details?.author || '' }),
@@ -1065,7 +1239,7 @@ const commitPane = (repo, commit, laneName) => {
             : !details ? el('p', { class: 'muted', text: 'Reading…' })
                 : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
         el('div', { class: 'details-actions' },
-            newest || tip ? gotoButton(repo, newest ? lane : null) : null,
+            newest || tip ? terminalButton(repo, newest ? lane : null, { class: 'btn' }) : null,
             host.inEditor ? iconButton('diff', 'View changes', { onclick: showCommit(repo, commit), title: 'Every file it changed, side by side' }) : null,
             newest ? iconButton('pencil', 'Edit message', { onclick: () => select({ repo: repo.id, lane: lane.name, form: 'reword' }), title: 'A new title and description, nothing else' }) : null,
             newest ? iconButton('uncommit', 'Uncommit', { onclick: () => uncommitLane(repo, lane), title: 'Take it back out, its changes left uncommitted' }) : null,
@@ -1255,7 +1429,6 @@ const ICONS = {
     pr: [['circle', { cx: 4, cy: 3.5, r: 1.8 }], ['circle', { cx: 4, cy: 12.5, r: 1.8 }], ['path', { d: 'M4 5.3v5.4' }], ['circle', { cx: 12, cy: 12.5, r: 1.8 }],
         ['path', { d: 'M12 10.7V6.5a2 2 0 0 0-2-2H7.5' }], ['path', { d: 'M9 3 7.5 4.5 9 6' }]],
     comment: [['path', { d: 'M2.5 3.5h11v7.5h-6.5l-3 2.5V11h-1.5z' }]],
-    goto: [['path', { d: 'M2.5 8h7.5' }], ['path', { d: 'M7 4.5 10.5 8 7 11.5' }], ['path', { d: 'M10.5 2.5h3v11h-3' }]],
     uncommit: [['path', { d: 'M5.5 4 2.5 7l3 3' }], ['path', { d: 'M2.5 7h7a3.5 3.5 0 0 1 0 7h-2' }]],
     branch: [['circle', { cx: 4.5, cy: 3.5, r: 1.6 }], ['circle', { cx: 4.5, cy: 12.5, r: 1.6 }], ['path', { d: 'M4.5 5.1v5.8' }],
         ['circle', { cx: 11.5, cy: 4.5, r: 1.6 }], ['path', { d: 'M11.5 6.1c0 3.4-7 2.4-7 4.8' }]],
@@ -1344,7 +1517,9 @@ const badgesOf = (repo, lane) => {
 
 const confirmOf = (repo, lane, key) => {
     const waiting = pending.get(key)
-    if (!waiting) return null
+    // What is asked beside the files it is about is drawn there (changesOf), not here.
+    if (!waiting || waiting.where === 'changes') return null
+    if (waiting.verb === 'carry') return carryForm(repo, lane, key)
     const job = waiting.jobId ? jobById(waiting.jobId) : null
     if (waiting.stage === 'checking' && job && job.state === 'done') {
         waiting.stage = job.code === 0 ? 'confirm' : 'refused'
@@ -1447,18 +1622,6 @@ const confirmOf = (repo, lane, key) => {
             el('p', { text: `Replace origin's ${lane.branch}? It was rebased since it was pushed, so origin has ${plural(lane.upstream?.behind || 0, 'commit')} this lane no longer does. --force-with-lease replaces them only if nobody pushed there since this lane last fetched.` }),
             go('Replace it', { repo: repo.id, verb: 'push', lane: lane.name, force: true }), cancel)
     }
-    if (waiting.verb === 'discard') {
-        const files = waiting.paths ?? []
-        const fresh = files.filter((file) => (lane.changes ?? []).find((change) => change.path === file)?.status === '?')
-        const named = files.length === 1 ? files[0] : `${files.length} files`
-        return el('div', { class: 'confirm danger' },
-            el('p', { text: `Discard what is uncommitted in ${named}? A changed file goes back to "${lane.stack?.[0]?.subject ?? `${base}'s commit`}"` +
-                `${fresh.length ? `, and ${fresh.length === files.length ? (files.length === 1 ? 'it is new, so it is deleted' : 'they are new, so they are deleted') : `${plural(fresh.length, 'new file')} ${fresh.length === 1 ? 'is' : 'are'} deleted`}` : ''}. Nothing keeps a copy.` }),
-            el('button', {
-                type: 'button', class: 'btn danger', text: files.length === 1 ? 'Discard it' : 'Discard them', disabled: busy,
-                onclick: async () => { pending.delete(key); unchecked.delete(key); draw(true); await press({ repo: repo.id, verb: 'discard', lane: lane.name, paths: files }) }
-            }), cancel)
-    }
     if (waiting.verb === 'drop') {
         const own = lane.ahead || 0
         const up = lane.upstream
@@ -1497,17 +1660,23 @@ const forkCurve = () => {
     return svg
 }
 
-/** A lane as ISL draws a stack: its name as a tag, its state, its uncommitted files and its commits on a line of
-    its own, which curves into main's at the commit it forked from. `forked` is false for a lane drawn apart, below
-    main's log, whose fork is further back than the log goes. */
+/** A lane as ISL draws a stack, built up from where it forked: its uncommitted files on top, its commits newest first
+    under them, and its name at its base, with its state and what can be done with it beside it (the owner, 2 Oct), on a
+    line of its own that curves into main's at the commit it forked from. `forked` is false for a lane drawn apart,
+    below main's log, whose fork is further back than the log goes. */
 const laneCard = (repo, lane, forked = true) => {
     const key = `${repo.id}/${lane.name}`
     const step = prStepOf(repo, lane)
     const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(lane)
     const busy = busyIn(repo.id) || Boolean(lane.pending)
-    // A lane with nothing in it has nothing to gate or land; one with uncommitted work is
-    // shown the buttons, so their refusals can say why.
-    const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
+    const merged = isMerged(lane)
+    // A lane with nothing in it has nothing to gate or land; one with uncommitted work is shown the buttons, held,
+    // each saying what it waits for. One whose pull request was merged takes neither.
+    const working = (lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)) && !merged
+    const up = lane.upstream
+    // Its copy on origin has commits it lacks, and none of its own: pulling them comes before anything else.
+    const behindOrigin = lane.kind === 'working' && !lane.operation && up?.behind > 0 && !up.ahead
+    const held = (reason) => (busy ? true : Boolean(reason))
 
     const buttons = []
     const ask = (verb) => () => { pending.set(key, { verb, stage: 'confirm' }); draw(true) }
@@ -1529,37 +1698,51 @@ const laneCard = (repo, lane, forked = true) => {
         conflictButtons.push(iconButton('cross', 'Abort…', { class: 'btn quiet', disabled: busy, title: 'Put the lane back as it was before the rebase', onclick: ask('abort') }))
     }
     if (working && !lane.operation) {
+        const gateBlock = gateBlockOf(lane)
         buttons.push(iconButton('gate', 'Gate', {
-            // One thing solid: where its pull request has a next step, that is it, and the gate is GitHub's checks' too.
-            class: `btn${lane.queue?.verdict === 'gate now' && !step?.next ? ' primary' : ''}`,
-            disabled: busy || lane.dirty > 0 || Boolean(lane.operation),
-            title: lane.dirty ? 'Commit first: a gate result names a commit, and uncommitted changes are in none' : 'Rebase onto the integration branch and run the tier this lane earns',
-            onclick: () => { pending.set(key, { verb: 'gate', stage: 'confirm' }); draw(true) }
+            // One thing solid: where its pull request, or its copy on origin, has a next step, that is it.
+            class: `btn${lane.queue?.verdict === 'gate now' && !gateBlock && !step?.next && !behindOrigin ? ' primary' : ''}`,
+            disabled: held(gateBlock),
+            title: gateBlock ?? 'Rebase onto the integration branch and run the tier this lane earns',
+            onclick: ask('gate')
         }))
         // Where main lands by pull request there is no land here: the pull request's next step stands in its place.
         if (!byPullRequest(repo)) {
+            const landBlock = landBlockOf(repo, lane)
             buttons.push(iconButton('land', 'Land…', {
-                class: `btn${lane.queue?.verdict === 'land now' ? ' primary' : ''}`, disabled: busy,
-                title: 'Check whether it can land, then ask',
+                class: `btn${!landBlock && !behindOrigin ? ' primary' : ''}`, disabled: held(landBlock),
+                title: landBlock ?? 'Check whether it can land, then ask',
                 onclick: () => check(repo, lane, 'land')
             }))
         }
     }
     const number = lane.pull?.number
+    const pullBlock = pullBlockOf(repo)
     const nextStep = {
         pr: () => iconButton('pr', 'Pull request…', {
-            class: 'btn primary', disabled: busy, title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}${!lane.upstream || lane.upstream.ahead > 0 ? ', pushing it first' : ''}`,
-            onclick: () => { pending.set(key, { verb: 'pr', stage: 'form', push: !lane.upstream || lane.upstream.ahead > 0 }); draw(true) }
+            class: 'btn primary', disabled: busy, title: `Open a pull request for ${lane.branch} into ${repo.integrationBranch}${!up || up.ahead > 0 ? ', pushing it first' : ''}`,
+            onclick: () => { pending.set(key, { verb: 'pr', stage: 'form', push: !up || up.ahead > 0 }); draw(true) }
         }),
         push: () => iconButton('push', 'Push', { class: 'btn primary', disabled: busy, title: `Send what is new to #${number}`, onclick: () => press({ repo: repo.id, verb: 'push', lane: lane.name }) }),
         'push-force': () => iconButton('push', 'Push…', { class: 'btn primary', disabled: busy, title: 'It was rebased since it was pushed: ask before replacing origin\'s copy', onclick: ask('push-force') }),
+        update: () => iconButton('pull', 'Pull', { class: 'btn primary', disabled: busy, title: `Fast-forward ${lane.name} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed to it`, onclick: () => press({ repo: repo.id, verb: 'pull', lane: lane.name }) }),
         ready: () => iconButton('pr', 'Ready for review', { class: 'btn primary', disabled: busy, title: `Mark #${number} ready for review`, onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name, ready: true }) }),
         review: () => iconButton('pr', 'Request review…', { class: 'btn primary', disabled: busy, title: `Nobody is asked to review #${number} yet`, onclick: () => { pending.set(key, { verb: 'review', stage: 'form' }); draw(true) } }),
         merge: () => iconButton('land', 'Merge…', { class: 'btn primary', disabled: busy, title: `Merge #${number} on GitHub, then bring ${repo.integrationBranch} here up to it`, onclick: ask('merge') }),
-        pull: () => iconButton('pull', `Pull ${repo.integrationBranch}`, { class: 'btn primary', disabled: busy, title: `Bring ${repo.integrationBranch} here up to GitHub's, which has ${lane.name} in it`, onclick: () => press({ repo: repo.id, verb: 'pull' }) }),
+        pull: () => iconButton('pull', `Pull ${repo.integrationBranch}`, {
+            class: 'btn primary', disabled: held(pullBlock),
+            title: pullBlock ?? `Bring ${repo.integrationBranch} here up to GitHub's, which has #${number} in it`,
+            onclick: () => press({ repo: repo.id, verb: 'pull' })
+        }),
+        carry: () => iconButton('branch', 'Move to a new lane…', {
+            class: 'btn primary', disabled: busy, title: `What ${lane.name} holds that #${number} did not merge, in a lane of its own from ${repo.integrationBranch}'s newest commit`,
+            onclick: () => { pending.set(key, { verb: 'carry', stage: 'form', where: lane.dirty ? 'changes' : 'card' }); draw(true) }
+        }),
         drop: () => iconButton('trash', 'Drop…', { class: 'btn primary', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') })
     }[step?.next]
     if (nextStep && !lane.operation) buttons.push(nextStep())
+    // Behind its copy on origin where the pull request has no word on it (main lands here): Pull, all the same.
+    else if (behindOrigin) buttons.push(iconButton('pull', 'Pull', { class: 'btn primary', disabled: busy, title: `Fast-forward ${lane.name} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed to it`, onclick: () => press({ repo: repo.id, verb: 'pull', lane: lane.name }) }))
     if ((working || lane.kind === 'fresh') && !lane.operation && lane.behind > 0) {
         buttons.push(iconButton('rebase', 'Rebase', {
             class: `btn${lane.queue?.verdict === 'rebase first' || step?.next === 'rebase' ? ' primary' : ''}`,
@@ -1570,13 +1753,14 @@ const laneCard = (repo, lane, forked = true) => {
     }
     // What is done now and then, rather than at every step, sits behind ⋯ in a tab: pushing, and putting a lane away.
     const more = []
-    if (lane.kind === 'working' && !lane.operation) {
-        const up = lane.upstream
+    if (lane.kind === 'working' && !lane.operation && !merged) {
         if ((!up || up.ahead > 0) && !['push', 'push-force', 'pr'].includes(step?.next)) {
             const rewrite = Boolean(up && up.behind > 0)
+            // Never offered over somebody else's commits: those are brought in first.
+            const theirs = rewrite && up.foreign ? `${up.name} has ${plural(up.foreign, 'commit')} of somebody else's: bring them in first (git pull --rebase, in the lane)` : null
             more.push(iconButton('push', rewrite ? 'Push…' : 'Push', {
-                disabled: busy,
-                title: rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time',
+                disabled: held(theirs),
+                title: theirs ?? (rewrite ? 'It was rebased since it was pushed: ask before replacing origin\'s copy' : up ? `Send ${plural(up.ahead, 'commit')} to origin` : 'Send the branch to origin, for the first time'),
                 onclick: rewrite ? ask('push-force') : () => press({ repo: repo.id, verb: 'push', lane: lane.name })
             }))
         } else if (lane.pull?.state !== 'OPEN' && repo.github?.state === 'ok' && step?.next !== 'pr') {
@@ -1606,12 +1790,15 @@ const laneCard = (repo, lane, forked = true) => {
             more.push(iconButton('land', 'Merge on GitHub…', { disabled: busy, title: `Merge #${lane.pull.number} on GitHub, then bring ${repo.integrationBranch} here up to it`, onclick: ask('merge') }))
         }
     }
-    // What openLinks has nothing for (no Changes for an empty lane, no Goto where you are) is left out, not kept as a gap.
+    // What openLinks has nothing for (no Changes for an empty lane) is left out, not kept as a gap.
     buttons.push(...openLinks(repo, lane).filter(Boolean))
     // A lane not being worked on: set aside (nothing removed), or dropped (its folder removed, its branch kept), after a check.
     if ((lane.kind === 'working' || lane.kind === 'fresh') && lane.exists && !lane.operation) {
         more.push(iconButton('aside', 'Set aside', { class: 'btn quiet', disabled: busy, title: 'Out of the landing order and the log, listed apart; nothing removed', onclick: () => press({ repo: repo.id, verb: 'aside', lane: lane.name }) }))
-        more.push(iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }))
+        if (step?.next !== 'drop') {
+            const work = lane.dirty ? `${lane.name} has ${plural(lane.dirty, 'uncommitted file')}, which would go with its folder: commit, move or discard ${lane.dirty === 1 ? 'it' : 'them'} first` : null
+            more.push(iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: held(work), title: work ?? 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }))
+        }
     }
     if (lane.pending) { buttons.length = 0; more.length = 0 }
     // The side bar opens every button in the card behind its own ⋯ (below); a tab keeps the rest in a menu of its own.
@@ -1640,20 +1827,8 @@ const laneCard = (repo, lane, forked = true) => {
             })) : null)
         : null
 
-    const files = lane.queue?.files ?? []
-    const filesKey = `${key}:files`
-    const filesToggle = files.length
-        ? el('button', {
-            type: 'button', class: 'btn link', text: expanded.has(filesKey) ? 'Hide the files' : `${plural(files.length, 'file')} changed`,
-            onclick: () => toggle(filesKey)
-        })
-        : null
-    const filesList = files.length && expanded.has(filesKey)
-        ? el('div', { class: 'files' }, files.map((file) => opens(el('div', { text: file }),
-            `Show what ${lane.name} changed in ${file}`, () => openIn('file', { repo: repo.path, lane: lane.name, path: file }))))
-        : null
-
-    // What is true of it besides its state, in one quiet line: no count of its commits, which its dots show.
+    // What is true of it besides its state, in one quiet line: no count of its commits, which its dots show, nor of its
+    // files, which its uncommitted node and its commits' details show.
     const facts = el('div', { class: 'facts' },
         lane.quiet ? Object.assign(state('quiet', `Quiet for ${quietFor(lane.quietDays)}`, 'small quiet-for'), { title: `Nothing done in it since ${exactly(lane.lastActive)}: set it aside, or drop it, if it is not wanted now` }) : null,
         lane.branch !== lane.name ? el('span', { text: `branch ${lane.branch}` }) : null,
@@ -1661,11 +1836,11 @@ const laneCard = (repo, lane, forked = true) => {
         forked ? null : historyButton(repo, `fork:${lane.name}`, 'Show where it forked', `Read ${repo.integrationBranch} down to the commit ${lane.name} forked from`,
             () => readHistory(repo, 'fork', `fork:${lane.name}`, lane)),
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
+        merged && lane.sinceMerge === null && lane.pull?.head ? el('span', { text: `#${lane.pull.number}'s commit is not in its history now: what it merged cannot be told apart` }) : null,
         lane.pending ? null : gateOf(lane),
         lane.pending ? null : pushedOf(lane),
         stack0(lane) ? null : badgesOf(repo, lane),
-        serverOf(lane),
-        filesToggle)
+        serverOf(lane))
 
     const stack = lane.stack ?? []
     const all = expanded.has(key)
@@ -1691,7 +1866,7 @@ const laneCard = (repo, lane, forked = true) => {
             hidden > 0 || (all && stack.length > STACK_SHOWN) || lane.more
                 ? el('li', { class: 'stack-more' }, el('button', {
                     type: 'button', class: 'btn link',
-                    text: all ? 'Show fewer' : `Show ${hidden} more ${hidden === 1 ? 'commit' : 'commits'}${lane.more ? ' (the newest twenty)' : ''}`,
+                    text: all ? 'Show fewer' : `Show ${hidden} older ${hidden === 1 ? 'commit' : 'commits'}${lane.more ? ' (the newest twenty)' : ''}`,
                     onclick: () => toggle(key)
                 }))
                 : null)
@@ -1701,7 +1876,6 @@ const laneCard = (repo, lane, forked = true) => {
         const more = collision.paths.length > 3 ? `, and ${collision.paths.length - 3} more` : ''
         return el('p', { class: 'collide', text: `Collides with ${collision.lane} in ${collision.paths.slice(0, 3).join(', ')}${more}` })
     })
-
 
     // Dragged onto a commit of main, a clean lane is rebased there (after a look): ISL's drag-to-rebase.
     const draggable = !lane.dirty && !lane.operation && (lane.kind === 'working' || lane.kind === 'fresh') && !busy
@@ -1724,24 +1898,26 @@ const laneCard = (repo, lane, forked = true) => {
     // The state's reason is its title, except where it says what to do about a fault, which keeps a line.
     const said = state(tone, word)
     if (detail) said.title = detail
+    const changes = changesOf(repo, lane, key)
     const card = el('li', {
-        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${isHere(repo, lane) ? ' is-here' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}`,
+        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
         'data-key': key, tabindex: '0', draggable: draggable ? 'true' : null,
         title: draggable ? 'Drag it onto a commit of main to rebase it there' : null
     },
+        changes,
+        stackList,
         el('div', { class: 'lane-head' },
-            isHere(repo, lane) ? herePill() : null,
-            laneName(repo, lane),
-            said,
-            wantsBadge(repo.id, lane.name),
-            el('span', { class: 'grow' }),
-            corner,
-            el('div', { class: 'actions hover-actions' }, next ? buttons.filter((button) => button !== next) : buttons, moreMenu)),
+            // Its name, its state, and beside them, never across the page from them, what can be done with it.
+            el('div', { class: 'lane-title' },
+                laneName(repo, lane),
+                said,
+                wantsBadge(repo.id, lane.name),
+                el('div', { class: 'actions hover-actions' }, next ? buttons.filter((button) => button !== next) : buttons, moreMenu)),
+            corner),
         agentsRow(repo, lane.name),
         facts,
         collisions,
         confirmOf(repo, lane, key),
-        filesList,
         liveOf(repo, lane),
         detail && tone === 'risk' ? el('p', { class: 'why', text: detail }) : null,
         failureOf(repo, lane),
@@ -1759,8 +1935,6 @@ const laneCard = (repo, lane, forked = true) => {
                         onclick: () => press({ repo: repo.id, verb: 'resolve', lane: lane.name, paths: [file] })
                     }, icon('check'), el('span', { text: 'Resolved' }))))))
             : null,
-        changesOf(repo, lane, key),
-        stackList,
         forked ? forkCurve() : null)
     if (draggable) {
         card.addEventListener('dragstart', (event) => {
@@ -1780,13 +1954,21 @@ const landedRow = (repo, lane) => {
     const [tone, word, detail] = statusOf(lane)
     const busy = busyIn(repo.id)
     const sweepable = lane.kind === 'landed' && !lane.dirty
+    // Landed, and something begun in it since: moved to a lane of its own, after which this one sweeps as usual.
+    const carries = lane.kind === 'landed' && lane.dirty > 0 && lane.exists && !lane.operation
     return el('li', { 'data-key': key, tabindex: '0' },
         el('span', { class: 'lane-name', text: lane.name }),
         state(tone, word),
         detail ? el('span', { class: 'muted', text: detail }) : null,
+        carries ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         lane.port ? serverOf(lane) : null,
         el('span', { class: 'grow' }),
         el('div', { class: 'actions' },
+            carries ? iconButton('branch', 'Move to a new lane…', {
+                class: 'btn primary', disabled: busy || pending.get(key)?.verb === 'carry',
+                title: `What is uncommitted in ${lane.name}, in a lane of its own from ${repo.integrationBranch}'s newest commit; then ${lane.name} sweeps as usual`,
+                onclick: () => { pending.set(key, { verb: 'carry', stage: 'form', where: 'card' }); draw(true) }
+            }) : null,
             sweepable ? el('button', {
                 type: 'button', class: 'btn', text: 'Sweep…', disabled: busy,
                 title: 'Check what a sweep would remove, then ask',
@@ -1796,14 +1978,18 @@ const landedRow = (repo, lane) => {
         el('div', { class: 'full' }, confirmOf(repo, lane, key)))
 }
 
-/** Pull: main fast-forwarded to origin, when it is behind, on main, clean, and has nothing origin lacks. */
+/**
+ * Pull: main fast-forwarded to origin's, fetched first. Shown whenever origin has commits main lacks, and held, saying
+ * why, while it cannot run (main ahead as well, its checkout on another branch, part-way, or with uncommitted work):
+ * a Pull that is not there cannot say what it waits for (the owner, 2 Oct: there was no way to pull that he saw).
+ */
 const pullButton = (repo) => {
-    const main = repo.main
-    const up = main?.upstream
-    if (!up?.behind || up.ahead || !main.onIntegration || main.dirty || main.operation) return null
+    const up = repo.main?.upstream
+    if (!up?.behind) return null
+    const block = pullBlockOf(repo)
     return iconButton('pull', `Pull ${up.behind}`, {
-        disabled: busyIn(repo.id),
-        title: `Fast-forward ${repo.integrationBranch} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed`,
+        class: `btn${block ? '' : ' primary'}`, disabled: busyIn(repo.id) || Boolean(block),
+        title: block ?? `Fast-forward ${repo.integrationBranch} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed`,
         onclick: () => press({ repo: repo.id, verb: 'pull' })
     })
 }
@@ -1848,7 +2034,7 @@ const headOf = (repo) => {
             }, true) : null,
             pullButton(repo),
             pushMainButton(repo),
-            gotoButton(repo, null),
+            terminalButton(repo, null),
             iconButton('fetch', 'Fetch', {
                 disabled: busyIn(repo.id),
                 title: 'git fetch --prune: what is pushed, and what others pushed',
@@ -1874,7 +2060,8 @@ const headOf = (repo) => {
     else if (main.fetchedAt) facts.push(el('span', { text: `fetched ${ago(main.fetchedAt)}`, title: exactly(main.fetchedAt) }))
     if (!main.onIntegration) facts.push(state('warn', `The main checkout is on ${main.branch}, not ${base}: landing needs ${base}`, 'small'))
     if (main.operation) facts.push(state('risk', `The main checkout is part-way through a ${main.operation}`, 'small'))
-    if (main.dirty) facts.push(uncommittedOf(repo, main.path, `the main checkout of ${repo.id}`, main.dirty, `${main.dirty} uncommitted in the main checkout`))
+    // Uncommitted work in the main checkout is drawn on main's line (mainChangesRow); said here only where it is not.
+    if (main.dirty && (main.operation || !main.onIntegration || !(main.changes ?? []).length)) facts.push(uncommittedOf(repo, main.path, `the main checkout of ${repo.id}`, main.dirty, `${main.dirty} uncommitted in the main checkout`))
     const github = repo.github ?? {}
     if (github.state === 'absent') facts.push(el('span', { text: 'Pull requests: gh is not installed here' }))
     else if (github.state === 'signed-out') facts.push(el('span', { text: 'Pull requests: sign in with gh auth login' }))
@@ -1976,15 +2163,8 @@ const logOf = (repo) => {
     const onSpine = new Set(repo.spine.map((commit) => commit.sha))
     const live = repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
     const newestFirst = (a, b) => (b.head?.at ?? 0) - (a.head?.at ?? 0)
+    // No row saying there are no lanes, nor a New lane beside it: every commit of main offers one (the owner, 2 Oct).
     const rows = []
-    if (!live.length) {
-        rows.push(el('li', { class: 'empty-lanes' },
-            el('span', { text: 'No lanes yet. A lane is a folder of its own, on its own branch and port.' }),
-            repo.spine?.[0] ? iconButton('plus', 'New lane', {
-                title: `A lane from ${repo.integrationBranch} as it is now; or hover any commit of ${repo.integrationBranch} below for one from there`,
-                onclick: () => startNaming(repo, repo.spine[0])
-            }) : null))
-    }
     const spine = spineOf(repo, live)
     // Origin ahead of main, with commits this log does not hold: a dashed row above main's newest says so, with Pull.
     const upstream = repo.main?.upstream
@@ -1998,6 +2178,8 @@ const logOf = (repo) => {
     const root = !repo.spineMore && spine.length === repo.spine.length ? spine.length - 1 : -1
     spine.forEach((commit, index) => {
         for (const lane of live.filter((candidate) => candidate.base === commit.sha).sort(newestFirst)) rows.push(laneCard(repo, lane))
+        // The main checkout's own uncommitted work, on main's line just above the commit it was begun on, as a lane's sits on its.
+        if (index === 0) rows.push(mainChangesRow(repo))
         rows.push(commitRow(repo, commit, `${index === 0 ? 'tip' : ''}${index === root ? ' root' : ''}`, index === 0 ? repo.integrationBranch : null))
         rows.push(inlineDetails(repo, commit))
     })
@@ -2120,11 +2302,14 @@ const queueOf = (repo) => {
                 return chip
             })))),
         el('span', { class: 'grow' }),
-        next && !byPullRequest(repo) ? iconButton('land', `Land ${next.name}…`, {
-            class: 'btn primary', disabled: busy,
-            title: `Check that ${next.name} can land, then ask: it is ready, and first among any it collides with`,
-            onclick: () => check(repo, next, 'land')
-        }) : null,
+        next && !byPullRequest(repo) ? (() => {
+            const block = landBlockOf(repo, next)
+            return iconButton('land', `Land ${next.name}…`, {
+                class: `btn${block ? '' : ' primary'}`, disabled: busy || Boolean(block),
+                title: block ?? `Check that ${next.name} can land, then ask: it is ready, and first among any it collides with`,
+                onclick: () => check(repo, next, 'land')
+            })
+        })() : null,
         // Where main lands by pull request, the first ready lane whose pull request may be merged.
         next && prStepOf(repo, next)?.next === 'merge' ? iconButton('land', `Merge ${next.name}…`, {
             class: 'btn primary', disabled: busy, title: `Merge #${next.pull.number} on GitHub: it is approved, and first among any it collides with`,
@@ -2185,7 +2370,7 @@ const asideRow = (repo, lane) => {
         el('div', { class: 'actions' },
             iconButton('unaside', 'Bring back', { disabled: busy, title: 'Into the landing order and the log again', onclick: () => press({ repo: repo.id, verb: 'resume', lane: lane.name }) }),
             lane.exists && !lane.operation ? iconButton('trash', 'Drop…', { class: 'btn quiet', disabled: busy, title: 'Remove its folder and keep its branch, after a check', onclick: () => check(repo, lane, 'drop') }) : null,
-            gotoButton(repo, lane)),
+            terminalButton(repo, lane)),
         el('div', { class: 'full' }, confirmOf(repo, lane, key)))
 }
 
@@ -2573,9 +2758,9 @@ const draw = (force = false) => {
 // ---------------------------------------------------------------------------
 
 const KEYS = [
-    ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its files'],
-    ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it'],
-    ...(host.inEditor ? [['o', 'go to it: the files you have open and your terminal move to it'], ['a', 'start an agent in it']] : []),
+    ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its newest commit\'s details'],
+    ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it, or pull what origin has of it that it lacks'],
+    ...(host.inEditor ? [['o', 'its terminal: yours moves to it, and the files you have open reopen from it'], ['a', 'start an agent in it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
     ['[  ]', 'the repository before, or the next, Home among them'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
@@ -2633,14 +2818,20 @@ document.addEventListener('keydown', (event) => {
     if (!here) return
     const { lane } = here
     const confirm = (verb) => { pending.set(here.key, { verb, stage: 'confirm' }); draw(true) }
+    // A key does what its button would, and where the button is held, says why instead.
+    const unless = (reason, then) => (reason ? notice(reason, 'ok') : then())
+    const up = lane.upstream
     const act = {
-        Enter: () => host.inEditor && (lane.kind === 'working' || lane.dirty) ? openIn('changes', { repo: repo.path, lane: lane.name }) : toggle(`${here.key}:files`),
-        c: () => { if (lane.dirty && !lane.operation) select({ repo: repo.id, lane: lane.name, form: 'commit' }) },
+        Enter: () => host.inEditor && (lane.kind === 'working' || lane.dirty) ? openIn('changes', { repo: repo.path, lane: lane.name })
+            : lane.stack?.[0] ? select({ repo: repo.id, sha: lane.stack[0].sha, lane: lane.name }) : null,
+        c: () => { if (lane.dirty && !lane.operation && !isMerged(lane)) select({ repo: repo.id, lane: lane.name, form: 'commit' }) },
         u: () => { if (lane.ahead > 0 && !lane.operation) uncommitLane(repo, lane) },
-        g: () => confirm('gate'),
-        l: () => check(repo, lane, 'land'),
+        g: () => unless(gateBlockOf(lane), () => confirm('gate')),
+        l: () => unless(byPullRequest(repo) ? `${repo.integrationBranch} takes its changes by pull request: Merge… lands it` : landBlockOf(repo, lane), () => check(repo, lane, 'land')),
         r: () => lane.behind > 0 && confirm('rebase'),
-        p: () => lane.upstream?.behind > 0 ? confirm('push-force') : press({ repo: repo.id, verb: 'push', lane: lane.name }),
+        p: () => up?.behind > 0 && !up.ahead ? press({ repo: repo.id, verb: 'pull', lane: lane.name })
+            : up?.behind > 0 ? unless(up.foreign ? `${up.name} has commits of somebody else's: bring them in first (git pull --rebase, in the lane)` : null, () => confirm('push-force'))
+                : press({ repo: repo.id, verb: 'push', lane: lane.name }),
         a: () => host.inEditor && lane.exists && openIn('agent', { repo: repo.path, lane: lane.name }),
         o: () => host.inEditor && lane.exists && openIn('goto', { repo: repo.path, lane: lane.name })
     }[key]

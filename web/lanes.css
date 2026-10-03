@@ -226,18 +226,16 @@ html[data-surface="sidebar"] .subject { max-width: none; }
 }
 
 .lane { position: relative; padding: 6px 0 20px var(--indent); border-radius: 6px; }
-/* The lane's own line, from its name down to where it curves into main's. */
+/* The lane's own line, from its newest node (its uncommitted files, or its newest commit) down past its name, at its
+   base, to where it curves into main's. */
 .lane::before {
-  content: ""; position: absolute; left: calc(var(--column) - 1px); top: 19px; bottom: 18px;
+  content: ""; position: absolute; left: calc(var(--column) - 1px); top: 20px; bottom: 18px;
   width: 2px; background: var(--rail);
 }
 .lane.adrift { padding-bottom: 10px; }
 .lane.adrift::before { bottom: 12px; }
 .lane > svg.fork { position: absolute; left: 0; bottom: 0; overflow: visible; pointer-events: none; }
 .lane > svg.fork path { stroke: var(--rail); }
-/* Where the editor is: its line in the accent, as ISL draws the stack you are on. */
-.lane.is-here::before { background: var(--accent); }
-.lane.is-here > svg.fork path { stroke: var(--accent); }
 /* A lane whose agent waits on you: its line in amber, over where the editor is, and the words beside its name. */
 .lane.wants-you::before { background: var(--warn); }
 .lane.wants-you > svg.fork path { stroke: var(--warn); }
@@ -245,6 +243,11 @@ html[data-surface="sidebar"] .subject { max-width: none; }
   color: var(--warn); background: var(--warn-wash); }
 .wants-badge:empty { display: none; }
 .lane-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
+/* Its name at its base, under what was built on it. */
+.lane > .stack + .lane-head, .lane > .changes + .lane-head { margin-top: 4px; }
+/* Its name, its state, and what can be done with it, side by side: the toolbar sits beside the state, never across the
+   page from it (the owner, 2 Oct). */
+.lane-title { position: relative; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .tag.lane-name { font-weight: 600; font-size: var(--s13); }
 .lane .facts { margin: 2px 0 0; gap: 2px 14px; font-size: var(--s12); }
 .lane .facts .btn.link { font-size: inherit; }
@@ -262,7 +265,6 @@ html[data-surface="sidebar"] .subject { max-width: none; }
   content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 10px;
   width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
 }
-.lane.is-here .stack-commit:first-child::before { background: var(--bg); border: 2px solid var(--accent); }
 .stack-more { padding: 2px 0; font-size: var(--s12); }
 
 /*
@@ -298,6 +300,7 @@ html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
 html[data-surface="sidebar"] .lane-head { gap: 4px 6px; min-height: 24px; }
 html[data-surface="sidebar"] .lane-head .grow { display: none; }
 html[data-surface="sidebar"] .lane-head .actions { flex-basis: 100%; }
+html[data-surface="sidebar"] .lane-title { gap: 4px 6px; flex: 1 1 100%; }
 html[data-surface="sidebar"] .stack-commit { gap: 6px; padding: 3px 0; font-size: var(--s12); }
 html[data-surface="sidebar"] .stack-commit::before { left: calc(var(--column) - var(--indent) - 4px); top: 8px; width: 8px; height: 8px; }
 html[data-surface="sidebar"] .landed li { gap: 4px 8px; }
@@ -347,13 +350,17 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
  * with no pointer to hover shows them always.
  */
 .lane .hover-actions { visibility: hidden; opacity: 0; transition: opacity 0.12s ease; }
-/* Floated over the right of the head, not in its flow: when the column is narrow (the details pane open) a toolbar
-   that wrapped would leave an empty line under every lane's name at rest. */
+/* Floated just after the lane's state, not in the head's flow: a toolbar kept in the flow would hold its room at rest,
+   and when the column is narrow (the details pane open) wrap into an empty line under every lane's name. */
 .lane > .lane-head { position: relative; }
-html:not([data-surface="sidebar"]) .lane > .lane-head > .hover-actions {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 2;
-  flex-wrap: nowrap; padding-left: 24px;
-  background: linear-gradient(to right, transparent, var(--bg) 20px);
+html:not([data-surface="sidebar"]) .lane-title > .hover-actions {
+  position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 2;
+  flex-wrap: nowrap; padding: 0 4px 0 10px; border-radius: 6px; background: var(--bg);
+}
+/* A screen too narrow to float it beside the state keeps it in the flow, on a line of its own. */
+@media (max-width: 640px) {
+  html:not([data-surface="sidebar"]) .lane-title { flex-wrap: wrap; }
+  html:not([data-surface="sidebar"]) .lane-title > .hover-actions { position: static; transform: none; flex-basis: 100%; padding: 0; flex-wrap: wrap; }
 }
 .lane:hover .hover-actions, .lane.pointer .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions, .lane.more-open .hover-actions { visibility: visible; opacity: 1; }
 /* A lane's ⋯ in a tab: what is done now and then (push, set aside, drop), in a small menu under it. */
@@ -397,9 +404,6 @@ html[data-surface="sidebar"] .row-actions .btn.solid { padding: 2px 4px; }
 }
 .name-lane input { font-family: var(--mono); max-width: 240px; }
 .name-lane .muted { font-size: var(--s12); }
-/* Where the editor is. */
-.here { flex: none; padding: 0 7px; border-radius: 999px; font-size: var(--s11); font-weight: 600; line-height: 1.7;
-  color: var(--vscode-badge-foreground, var(--accent-ink)); background: var(--vscode-badge-background, var(--accent)); }
 /* What is uncommitted, ISL's way: each file in the colour of what happened to it, and under them Commit and
    Amend as words with a mark. */
 .conflicts-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -436,8 +440,6 @@ li[data-key]:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--
 /* Nothing yet: a sentence, and the way to start. */
 .empty { max-width: 60ch; }
 .empty-title { font-weight: 600; margin: 0 0 6px; }
-.empty-lanes { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 0 8px 32px; color: var(--muted); font-size: var(--s13); }
-html[data-surface="sidebar"] .empty-lanes { padding-left: 24px; }
 
 /* A press running in a lane: its verb, the gate's step, a clock. */
 .live { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 6px 0 0; font-size: var(--s12); color: var(--muted); }
@@ -578,6 +580,25 @@ html[data-surface="sidebar"] .details { display: none; }
   width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--warn); box-sizing: border-box;
 }
 html[data-surface="sidebar"] .changes::before { left: calc(var(--column) - var(--indent) - 4px); width: 8px; height: 8px; }
+/* The main checkout's uncommitted files: a node of their own on main's line, just above the commit they were begun on. */
+.log > li.main-changes { position: relative; padding: 6px 0 4px calc(var(--spine) + 20px); }
+.log > li.main-changes .changes::before { display: none; }
+.log > li.main-changes::before {
+  content: ""; position: absolute; left: calc(var(--spine) - 5px); top: 10px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--warn); box-sizing: border-box;
+}
+html[data-surface="sidebar"] .log > li.main-changes { padding-left: calc(var(--spine) + 16px); }
+html[data-surface="sidebar"] .log > li.main-changes::before { left: calc(var(--spine) - 4px); top: 8px; width: 8px; height: 8px; }
+.main-changes-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.main-changes .changes { margin-top: 2px; }
+/* A merged lane's note under its files, and the name a lane is moved into. */
+.merged-note { margin: 2px 0 0; }
+.confirm.carry input {
+  font: inherit; font-family: var(--mono); font-size: var(--s13); padding: 3px 8px; min-width: 0; flex: 1 1 160px; max-width: 240px;
+  color: var(--vscode-input-foreground, var(--ink)); background: var(--vscode-input-background, var(--bg));
+  border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 6px;
+}
+.confirm.carry input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .changes-actions.tools { gap: 2px 14px; font-size: var(--s12); }
 .changes-actions.tools .btn.link.verb { color: var(--muted); }
 .changes-actions.tools .btn.link.verb:hover:not(:disabled) { color: var(--accent); }

@@ -759,13 +759,13 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         const name = lane ? lane.name : `${repo.id}'s main checkout`
         // A terminal that could not be moved does not undo a Goto that moved the files.
         const terminal = await followTerminal(repo, lane, target, ownerOf).catch((error) => {
-            output.appendLine(`Goto moved the files but not the terminal: ${error.message}`)
+            output.appendLine(`The files moved to the lane, but the terminal did not: ${error.message}`)
             return null
         })
         const left = missing.length ? `; not in ${lane ? lane.name : 'main'}, so left as they were: ${missing.join(', ')}` : ''
         const followed = TERMINAL_SAID[terminal] ? `; ${TERMINAL_SAID[terminal]}` : ''
         vscode.window.setStatusBarMessage?.(`LaneKit: you are in ${name} now${moved.length ? `, with ${moved.length === 1 ? 'its copy of the file you had open' : `its copies of ${moved.length} files you had open`}` : ''}${followed}${left}`, 6000)
-        if (kept.length) vscode.window.showInformationMessage(`LaneKit: ${kept.length === 1 ? `${kept[0]} has` : `${kept.length} files have`} unsaved changes, so ${kept.length === 1 ? 'it stays' : 'they stay'} where ${kept.length === 1 ? 'it is' : 'they are'}: save or undo them, then Goto again.`)
+        if (kept.length) vscode.window.showInformationMessage(`LaneKit: ${kept.length === 1 ? `${kept[0]} has` : `${kept.length} files have`} unsaved changes, so ${kept.length === 1 ? 'it stays' : 'they stay'} where ${kept.length === 1 ? 'it is' : 'they are'}: save or undo them, then open its terminal again.`)
         return { moved, kept, missing, target, terminal }
     }
 
@@ -928,7 +928,6 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         if (!message || typeof message !== 'object') return
         if (message.type === 'ready') {
             lastSent = null
-            hereSaid = null   // a page just made has not heard where the editor is
             // What was last read, at once, so a tab just opened is not "Reading the lanes…" for the read's length.
             const known = service.stateKnown()
             if (known) page.webview.postMessage({ type: 'state', state: known })
@@ -973,18 +972,9 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         const first = (vscode.workspace.workspaceFolders ?? []).find((folder) => folder.uri.scheme === 'file')
         return first?.uri.fsPath ?? null
     }
-    // Where the editor is, told to every page as it moves, for its "You are here".
-    let hereSaid = null
-    const sayHere = (at) => {
-        const now = JSON.stringify(at ? { repo: at.repo.id, lane: at.lane?.name ?? null } : null)
-        if (now === hereSaid) return
-        hereSaid = now
-        post({ type: 'here', ...(at ? { repo: at.repo.id, lane: at.lane?.name ?? null } : { repo: null }) })
-    }
     const updateBar = () => {
         const file = whereNow()
         const at = file ? service.laneAt(file) : null
-        sayHere(at)
         if (!at) { bar.hide(); return }
         if (at.lane) {
             bar.text = `$(git-branch) ${at.lane.name} · ${wordOf(at.lane)}`
@@ -1052,8 +1042,8 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         const item = (label, detail, run) => items.push({ label, detail, run })
         item('$(list-tree) Show in LaneKit', `${inTab() ? 'its tab' : 'the side bar'}, with this lane marked`, () => reveal(lane ? at : null))
         if (service.known().repos.length > 1) item('$(link-external) A tab of its own', `${repo.name ?? repo.id} alone, in a LaneKit tab with its name`, () => showOwn(repo.id))
-        if (lane) item('$(arrow-right) Goto', here?.lane?.name === lane.name ? `your terminal in ${lane.name}, in front` : `move here: the files you have open reopen from ${lane.name}, and your terminal follows`, () => gotoCheckout(repo, lane))
-        if (!lane) item('$(arrow-right) Goto main', here?.lane ? `the files you have open reopen from ${repo.id}'s main checkout, and your terminal follows` : `your terminal in ${repo.id}'s main checkout, in front`, () => gotoCheckout(repo, null))
+        if (lane) item('$(terminal) Terminal', `your terminal moves to ${lane.name} and comes forward, and the files you have open reopen from it`, () => gotoCheckout(repo, lane))
+        if (!lane) item('$(terminal) Terminal in main', `your terminal moves to ${repo.id}'s main checkout and comes forward, and the files you have open reopen from it`, () => gotoCheckout(repo, null))
         if (lane) {
             const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
             if (working || lane.dirty) item('$(diff) Changes', `everything ${lane.name} holds that ${repo.integrationBranch} does not`, () => open({ what: 'changes', repo: repo.path, lane: lane.name }))
@@ -1220,11 +1210,11 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             const choices = allLanes().filter((x) => x.lane.exists)
             const mains = service.known().repos.filter((repo) => !repo.error)
             const items = [
-                ...mains.map((repo) => ({ label: repo.integrationBranch, description: `${repo.id}'s main checkout`, detail: 'Goto main', go: () => gotoCheckout(repo, null) })),
+                ...mains.map((repo) => ({ label: repo.integrationBranch, description: `${repo.id}'s main checkout`, detail: 'its terminal', go: () => gotoCheckout(repo, null) })),
                 ...choices.map((x) => ({ label: x.lane.name, description: x.repo.id, detail: wordOf(x.lane), go: () => gotoCheckout(x.repo, x.lane) }))
             ]
-            if (!items.length) { vscode.window.showInformationMessage('LaneKit: no lane to go to.'); return }
-            const picked = await vscode.window.showQuickPick(items, { title: 'Go to which lane? The files and the terminal you have open move to it', matchOnDescription: true })
+            if (!items.length) { vscode.window.showInformationMessage('LaneKit: no lane to open a terminal in.'); return }
+            const picked = await vscode.window.showQuickPick(items, { title: 'A terminal in which lane? Your terminal moves to it, and the files you have open follow', matchOnDescription: true })
             if (picked) await picked.go()
         }
     }
