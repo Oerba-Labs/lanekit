@@ -1,0 +1,59 @@
+# lanekit's tests, on every push to main and every pull request, on Linux and macOS: the page driven in Chrome
+# included (test/e2e.test.mjs).
+#
+# STABLE. The editor's own copy of lanekit (vscode/updates.js) follows the branch `stable`, which only this moves,
+# and only forward: to each commit of main whose tests passed on both. An editor that keeps itself up to date is
+# never handed a commit nobody tested; somebody's own clone of main still has main.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The tests make commits in scratch repositories, some through lanekit's own commands, which take git's
+      # identity from wherever it is set.
+      - name: A git identity for the scratch repositories
+        run: |
+          git config --global user.name "lanekit's tests"
+          git config --global user.email tests@lanekit.invalid
+          git config --global init.defaultBranch main
+      - run: node --test
+
+  stable:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Move stable forward to this commit
+        run: |
+          git fetch --quiet origin stable || true
+          # A newer commit's run got there first: stable is already at or past this one.
+          if git rev-parse --verify --quiet origin/stable >/dev/null && git merge-base --is-ancestor "$GITHUB_SHA" origin/stable; then
+            echo "stable is at or past $GITHUB_SHA already"
+            exit 0
+          fi
+          # Never forced: a main rewritten under it needs a person, not this.
+          git push origin "$GITHUB_SHA:refs/heads/stable"

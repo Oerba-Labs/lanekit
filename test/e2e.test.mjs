@@ -59,7 +59,9 @@ const launch = async () => {
     const profile = fs.mkdtempSync(path.join(scratch, 'chrome-'))
     const child = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
         '--disable-gpu', '--disable-extensions', '--disable-background-networking', '--disable-component-update', '--disable-sync',
-        '--use-mock-keychain', '--password-store=basic', '--window-size=1400,1000', 'about:blank'], { stdio: 'ignore' })
+        '--use-mock-keychain', '--password-store=basic', '--window-size=1400,1000',
+        // A CI runner on Linux gives Chrome no user namespaces for its sandbox; the page it opens is our own, on the loopback.
+        ...(process.env.CI && process.platform === 'linux' ? ['--no-sandbox'] : []), 'about:blank'], { stdio: 'ignore' })
     const portFile = path.join(profile, 'DevToolsActivePort')
     let lines = []
     for (let i = 0; i < 300 && !lines[1]; i++) {
