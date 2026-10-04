@@ -450,6 +450,13 @@ const prStepOf = (repo, lane) => {
     const pr = lane.pull
     const base = repo.integrationBranch
     const up = lane.upstream
+    // A review of somebody's pull request: what its author pushed since, brought here; else what you make of it.
+    if (lane.review && !lane.operation) {
+        const by = pr?.author ? ` by ${pr.author}` : ''
+        if (pr && pr.state !== 'OPEN') return { tone: 'done', word: `#${lane.review} ${pr.state === 'MERGED' ? 'merged' : 'closed'}`, detail: 'Nothing left to review: drop this lane', next: 'drop' }
+        if (up && up.behind > 0 && !up.ahead) return { tone: 'info', word: `Reviewing #${lane.review}${by}`, detail: `${up.behind} new from its author: pull ${up.behind === 1 ? 'it' : 'them'} first`, next: 'update' }
+        return { tone: 'info', word: `Reviewing #${lane.review}${by}`, detail: pr?.title ?? null, next: 'verdict' }
+    }
     if (lane.kind !== 'working' || lane.operation) return null
     if (pr?.state === 'MERGED') {
         const behind = repo.main?.upstream?.behind > 0
@@ -712,7 +719,7 @@ const openLinks = (repo, lane) => {
 
 const showCommit = (repo, commit) => () => openIn('commit', { repo: repo.path, sha: commit.sha })
 
-const DOING = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making it', pull: 'Pulling', fetch: 'Fetching' }
+const DOING = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making it', pull: 'Pulling', fetch: 'Fetching', review: 'Sending the review' }
 const runningIn = (repo, lane) => (current?.jobs ?? []).find((job) => job.state === 'running' && job.repo === repo.id && job.lane === lane.name)
 
 /** What a press is doing to a lane, live: the verb, the gate's step, and a clock. */
@@ -1006,6 +1013,61 @@ const discardConfirm = (repo, lane, key, waiting) => {
 }
 
 /**
+ * What the reviewer makes of the pull request a review lane holds, said on GitHub (lane review): Approve, Request
+ * changes or Comment, with words, which the last two need. What is typed is kept across redraws.
+ */
+const verdictForm = (repo, lane, key) => {
+    const draftKey = `verdict:${key}`
+    const words = el('textarea', {
+        class: 'msg-body', rows: '3', 'data-draft': draftKey, 'aria-label': `What you make of #${lane.review}`,
+        placeholder: 'What you make of it: what should change, or what is good. Approve needs none.',
+        oninput: (event) => drafts.set(draftKey, { title: event.target.value })
+    })
+    words.value = drafts.get(draftKey)?.title ?? ''
+    const busy = busyIn(repo.id)
+    const send = async (verdict) => {
+        const body = words.value.trim()
+        if (verdict !== 'approve' && !body) { notice(verdict === 'comment' ? 'A comment needs its words.' : 'Say which changes you ask for.'); words.focus(); return }
+        pending.delete(key)
+        drafts.delete(draftKey)
+        draw(true)
+        await press({ repo: repo.id, verb: 'review', lane: lane.name, verdict, body })
+    }
+    if (!words.value) setTimeout(() => words.focus(), 0)
+    return el('div', { class: 'confirm verdict' },
+        el('p', { text: `Your review of #${lane.review}${lane.pull?.title ? `, "${lane.pull.title}"` : ''}, sent to GitHub as yours.` }),
+        words,
+        el('div', { class: 'details-actions' },
+            iconButton('check', 'Approve', { class: 'btn primary', disabled: busy, onclick: () => send('approve') }),
+            iconButton('cross', 'Request changes', { class: 'btn', disabled: busy, onclick: () => send('request-changes') }),
+            iconButton('comment', 'Comment', { class: 'btn', disabled: busy, onclick: () => send('comment') }),
+            el('button', { type: 'button', class: 'btn quiet', text: 'Cancel', onclick: () => { pending.delete(key); draw(true) } })))
+}
+
+/**
+ * Review in a lane: a pull request waiting on you, checked out in a lane of its own (its own port, its own copy of what
+ * a running app needs) to run, gate and read; or, where one is open already, that lane.
+ */
+const reviewButton = (repo, number, { iconOnly = false } = {}) => {
+    const there = (repo.lanes ?? []).find((lane) => lane.review === number)
+    if (there) {
+        return iconButton('branch', iconOnly ? `#${number}'s review lane` : 'Its review lane', {
+            class: 'btn link', title: `#${number} is in ${there.name}: open it there`,
+            onclick: () => { if (atHome()) openFromHome(repo, there.name); else focusLane(repo.id, there.name) }
+        }, iconOnly)
+    }
+    return iconButton('branch', iconOnly ? `Review #${number} in a lane` : 'Review in a lane', {
+        class: 'btn link', disabled: busyIn(repo.id),
+        title: `#${number} checked out in a lane of its own, review-${number}: run it, gate it, then Review… from its lane`,
+        onclick: async () => {
+            const answer = await press({ repo: repo.id, verb: 'new', name: `review-${number}`, pr: number })
+            if (answer && atHome()) openFromHome(repo, `review-${number}`)
+            else if (answer) focusLane(repo.id, `review-${number}`)
+        }
+    }, iconOnly)
+}
+
+/**
  * Move to a new lane, named where it is asked: the main checkout's ticked files, or what a lane holds that is in no pull
  * request (its files, and the commits it made after the one its pull request was merged at). `lane new <name> --carry`,
  * which moves nothing unless all of it applies.
@@ -1070,7 +1132,7 @@ const uncommittedOf = (repo, checkout, name, count, words = `${count} uncommitte
 // what a press will do, drawn before it has: ISL moves the graph at once
 // ---------------------------------------------------------------------------
 
-const FORESEEN = new Set(['new', 'rebase', 'commit', 'uncommit', 'discard', 'resolve', 'land', 'sweep', 'push', 'pr', 'merge', 'pull'])
+const FORESEEN = new Set(['new', 'rebase', 'commit', 'uncommit', 'discard', 'resolve', 'land', 'sweep', 'push', 'pr', 'merge', 'pull', 'review'])
 /** A press accepted: what it will do is drawn from now until a reading taken after it ended says what it did. */
 const expect = (body, job) => {
     if (!FORESEEN.has(body.verb) || body.dryRun) return
@@ -1108,7 +1170,8 @@ const viewOf = (repo) => {
                     // Carrying work, it is drawn with the files it takes, and they leave where they were.
                     const from = body.carry ? (body.from ? view.lanes.find((candidate) => candidate.name === body.from) : view.main) : null
                     const carried = from ? leave(from, body.paths) : []
-                    view.lanes.push({ name: body.name, branch: body.name, kind: 'fresh', exists: false, base: body.base ?? repo.spine[0]?.sha, stack: [], changes: carried, conflicts: [], dirty: carried.length, ahead: 0, behind: 0, pending: body.carry ? 'Moving the work…' : 'Making it…' })
+                    view.lanes.push({ name: body.name, branch: body.name, kind: 'fresh', exists: false, base: body.base ?? repo.spine[0]?.sha, stack: [], changes: carried, conflicts: [], dirty: carried.length, ahead: 0, behind: 0, review: body.pr ?? null,
+                        pending: body.carry ? 'Moving the work…' : body.pr ? `Fetching #${body.pr}…` : 'Making it…' })
                 }
                 break
             case 'rebase':
@@ -1152,8 +1215,8 @@ const viewOf = (repo) => {
                 lane.conflicts = lane.conflicts.filter((file) => !(body.paths ?? []).includes(file))
                 lane.pending = 'Marking it resolved…'
                 break
-            case 'land': case 'sweep': case 'push': case 'merge': case 'pull':
-                if (lane) lane.pending = { land: 'Landing…', sweep: 'Sweeping…', push: 'Pushing…', merge: 'Merging on GitHub…', pull: 'Pulling…' }[body.verb]
+            case 'land': case 'sweep': case 'push': case 'merge': case 'pull': case 'review':
+                if (lane) lane.pending = { land: 'Landing…', sweep: 'Sweeping…', push: 'Pushing…', merge: 'Merging on GitHub…', pull: 'Pulling…', review: 'Sending the review…' }[body.verb]
                 break
             case 'pr':
                 if (lane) lane.pending = body.ready ? 'Marking it ready…' : lane.pull?.state === 'OPEN' ? 'Asking for review…' : 'Opening a pull request…'
@@ -1378,7 +1441,7 @@ const inlineDetails = (repo, commit) => (IN_SIDEBAR && selected?.sha && isSelect
 // ---------------------------------------------------------------------------
 
 const VERB_WORDS = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making a lane',
-    pull: 'Pulling', 'push-main': 'Pushing main', fetch: 'Fetching', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
+    pull: 'Pulling', 'push-main': 'Pushing main', fetch: 'Fetching', review: 'Reviewing', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
 /** A job's command as a person would type it: lane …, gate, git …, without the node and the path in front. */
 const typed = (command) => String(command ?? '').replace(/^node (?:\S*\/)?dev\/lane\.mjs /, 'lane ').replace(/^node (?:\S*\/)?dev\/gate\.mjs\b/, 'gate')
     .replace(/^node (?:\S*\/)?bin\/adopt\.mjs\b/, 'lane adopt')
@@ -1520,6 +1583,7 @@ const confirmOf = (repo, lane, key) => {
     // What is asked beside the files it is about is drawn there (changesOf), not here.
     if (!waiting || waiting.where === 'changes') return null
     if (waiting.verb === 'carry') return carryForm(repo, lane, key)
+    if (waiting.verb === 'verdict') return verdictForm(repo, lane, key)
     const job = waiting.jobId ? jobById(waiting.jobId) : null
     if (waiting.stage === 'checking' && job && job.state === 'done') {
         waiting.stage = job.code === 0 ? 'confirm' : 'refused'
@@ -1707,7 +1771,8 @@ const laneCard = (repo, lane, forked = true) => {
             onclick: ask('gate')
         }))
         // Where main lands by pull request there is no land here: the pull request's next step stands in its place.
-        if (!byPullRequest(repo)) {
+        // Nor for a review of somebody's pull request, which lands by it.
+        if (!byPullRequest(repo) && !lane.review) {
             const landBlock = landBlockOf(repo, lane)
             buttons.push(iconButton('land', 'Land…', {
                 class: `btn${!landBlock && !behindOrigin ? ' primary' : ''}`, disabled: held(landBlock),
@@ -1725,7 +1790,11 @@ const laneCard = (repo, lane, forked = true) => {
         }),
         push: () => iconButton('push', 'Push', { class: 'btn primary', disabled: busy, title: `Send what is new to #${number}`, onclick: () => press({ repo: repo.id, verb: 'push', lane: lane.name }) }),
         'push-force': () => iconButton('push', 'Push…', { class: 'btn primary', disabled: busy, title: 'It was rebased since it was pushed: ask before replacing origin\'s copy', onclick: ask('push-force') }),
-        update: () => iconButton('pull', 'Pull', { class: 'btn primary', disabled: busy, title: `Fast-forward ${lane.name} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed to it`, onclick: () => press({ repo: repo.id, verb: 'pull', lane: lane.name }) }),
+        update: () => iconButton('pull', 'Pull', { class: 'btn primary', disabled: busy, title: lane.review ? `What #${lane.review}'s author pushed since: ${plural(up.behind, 'commit')}` : `Fast-forward ${lane.name} to ${up.name}: ${plural(up.behind, 'commit')} somebody pushed to it`, onclick: () => press({ repo: repo.id, verb: 'pull', lane: lane.name }) }),
+        verdict: () => iconButton('pr', 'Review…', {
+            class: 'btn primary', disabled: busy, title: `Approve #${lane.review}, ask for changes, or comment, on GitHub`,
+            onclick: () => { pending.set(key, { verb: 'verdict', stage: 'form', where: 'card' }); draw(true) }
+        }),
         ready: () => iconButton('pr', 'Ready for review', { class: 'btn primary', disabled: busy, title: `Mark #${number} ready for review`, onclick: () => press({ repo: repo.id, verb: 'pr', lane: lane.name, ready: true }) }),
         review: () => iconButton('pr', 'Request review…', { class: 'btn primary', disabled: busy, title: `Nobody is asked to review #${number} yet`, onclick: () => { pending.set(key, { verb: 'review', stage: 'form' }); draw(true) } }),
         merge: () => iconButton('land', 'Merge…', { class: 'btn primary', disabled: busy, title: `Merge #${number} on GitHub, then bring ${repo.integrationBranch} here up to it`, onclick: ask('merge') }),
@@ -1753,7 +1822,11 @@ const laneCard = (repo, lane, forked = true) => {
     }
     // What is done now and then, rather than at every step, sits behind ⋯ in a tab: pushing, and putting a lane away.
     const more = []
-    if (lane.kind === 'working' && !lane.operation && !merged) {
+    // A review lane: what its author pushed, fetched again (a fork's too, which has no branch here to compare).
+    if (lane.review && !lane.operation && step?.next !== 'update') {
+        more.push(iconButton('pull', 'Pull what its author pushed', { disabled: busy, title: `Fetch #${lane.review} as its author has it now`, onclick: () => press({ repo: repo.id, verb: 'pull', lane: lane.name }) }))
+    }
+    if (lane.kind === 'working' && !lane.operation && !merged && !lane.review) {
         if ((!up || up.ahead > 0) && !['push', 'push-force', 'pr'].includes(step?.next)) {
             const rewrite = Boolean(up && up.behind > 0)
             // Never offered over somebody else's commits: those are brought in first.
@@ -1771,8 +1844,8 @@ const laneCard = (repo, lane, forked = true) => {
             }))
         }
     }
-    // Its open pull request: a draft made ready for review, and reviewers asked for.
-    if (lane.pull?.state === 'OPEN' && repo.github?.state === 'ok' && !lane.operation) {
+    // Its open pull request: a draft made ready for review, and reviewers asked for. Not a review lane's: that is the author's.
+    if (lane.pull?.state === 'OPEN' && repo.github?.state === 'ok' && !lane.operation && !lane.review) {
         if (lane.pull.draft && step?.next !== 'ready') {
             more.push(iconButton('pr', 'Ready for review', {
                 disabled: busy, title: `Mark #${lane.pull.number} ready for review: those asked to review it are told`,
@@ -2074,7 +2147,9 @@ const headOf = (repo) => {
         facts.push(el('span', { class: 'waits-on-you' }, state('warn', `${plural(mine.length, 'pull request')} ${mine.length === 1 ? 'waits' : 'wait'} on your review:`, 'small'),
             mine.slice(0, 3).map((review) => {
                 const href = safeHref(review.url)
-                return href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', text: `#${review.number}`, title: review.title }) : el('span', { text: `#${review.number}`, title: review.title })
+                return el('span', { class: 'waiting-pr' },
+                    href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', text: `#${review.number}`, title: review.title }) : el('span', { text: `#${review.number}`, title: review.title }),
+                    reviewButton(repo, review.number, { iconOnly: true }))
             })))
     }
     // Read further back than main's newest: said here too, with the way back, so it is not only at the foot of a long log.
@@ -2587,6 +2662,7 @@ const reviewsHome = () => {
                 // One of the repositories here: its name, which opens it; anywhere else, its owner/name.
                 mine ? el('button', { type: 'button', class: 'btn link', text: mine.name ?? mine.id, title: `${pr.repo}: open it here`, onclick: () => openFromHome(mine) })
                     : el('span', { class: 'muted', text: pr.repo }),
+                mine && !mine.error ? reviewButton(mine, pr.number) : null,
                 pr.author ? el('span', { class: 'muted', text: `by ${pr.author}` }) : null,
                 pr.at ? el('span', { class: 'when', text: short(pr.at), title: exactly(pr.at) }) : null)
         })))

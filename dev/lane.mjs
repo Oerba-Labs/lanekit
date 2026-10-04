@@ -69,6 +69,42 @@ const expand = (value, vars) =>
 // new
 // ---------------------------------------------------------------------------
 
+/** gh in a folder, never prompting, its colours off: what it printed is read, not shown. */
+const ghIn = (cwd) => (args, stdio = 'pipe') => spawnSync('gh', args, {
+    cwd, encoding: 'utf8', stdio: stdio === 'pipe' ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }
+})
+
+/**
+ * A pull request to review, fetched for `lane new <name> --pr <n>`: its head into the branch <name>, from the remote
+ * main is pushed to, as GitHub keeps every pull request's head there (refs/pull/<n>/head), a fork's included; and,
+ * for one from this repository, its own branch as well, which the lane then follows. Only an open one: a merged or
+ * closed pull request has nothing left to review.
+ */
+const fetchReview = (config, mainRepo, name, options) => {
+    const number = String(options.pr)
+    if (!/^[1-9][0-9]*$/.test(number)) fail(`"${options.pr}" is not a pull request's number.`)
+    if (options.base || options.existing || options.carry) fail('--pr takes the pull request as it is: give no --base, --existing or --carry with it.')
+    if (gitQuiet(['rev-parse', '--verify', `refs/heads/${name}`], mainRepo).ok) fail(`a branch called "${name}" already exists: name the review lane otherwise, or drop the one there.`)
+    const gh = ghIn(mainRepo)
+    if (gh(['--version']).error) fail('gh is not installed here, and a pull request is found through it.')
+    const asked = gh(['pr', 'view', number, '--json', 'number,title,url,state,headRefName,isCrossRepository,author,baseRefName'])
+    let pr = null
+    try { pr = asked.status === 0 ? JSON.parse(asked.stdout) : null } catch { pr = null }
+    if (!pr) fail(`GitHub has no pull request #${number} here: ${(asked.stderr ?? '').trim().split('\n')[0] || 'gh said nothing'}`)
+    if (pr.state !== 'OPEN') fail(`#${number} is ${String(pr.state).toLowerCase()}: there is nothing left to review.`)
+    const remote = pushTargetOf(mainRepo, config.integrationBranch)?.remote ?? 'origin'
+    const author = pr.author?.login ?? 'somebody'
+    log(`fetching #${number}, "${pr.title}" by ${author}, from ${remote}`)
+    const fetched = spawnSync('git', ['fetch', '--quiet', remote, `refs/pull/${number}/head:refs/heads/${name}`,
+        ...(pr.isCrossRepository ? [] : [`+refs/heads/${pr.headRefName}:refs/remotes/${remote}/${pr.headRefName}`])], {
+        cwd: mainRepo, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' }
+    })
+    if (fetched.status !== 0) fail(`could not fetch #${number} from ${remote}: ${(fetched.stderr ?? '').trim().split('\n').pop()}`)
+    if (pr.baseRefName && pr.baseRefName !== config.integrationBranch) log(`${YELLOW}#${number} is into ${pr.baseRefName}, not ${config.integrationBranch}${OFF}: the gate tests it on ${config.integrationBranch}`)
+    return { number: Number(number), title: pr.title, author, head: pr.headRefName, sameRepo: !pr.isCrossRepository, remote }
+}
+
 const create = (config, name, options) => {
     const mainRepo = mainRepoFrom(process.cwd())
     const laneDir = laneDirFor(mainRepo, name)
@@ -80,8 +116,11 @@ const create = (config, name, options) => {
             '  digits and dashes, starting with a letter or digit.')
     }
     if (fs.existsSync(laneDir)) fail(`${laneDir} already exists.`)
+    // A pull request to review (--pr <n>): its head fetched into a branch of the lane's own first, as gh pr checkout
+    // fetches it, and then made a lane of as it is.
+    const review = options.pr ? fetchReview(config, mainRepo, name, options) : null
     const existing = gitQuiet(['rev-parse', '--verify', `refs/heads/${name}`], mainRepo).ok
-    if (existing && !options.existing) {
+    if (existing && !options.existing && !review) {
         fail(`a branch called "${name}" already exists.\n\n` +
             `  lane new ${name} --existing makes a lane of it as it is (a lane dropped earlier, say),\n` +
             `  or pick another name.`)
@@ -100,7 +139,18 @@ const create = (config, name, options) => {
         log(`${mainRepo} has uncommitted changes; they stay there — this lane branches from ${base} (lane new ${name} --carry takes them with it)`)
     }
 
-    if (existing) {
+    if (review) {
+        log(`creating ${path.basename(laneDir)} on "${name}", #${review.number} as its author pushed it`)
+        run('git', ['worktree', 'add', laneDir, name], mainRepo, 'git worktree add')
+        // Marked as a review, in the clone's own settings: out of the landing order, never pushed, and pulled from the
+        // author. A pull request from this repository follows its branch, so a pull brings what its author pushes.
+        git(['config', `branch.${name}.lanekitReview`, String(review.number)], mainRepo)
+        if (review.sameRepo) {
+            git(['config', `branch.${name}.remote`, review.remote], mainRepo)
+            git(['config', `branch.${name}.merge`, `refs/heads/${review.head}`], mainRepo)
+        }
+        log(`reviewing #${review.number}, "${review.title}" by ${review.author}: ${review.sameRepo ? `it follows ${review.remote}/${review.head}` : 'from a fork, so lane pull fetches what its author pushes'}`)
+    } else if (existing) {
         log(`creating ${path.basename(laneDir)} on the branch "${name}" as it is, ${git(['rev-list', '--count', `${config.integrationBranch}..${name}`], mainRepo)} commits of its own`)
         run('git', ['worktree', 'add', laneDir, name], mainRepo, 'git worktree add')
     } else {
@@ -195,7 +245,7 @@ const create = (config, name, options) => {
         }
     }
 
-    const made = { name, laneDir, port, vars, from: options.startedFrom ?? base }
+    const made = { name, laneDir, port, vars, from: review ? `#${review.number} by ${review.author}, as pushed` : options.startedFrom ?? base }
     if (!options.carrying) sayReady(config, made)
     return made
 }
@@ -458,6 +508,7 @@ const land = (config, name, options) => {
     const found = lanes(here, config.integrationBranch)
     const lane = found.find((candidate) => candidate.name === name)
     if (!lane) fail(`there is no lane called "${name}".`)
+    if (lane.exists) refuseReview(lane, 'landed from here', 'it lands by its pull request, merged on GitHub once it is approved')
 
     if (isUnder(here, lane.path)) {
         fail(`${name} is the lane you are standing in.\n\n` +
@@ -907,6 +958,7 @@ const push = (config, name, options) => {
     const lane = laneNamed(config, name, 'push')
     const dir = lane.path
     const branch = lane.branch ?? name
+    refuseReview(lane, 'pushed', 'say what should change in the review (lane review), and its author pushes it')
     if (!gitQuiet(['remote'], dir).out.split('\n').includes('origin')) fail('there is no remote called origin to push to.')
     const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir)
     if (upstream.ok) {
@@ -984,6 +1036,7 @@ const pushMain = async (config) => {
 const REVIEWER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9._-]{1,100})?$/
 const pr = (config, name, options = {}) => {
     const lane = laneNamed(config, name, 'pr')
+    refuseReview(lane, 'given a pull request of its own', 'it is one already: lane review says what you make of it')
     const dir = lane.path
     const branch = lane.branch ?? name
     const reviewers = options.reviewers ?? []
@@ -1096,6 +1149,81 @@ const fetchFor = (cwd, branch) => {
     if (fetched.status !== 0) log(`${YELLOW}could not fetch ${remote}${OFF} — ${(fetched.stderr ?? '').trim().split('\n').pop()}; pulling what the last fetch brought`)
 }
 
+/** The pull request a lane reviews (lane new --pr), from the clone's own settings; null for a lane of one's own. */
+const reviewOf = (dir, branch) => gitQuiet(['config', '--get', `branch.${branch}.lanekitReview`], dir).out || null
+/** A review lane is somebody else's work: what a lane of one's own does with its branch is refused, and why said. */
+const refuseReview = (lane, what, instead) => {
+    const number = reviewOf(lane.path, lane.branch ?? lane.name)
+    if (number) fail(`${lane.name} is a review of #${number}, somebody else's work, so it is not ${what}: ${instead}.`)
+}
+
+/**
+ * A review lane brought up to what its author has pushed: their branch, where the pull request is from this repository,
+ * else GitHub's copy of its head (refs/pull/<n>/head), which a fork's has too. A fast-forward where it can be; and
+ * where the lane is ahead as well, only if all it has is the gate's rebase of the same commits onto main, which is put
+ * aside for the author's newest. Commits of the reviewer's own are never put aside.
+ */
+const refreshReview = (config, lane, number) => {
+    const dir = lane.path
+    const name = lane.name
+    const branch = lane.branch ?? name
+    const base = config.integrationBranch
+    let target
+    if (gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir).ok) {
+        fetchFor(dir, branch)
+        target = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir).out
+    } else {
+        const remote = pushTargetOf(mainRepoFrom(process.cwd()), base)?.remote ?? 'origin'
+        log(`git fetch ${remote} refs/pull/${number}/head`)
+        const fetched = spawnSync('git', ['fetch', '--quiet', remote, `refs/pull/${number}/head`], {
+            cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' }
+        })
+        if (fetched.status !== 0) fail(`could not fetch #${number}: ${(fetched.stderr ?? '').trim().split('\n').pop()}`)
+        target = git(['rev-parse', 'FETCH_HEAD'], dir)
+    }
+    const [behind, ahead] = gitQuiet(['rev-list', '--left-right', '--count', `${target}...HEAD`], dir).out.split(/\s+/).map(Number)
+    if (!behind) { log(`#${number} has nothing new for ${name}`); return }
+    const was = git(['rev-parse', '--short', 'HEAD'], dir)
+    if (!ahead) {
+        const merged = spawnSync('git', ['merge', '--ff-only', target], { cwd: dir, stdio: 'inherit' })
+        if (merged.status !== 0) fail('git merge --ff-only did not finish (above): an uncommitted change in a file it brings stops it.')
+    } else {
+        const own = Number(gitQuiet(['rev-list', '--count', '--left-only', '--cherry-pick', `HEAD...${target}`, '--not', base], dir).out || 0)
+        if (own) {
+            fail(`${name} has ${own} ${own === 1 ? 'commit' : 'commits'} of your own on #${number}, which a pull would lose.\n\n` +
+                '  Say them in the review instead (lane review), or keep them on a lane of your own, then pull again.')
+        }
+        const dirt = dirtIn(dir, config)
+        if (dirt.length) fail(`${name} has uncommitted changes, which a pull would lose:\n\n${dirt.map((line) => `  ${line}`).join('\n')}`)
+        git(['reset', '-q', '--hard', target], dir)
+        log(`what the gate rebased onto ${base} is put aside for what #${number}'s author pushed`)
+    }
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}PULLED${OFF}  ·  ${name}  ·  ${was} -> ${git(['rev-parse', '--short', 'HEAD'], dir)}, #${number} as its author pushed it\n${rule}\n`)
+}
+
+/**
+ * Say what you make of the pull request a review lane holds, on GitHub, through gh: --approve, --request-changes with
+ * what should change, or --comment, each with -m for its words. The review is yours; LaneKit only carries it.
+ */
+const reviewLane = (config, name, options) => {
+    const lane = laneNamed(config, name, 'review')
+    const number = reviewOf(lane.path, lane.branch ?? name)
+    if (!number) fail(`${name} is not a review lane: lane new --pr <number> makes one of a pull request.`)
+    const verdict = options.approve ? 'approve' : options.requestChanges ? 'request-changes' : options.comment ? 'comment' : null
+    if (!verdict) fail('lane review needs what you make of it: --approve, --request-changes -m "what should change", or --comment -m "…"')
+    const body = (options.message ?? '').trim()
+    if (verdict !== 'approve' && !body) fail(`--${verdict} needs its words: -m "…"`)
+    const gh = ghIn(lane.path)
+    if (gh(['--version']).error) fail('gh is not installed here, and a review is given through it.')
+    log(`gh pr review ${number} --${verdict}`)
+    const said = gh(['pr', 'review', number, `--${verdict}`, ...(body ? ['--body', body] : [])], 'inherit')
+    if (said.status !== 0) fail('GitHub did not take the review (above).')
+    const done = { approve: 'approved', 'request-changes': 'changes requested', comment: 'commented on' }[verdict]
+    const rule = '─'.repeat(64)
+    console.log(`\n${rule}\n  ${GREEN}REVIEWED${OFF}  ·  ${name}  ·  #${number} ${done}\n${rule}\n`)
+}
+
 /**
  * Fast-forward a lane's branch to its copy on origin: what somebody else pushed to it (a colleague, GitHub's Update
  * branch, a suggestion committed from a review). Only a fast-forward: a lane that has commits of its own origin lacks
@@ -1106,6 +1234,8 @@ const pullLane = (config, name) => {
     const dir = lane.path
     const branch = lane.branch ?? name
     if (inRebase(dir)) fail(`${name} is part-way through a rebase: finish or abort it first.`)
+    const reviewing = reviewOf(dir, branch)
+    if (reviewing) return refreshReview(config, lane, reviewing)
     if (!gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir).ok) fail(`${branch} is not pushed, so origin has nothing of it to pull.`)
     fetchFor(dir, branch)
     const upstream = gitQuiet(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], dir).out
@@ -1152,7 +1282,7 @@ const pull = (config, name) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, merge, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop }
+const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, merge, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop, review: reviewLane }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -1169,7 +1299,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|review|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--pr <number>] [--approve|--request-changes|--comment] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -1193,6 +1323,11 @@ const main = () => {
         onto: argv.includes('--onto') ? argv[argv.indexOf('--onto') + 1] : undefined,
         // lane new --carry: work begun in the main checkout, or in a lane (--from), and its commits after one (--after).
         carry: argv.includes('--carry'),
+        // lane new --pr <n>: a pull request to review, in a lane of its own; lane review says what you make of it.
+        pr: argv.includes('--pr') ? argv[argv.indexOf('--pr') + 1] : undefined,
+        approve: argv.includes('--approve'),
+        requestChanges: argv.includes('--request-changes'),
+        comment: argv.includes('--comment'),
         from: argv.includes('--from') ? argv[argv.indexOf('--from') + 1] : undefined,
         after: argv.includes('--after') ? argv[argv.indexOf('--after') + 1] : undefined,
         amend: argv.includes('--amend'),
@@ -1202,7 +1337,7 @@ const main = () => {
         paths: argv.includes('--') ? argv.slice(argv.indexOf('--') + 1) : []
     }
     // What follows a flag that takes a value is the value, not a name; what follows `--` is a file.
-    const valued = new Set(['--base', '--onto', '-m', '--reviewer', '--from', '--after'])
+    const valued = new Set(['--base', '--onto', '-m', '--reviewer', '--from', '--after', '--pr'])
     const flags = argv.includes('--') ? argv.slice(1, argv.indexOf('--')) : argv.slice(1)
     const positional = flags.filter((arg, i, all) => !arg.startsWith('-') && !valued.has(all[i - 1]))
     const name = positional[0] !== options.base ? positional[0] : positional[1]
@@ -1214,6 +1349,8 @@ const main = () => {
         fail(error.message)
     }
 
+    // A review lane is named for its pull request unless a name is given.
+    if (command === 'new' && !name && options.pr) return create(config, `review-${options.pr}`, options)
     if (command === 'new' && !name) fail('lane new needs a name.')
     if (command === 'new' && options.carry) return carry(config, name, options)
     if (command === 'new' && (options.from || options.after)) fail('--from and --after go with --carry: lane new <name> --carry --from <lane>.')
@@ -1237,6 +1374,7 @@ const main = () => {
     if (command === 'aside') return aside(config, name, options)
     if (command === 'resume') return resume(config, name, options)
     if (command === 'drop') return drop(config, name, options)
+    if (command === 'review') return reviewLane(config, name, options)
     return sweep(config, name, options)
 }
 

@@ -262,9 +262,18 @@ before(async () => {
     const shippedAt = git(laneDir('shipped'), 'rev-parse', 'HEAD')
     commit(laneDir('shipped'), 'after.txt', 'after\n', 'After the merge')
     write(laneDir('shipped'), 'wip.txt', 'wip\n')
+    // Kim's pull request from a fork (#8), which asks this person for a review: its head where GitHub keeps one.
+    git(other, 'switch', '-q', '--detach', 'origin/main')
+    commit(other, 'count.txt', 'one, two, three\n', 'Teach it to count')
+    git(other, 'push', '-q', 'origin', 'HEAD:refs/pull/8/head')
+    git(other, 'switch', '-q', 'main')
     fs.writeFileSync(ghState, JSON.stringify({
-        owner: 'acme', name: 'demo', origin, repo: { mergeCommitAllowed: true },
-        prs: [{ number: 4, title: 'Ship it', state: 'MERGED', isDraft: false, headRefName: 'shipped', headRefOid: shippedAt, url: 'https://github.com/acme/demo/pull/4' }]
+        owner: 'acme', name: 'demo', origin, repo: { mergeCommitAllowed: true }, me: 'reviewer',
+        prs: [
+            { number: 4, title: 'Ship it', state: 'MERGED', isDraft: false, headRefName: 'shipped', headRefOid: shippedAt, url: 'https://github.com/acme/demo/pull/4' },
+            { number: 8, title: 'Teach it to count', state: 'OPEN', isDraft: false, headRefName: 'contrib', isCrossRepository: true, author: { login: 'kim' }, baseRefName: 'main', url: 'https://github.com/acme/demo/pull/8' }
+        ],
+        search: [{ number: 8, title: 'Teach it to count', url: 'https://github.com/acme/demo/pull/8', repository: { name: 'demo', nameWithOwner: 'acme/demo' }, author: { login: 'kim' }, updatedAt: '2026-10-03T20:00:00Z', isDraft: false }]
     }))
 
     const { startServer } = await import('../dev/web.mjs')
@@ -480,5 +489,33 @@ test('in the editor, a file\'s tick only ticks, a click on the file opens its di
         assert.doesNotMatch(text, /You are here/)
     } finally {
         await editor.close()
+    }
+})
+
+test('a pull request waiting on your review opens in a lane of its own from Home, and is approved from its lane', { skip, timeout: 120_000 * SLOW }, async () => {
+    const home = await open(browser, base)
+    try {
+        await home.until(() => [...document.querySelectorAll('.home-reviews li')].some((row) => row.textContent.includes('Teach it to count')), [], { what: 'Home listing #8 as waiting on this person\'s review' })
+        await home.click(() => buttonIn('.home-reviews', 'Review in a lane'))
+        await home.until(() => {
+            const lane = card('review-8')
+            return lane && !lane.classList.contains('pending') && /^Reviewing #8 by kim$/.test(lane.querySelector('.lane-title > .state')?.textContent ?? '')
+        }, [], { what: 'review-8 made, and shown as Reviewing #8 by kim', timeout: 60_000 * SLOW })
+        assert.equal(fs.readFileSync(path.join(laneDir('review-8'), 'count.txt'), 'utf8'), 'one, two, three\n')
+        await home.pointAt(() => card('review-8').querySelector('.lane-name'))
+        const offered = await home.run(() => ({ land: Boolean(laneButton('review-8', 'Land')), push: Boolean(laneButton('review-8', 'Push')), review: laneButton('review-8', 'Review…')?.classList.contains('primary') }))
+        assert.deepEqual(offered, { land: false, push: false, review: true }, 'somebody else\'s pull request: reviewed, never landed or pushed from here')
+        await home.click(() => laneButton('review-8', 'Review…'))
+        await home.until(() => document.activeElement?.matches('li.lane[data-key="demo/review-8"] .confirm.verdict textarea'))
+        await home.type('It counts as it says.')
+        await home.click(() => laneButton('review-8', 'Approve'))
+        let review = null
+        for (let i = 0; i < 200 && !review; i++) {
+            review = JSON.parse(fs.readFileSync(ghState, 'utf8')).prs.find((pr) => pr.number === 8).latestReviews?.find((one) => one.author.login === 'reviewer') ?? null
+            if (!review) await sleep(100)
+        }
+        assert.deepEqual(review && { state: review.state, body: review.body }, { state: 'APPROVED', body: 'It counts as it says.' }, 'the approval reached GitHub, in its words')
+    } finally {
+        await home.close()
     }
 })
