@@ -1,0 +1,20 @@
+{
+  "name": "lanekit",
+  "owner": {
+    "name": "Oerba Labs",
+    "url": "https://github.com/Oerba-Labs"
+  },
+  "description": "LaneKit for Claude Code: lanes, their gate and their landing order, and pull requests reviewed in lanes.",
+  "plugins": [
+    {
+      "name": "lanekit",
+      "description": "Start, gate and land lanes, carry work into them and review pull requests in them, from Claude Code; and each agent's state on LaneKit's page. Installed from lanekit's stable branch: the commits of its main whose tests passed.",
+      "source": {
+        "source": "github",
+        "repo": "Oerba-Labs/lanekit",
+        "ref": "stable"
+      },
+      "category": "development"
+    }
+  ]
+}
