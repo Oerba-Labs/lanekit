@@ -1,3 +1,8 @@
 node_modules
 .DS_Store
 vscode/*.vsix
+
+# What the gate records about its runs. It names absolute paths on one machine.
+.lanekit/
+# A lane's port and paths live in its environment file, and secrets end up there too.
+.env

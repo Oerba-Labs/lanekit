@@ -1,0 +1,39 @@
+#!/bin/sh
+# lanekit's one entrypoint: `./lanekit lane new <name>`, `./lanekit gate`, `./lanekit check`.
+#
+# WHICH COPY YOU RUN DECIDES WHICH CHECKOUT IS ACTED ON. This finds its own directory and
+# works from there, so a lane's ./lanekit gates the lane and reads the lane's port.
+#
+# No dependency enters the repository: the lane tooling is found on the machine, in the
+# order below, and the project carries only this file and lane.config.json.
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here" || exit 1
+
+kit=
+for candidate in "$LANEKIT" "$here/../lanekit" /opt/lanekit "$HOME/.lanekit" "$HOME/Documents/Programming/lanekit"; do
+    if [ -n "$candidate" ] && [ -d "$candidate/dev" ]; then kit=$candidate; break; fi
+done
+
+command=$1
+[ $# -gt 0 ] && shift
+
+case "$command" in
+    lane|gate)
+        if [ -z "$kit" ]; then
+            echo "  the lane tooling is not on this machine." >&2
+            echo "  git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit, or point at a copy with LANEKIT=/path/to/lanekit." >&2
+            exit 1
+        fi
+        exec node "$kit/dev/$command.mjs" "$@" ;;
+    check)
+        exec "$here/check" "$@" ;;
+    *)
+        echo
+        echo "  ./lanekit lane new <name>    start a lane: a worktree, a branch, a port of its own"
+        echo "  ./lanekit lane list          what exists and what is serving"
+        echo "  ./lanekit gate               from inside a lane: is this branch ready to merge?"
+        echo "  ./lanekit lane land <name>   from main: merge a lane whose gate is green"
+        echo "  ./lanekit lane sweep         remove lanes that have landed"
+        echo "  ./lanekit check              what the gate runs"
+        echo ;;
+esac

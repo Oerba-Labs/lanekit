@@ -1,0 +1,6 @@
+#!/bin/sh
+# What the gate runs: lanekit's tests, all of them, as CI runs them (.github/workflows/test.yml). It runs
+# in the checkout it is in, so a lane's gate tests that lane's code. The page's end-to-end tests drive
+# Chrome headless; the rest make scratch repositories and take whatever port is free.
+cd "$(dirname "$0")" || exit 1
+exec node --test

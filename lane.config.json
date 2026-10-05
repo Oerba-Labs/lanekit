@@ -1,0 +1,51 @@
+{
+  "note": [
+    "What lanekit is, for the lane tooling: lanekit gives itself lanes, so its own work goes the way it",
+    "asks every other project's to.",
+    "",
+    "WHICH LANEKIT RUNS. The shim looks for lanekit at ../lanekit before ~/.lanekit, and beside a lane",
+    "of this repository that is this main checkout. So lane commands (new, gate, land, sweep, web)",
+    "always run main's lanekit, never a lane's half-made one. A lane's own code is what its gate",
+    "tests (./check runs node --test in the lane) and what runHint serves: the page from the lane's",
+    "dev/, on the lane's port. To try a lane's commands by hand, run node <lane>/dev/lane.mjs.",
+    "",
+    "Nothing to copy, link or seed: lanekit has no dependencies, no environment file and no database,",
+    "and its tests make their own scratch repositories. Every change earns tier 1, all the tests."
+  ],
+  "name": "lanekit",
+  "slug": "lanekit",
+  "integrationBranch": "main",
+  "roots": {},
+  "gate": {
+    "sides": {},
+    "seam": [],
+    "generated": [],
+    "tiers": {
+      "1": {
+        "label": "lanekit's tests",
+        "steps": [
+          {
+            "what": "running ./check",
+            "command": "{repo}/check",
+            "args": []
+          }
+        ]
+      }
+    }
+  },
+  "lane": {
+    "portBase": 8501,
+    "portCeiling": 8599,
+    "runHint": "node {lane}/dev/lane.mjs web --port {port} --scan {main}/..",
+    "copyOnCreate": [],
+    "linkOnCreate": [],
+    "env": {
+      "file": ".env",
+      "portKey": "PORT",
+      "perLane": {}
+    },
+    "makeDirs": [],
+    "seed": [],
+    "provision": []
+  }
+}
