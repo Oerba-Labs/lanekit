@@ -329,3 +329,15 @@ test('main\'s line is read no further back than five hundred commits, and the pa
         service.dispose()
     }
 })
+
+test('a reading is dated when it began, so an ask that shares it is never told of what happened after that', async () => {
+    // A press's work is drawn until a reading taken after its job ended: one begun before and shared since, dated when it
+    // ended, would have it dropped there, and its result drawn only a reading later.
+    const reading = threaded.state()
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const asked = Date.now()
+    const [first, second] = await Promise.all([reading, threaded.state()])
+    assert.equal(first.at, second.at, 'one reading')
+    assert.ok(second.at < asked, `dated ${second.at}, when it began, not after the later ask at ${asked}`)
+    assert.ok(second.at <= threaded.known().at, 'and no later than when it ended')
+})

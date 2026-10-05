@@ -190,6 +190,303 @@ const opens = (node, title, action) => {
 }
 
 // ---------------------------------------------------------------------------
+// motion: what changed between one drawing and the next, moved there rather than jumped to
+// ---------------------------------------------------------------------------
+
+/*
+ * Each drawing replaces what it draws, so by itself a change lands in one frame: a commit an agent made, a lane started,
+ * landed or pulled, and the eye is left to find what moved (the owner, 4 Oct: smoother, and easier to follow as it
+ * happens). So what is drawn carries a key of what it is (data-anim): a lane, a commit, a file, a state's words. Just
+ * before a drawing every keyed thing's place is read, and just after it what is still there slides from where it was to
+ * where it is, what came fades in, what went fades from where it was (an inert copy of it, for a moment), a lane that
+ * landed slides into main's line, and words that changed (data-sig) tick over. A commit that comes back under the same
+ * words with another hash (data-alias: made, amended, rebased) is the same row, settling. Where a drawing asks
+ * (data-anim-kids) its children are keyed by their place, so a lane's name and facts move with what grew above them.
+ *
+ * Nothing moves off the screen, in a page nobody sees, or in a repository just switched to; where the machine asks for
+ * less motion nothing slides, and things only fade. The page is never held for it: what is drawn is there, and
+ * pressable, at once.
+ */
+const MOVE_MS = 240
+const EASE = 'cubic-bezier(0.2, 0, 0, 1)'
+const lessMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null
+// A dot on a line (a commit's, a state's) pops by itself where the browser animates a pseudo-element.
+const POPS = typeof KeyframeEffect === 'function' && 'pseudoElement' in KeyframeEffect.prototype
+// The page's own loops (a state's pulse, the command bar's spinner, a busy lane's line), kept in time with the clock
+// rather than started again by each drawing that makes their node anew, which made them jump.
+const LOOPS = new Set(['pulse', 'spin', 'flow'])
+
+const motion = (() => {
+    let depth = 0
+    let hushed = true                 // the first drawing arrives whole
+    const ghosts = new Map()          // a copy of what went -> where it fades: put back if a drawing meanwhile took it away
+    const away = new WeakMap()        // a part of the page sliding out -> its animation, cancelled if it is shown again
+    const still = () => Boolean(lessMotion?.matches)
+    const onScreen = (box) => box.width + box.height > 0 && box.bottom > -40 && box.top < innerHeight + 40
+    const run = (node, keyframes, options) => { try { return node.animate(keyframes, options) } catch { return null } }
+
+    /** Every keyed thing's place, its words, what held it, and what of its own motion is under way. */
+    const read = () => {
+        const keyed = new Map()
+        const aliases = new Map()
+        // A fade or a tick part-way goes on in the node drawn in its place, from where it was. A slide does not: the place
+        // read below is where it was drawn, part-way or not, and the next slide starts there.
+        const effects = new Map()
+        for (const one of document.getAnimations()) {
+            const target = one.effect?.target
+            if (!target || !/^motion-(?!move)/.test(one.id) || one.playState !== 'running') continue
+            if (!effects.has(target)) effects.set(target, [])
+            effects.get(target).push({ id: one.id, keyframes: one.effect.getKeyframes(), timing: one.effect.getTiming(), pseudo: one.effect.pseudoElement, time: one.currentTime })
+        }
+        for (const node of document.querySelectorAll('[data-anim]')) {
+            const scope = node.closest('[data-anim-scope]')
+            const parents = []
+            for (let up = node.parentElement; up && up !== scope; up = up.parentElement) parents.push(up)
+            keyed.set(node.dataset.anim, { node, scope, parents, box: node.getBoundingClientRect(), sig: node.dataset.sig, effects: effects.get(node) ?? [] })
+            const alias = node.dataset.alias
+            if (alias) aliases.set(alias, aliases.has(alias) ? null : node.dataset.anim)
+        }
+        return { keyed, aliases }
+    }
+
+    /** A drawing's children keyed by their place where it asks: a lane's first div.facts, its second p.collide. */
+    const keyChildren = () => {
+        for (const parent of document.querySelectorAll('[data-anim-kids]')) {
+            const prefix = parent.dataset.anim ?? parent.dataset.animScope
+            const counts = new Map()
+            for (const kid of parent.children) {
+                if (ghosts.has(kid)) continue
+                const kind = `${kid.localName}.${kid.classList[0] ?? ''}`
+                const n = counts.get(kind) ?? 0
+                counts.set(kind, n + 1)
+                if (!kid.dataset.anim) kid.dataset.anim = `${prefix}>${kind}:${n}`
+            }
+        }
+    }
+
+    const slide = (node, x, y, ms = MOVE_MS) => run(node, [{ transform: `translate(${x}px, ${y}px)` }, { transform: 'none' }],
+        { duration: ms, easing: EASE, composite: 'add', id: 'motion-move' })
+    /** A dot popped: grown from nothing as a commit comes, or shrunk back as a state changes. */
+    const pop = (node, from) => {
+        if (POPS) run(node, [{ scale: from }, { scale: '1' }], { pseudoElement: '::before', duration: 380, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)', id: 'motion-pop' })
+    }
+    /** Faded in; around anything in it that was drawn elsewhere and slides in (main's name, onto a new commit), not over it. */
+    const fade = (node, stayed) => {
+        if (![...stayed].some((inner) => node.contains(inner))) {
+            run(node, [{ opacity: 0 }, { opacity: 1 }], { duration: 220, delay: 40, easing: 'ease-out', fill: 'backwards', id: 'motion-fade' })
+            return
+        }
+        for (const kid of node.children) if (!stayed.has(kid)) fade(kid, stayed)
+    }
+    /** A commit that came, washed in the accent and fading to its own ground, so a glance finds it. */
+    const wash = (node) => {
+        const tint = getComputedStyle(document.body).getPropertyValue('--accent-wash').trim()
+        if (tint) run(node, [{ backgroundColor: tint }, { backgroundColor: 'transparent' }], { duration: 1600, easing: 'ease-out', id: 'motion-wash' })
+    }
+    /** What came: faded in, a commit washed with its dot popped, a lane risen from where it forks, a question dropped into place. */
+    const arrive = (node, stayed, calm) => {
+        fade(node, stayed)
+        if (node.matches('li.commit, li.stack-commit')) {
+            if (!node.matches('.pending')) wash(node)
+            if (!calm) pop(node, '0')
+        } else if (!calm && node.matches('li.lane')) slide(node, 0, 14, 320)
+        else if (!calm && node.matches('.confirm, .more-menu, .details-inline, .message-form')) slide(node, 0, -6, 200)
+    }
+    /** Words that changed where they stand (a lane's state, its gate, a count): the new ones tick over, and a state's dot pops. */
+    const tick = (node, calm) => {
+        run(node, [{ opacity: 0.2 }, { opacity: 1 }], { duration: 360, easing: 'ease-out', id: 'motion-tick' })
+        if (calm) return
+        if (node.matches('.state')) pop(node, '1.9')
+        // The command bar's ✓ or ✗, as its spinner stops.
+        else if (node.matches('.mark')) run(node, [{ scale: '0.4' }, { scale: '1' }], { duration: 380, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)', id: 'motion-pop' })
+    }
+    /** A commit drawn again under the same words with another hash (made at last, amended, rebased): it settles in place. */
+    const settle = (node, calm) => {
+        run(node, [{ opacity: 0.55 }, { opacity: 1 }], { duration: 300, easing: 'ease-out', id: 'motion-tick' })
+        if (!calm) pop(node, '0.4')
+    }
+    const carry = (node, { id, keyframes, timing, pseudo, time }) => {
+        const again = run(node, keyframes, { ...timing, id, ...(pseudo ? { pseudoElement: pseudo } : {}) })
+        if (again && time !== null) again.currentTime = time
+    }
+
+    /**
+     * What went: a copy of it where it was, inert and fading, inside copies of what held it (emptied of their own look),
+     * so the rules that drew it draw it again. A lane that landed slides into main's line as it goes.
+     */
+    const leave = (old, calm, landed) => {
+        const scope = old.scope
+        const copy = old.node.cloneNode(true)
+        let shell = copy
+        for (const parent of [...old.parents, scope]) {
+            const outer = parent.cloneNode(false)
+            outer.classList.add('leaving-shell')
+            outer.append(shell)
+            shell = outer
+        }
+        const ghost = el('div', { class: 'leaving', 'aria-hidden': 'true' }, shell)
+        ghost.inert = true
+        // Nothing of it is found as the thing itself: no key, no id, no field's name, nothing for the keyboard.
+        for (const node of ghost.querySelectorAll('*')) {
+            for (const name of node.getAttributeNames()) if (/^(data-|id$|name$|for$|list$|tabindex$)/.test(name)) node.removeAttribute(name)
+        }
+        Object.assign(copy.style, { width: `${old.box.width}px`, height: `${old.box.height}px`, margin: '0', position: 'relative', top: 'auto', left: 'auto', right: 'auto', bottom: 'auto' })
+        scope.append(ghost)
+        const at = scope.getBoundingClientRect()
+        let [left, top] = [old.box.left - at.left, old.box.top - at.top]
+        Object.assign(ghost.style, { left: `${left}px`, top: `${top}px` })
+        const drawn = copy.getBoundingClientRect()
+        left += old.box.left - drawn.left
+        top += old.box.top - drawn.top
+        Object.assign(ghost.style, { left: `${left}px`, top: `${top}px` })
+        // Mostly gone early, so what moves into its place is not read through it; a lane that landed keeps going a while longer.
+        const to = calm ? { transform: 'none' } : landed ? { transform: 'translateX(-28px) scaleY(0.96)' } : { transform: 'translateY(-4px)' }
+        const going = run(ghost, [{ opacity: 1, transform: 'none' }, { opacity: landed ? 0.5 : 0.25, offset: 0.3 }, { opacity: 0, ...to }],
+            { duration: landed ? 420 : 220, easing: 'cubic-bezier(0.2, 0, 0.4, 1)', fill: 'forwards', id: 'motion-leave' })
+        ghosts.set(ghost, scope)
+        const gone = () => { ghosts.delete(ghost); ghost.remove() }
+        if (going) going.finished.then(gone, gone); else gone()
+    }
+
+    /** After a drawing: each keyed thing from where it was to where it is, what came in, and what went out. */
+    const play = (was) => {
+        keyChildren()
+        for (const [ghost, scope] of ghosts) if (!ghost.isConnected && scope.isConnected) scope.append(ghost)
+        if (!was) return
+        const calm = still()
+        const nodes = [...document.querySelectorAll('[data-anim]')]
+        const boxes = nodes.map((node) => node.getBoundingClientRect())
+        const present = new Set(nodes.map((node) => node.dataset.anim))
+        const taken = new Set()       // old keys a new thing took the place of, by its alias
+        const shifted = new Map()     // node -> how far from where it is it is drawn now, with what holds it
+        const came = new Set()
+        const stayed = new Set()
+        const arrivals = []
+        const places = new Map()      // parent -> where each of its keyed children was and is, and whether it slid
+        nodes.forEach((node, index) => {
+            const box = boxes[index]
+            const holder = node.parentElement?.closest('[data-anim]')
+            const held = shifted.get(holder) ?? [0, 0]
+            shifted.set(node, held)
+            let old = was.keyed.get(node.dataset.anim)
+            let morphed = false
+            if (!old && node.dataset.alias) {
+                const from = was.aliases.get(node.dataset.alias)
+                if (from && !present.has(from) && !taken.has(from)) { old = was.keyed.get(from); taken.add(from); morphed = true }
+            }
+            if (!old) {
+                came.add(node)
+                // It comes with what holds it, when that came too.
+                if (!came.has(holder) && onScreen(box)) arrivals.push(node)
+                return
+            }
+            stayed.add(node)
+            if (old.node === node) return
+            const [dx, dy] = [old.box.left - box.left, old.box.top - box.top]
+            const [x, y] = [dx - held[0], dy - held[1]]
+            const slid = !calm && (Math.abs(x) >= 1 || Math.abs(y) >= 1) && (onScreen(box) || onScreen(old.box))
+            if (slid) {
+                slide(node, x, y)
+                shifted.set(node, [dx, dy])
+            }
+            if (!places.has(node.parentElement)) places.set(node.parentElement, [])
+            places.get(node.parentElement).push({ node, from: old.box, to: box, slid })
+            for (const effect of old.effects) carry(node, effect)
+            if (!onScreen(box)) return
+            if (morphed) settle(node, calm)
+            else if (old.sig !== undefined && node.dataset.sig !== old.sig) tick(node, calm)
+        })
+        // Things that change places with each other (a lane newer now than the one above it, a lane moving group in the
+        // landing order) pass each other dimmed, so neither is read through the other on the way.
+        // Read as a page is: line by line (two things on one line, whatever their heights), then along the line.
+        const order = (a, b) => (Math.abs(a.top - b.top) > Math.min(a.height, b.height) / 2 ? a.top - b.top : a.left - b.left)
+        for (const all of places.values()) {
+            // What is not drawn (an empty line of agents) has no place to pass.
+            const siblings = all.filter((one) => one.from.height + one.from.width > 0 && one.to.height + one.to.width > 0)
+            if (siblings.length < 2 || !siblings.some((one) => one.slid)) continue
+            const before = [...siblings].sort((a, b) => order(a.from, b.from))
+            const after = [...siblings].sort((a, b) => order(a.to, b.to))
+            for (const one of siblings) {
+                if (one.slid && before.indexOf(one) !== after.indexOf(one)) {
+                    run(one.node, [{ opacity: 1 }, { opacity: 0.3, offset: 0.45 }, { opacity: 1 }], { duration: MOVE_MS, easing: 'ease-in-out', id: 'motion-dip' })
+                }
+            }
+        }
+        // Too many at once (a page of older commits read, a list shown whole) arrive as they are.
+        if (arrivals.length <= 40) for (const node of arrivals) arrive(node, stayed, calm)
+
+        const gone = [...was.keyed].filter(([key]) => !present.has(key) && !taken.has(key))
+        const goneKeys = new Set(gone.map(([key]) => key))
+        // A lane gone as a new commit comes onto main's line beside it has landed there.
+        const grew = new Set([...came].filter((node) => node.matches('li.commit')).map((node) => node.closest('[data-anim-scope]')))
+        const leaving = gone.filter(([, old]) => {
+            if (!onScreen(old.box) || !old.scope?.isConnected || old.scope.closest('[hidden]')) return false
+            // Only the outermost of what went: what it held goes with it.
+            const holder = old.parents.find((up) => up.dataset?.anim)
+            return !holder || !goneKeys.has(holder.dataset.anim)
+        })
+        if (leaving.length <= 24) for (const [, old] of leaving) leave(old, calm, old.node.matches('li.lane') && grew.has(old.scope))
+    }
+
+    /** Each loop of the page's own as far along as the clock says, whichever drawing made its node. */
+    const keepTime = () => {
+        for (const one of document.getAnimations()) {
+            if (LOOPS.has(one.animationName) && one.startTime !== 0) try { one.startTime = 0 } catch { /* not started yet */ }
+        }
+    }
+
+    /** A drawing, between a reading of where everything is and the motion from there; one inside another is part of it. */
+    const moving = (draw) => {
+        if (depth > 0) return draw()
+        depth++
+        let was = null
+        try { if (!hushed && !document.hidden) was = read() } catch { was = null }
+        try {
+            return draw()
+        } finally {
+            depth--
+            hushed = false
+            try { play(was) } catch { /* motion is never worth a page left half drawn */ }
+            keepTime()
+        }
+    }
+
+    /** A part of the page shown (the output, a notice, the details): slid in from its edge rather than appearing. */
+    const appear = (node, x = 0, y = 0) => {
+        if (!node.hidden && !away.has(node)) return
+        away.get(node)?.cancel()
+        away.delete(node)
+        node.hidden = false
+        if (document.hidden) return
+        run(node, [{ opacity: 0, transform: still() ? 'none' : `translate(${x}px, ${y}px)` }, { opacity: 1, transform: 'none' }], { duration: 200, easing: EASE, id: 'motion-appear' })
+    }
+    /** And hidden: slid back out, then hidden; shown again meanwhile, it stays. */
+    const disappear = (node, x = 0, y = 0, then = () => {}) => {
+        if (node.hidden || away.has(node)) return
+        const going = document.hidden ? null : run(node, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: still() ? 'none' : `translate(${x}px, ${y}px)` }],
+            { duration: 160, easing: 'ease-in', fill: 'forwards', id: 'motion-away' })
+        const done = () => { away.delete(node); going?.cancel(); node.hidden = true; then() }
+        if (!going) { done(); return }
+        away.set(node, going)
+        going.finished.then(done, () => {})
+    }
+    const fadeIn = (node) => run(node, [{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out', id: 'motion-fade' })
+
+    return { moving, appear, disappear, fadeIn, hush: () => { hushed = true } }
+})()
+const moving = motion.moving
+
+/** A drawn node given a key of what it is, and words that, when they change, tick over (true: its own text). */
+const keyed = (node, key, sig) => {
+    if (!node) return node
+    node.dataset.anim = key
+    if (sig !== undefined && sig !== null) node.dataset.sig = sig === true ? node.textContent : String(sig)
+    return node
+}
+// The parts of the page that are kept between drawings, where what went from them fades.
+for (const [id, scope] of [['repos', 'page'], ['cmdbar', 'commands'], ['switcher', 'switcher']]) $(id).dataset.animScope = scope
+
+// ---------------------------------------------------------------------------
 // what the page remembers between answers
 // ---------------------------------------------------------------------------
 
@@ -243,11 +540,13 @@ const showWhenDone = new Set()  // jobs whose output is the point of them (adopt
 
 const notice = (message, tone = 'risk') => {
     const box = $('notice')
+    clearTimeout(notice.timer)
+    // Its words stay while it slides away, and go with it.
+    if (!message) { motion.disappear(box, 0, -6); return }
     box.textContent = message
     box.classList.toggle('ok', tone === 'ok')
-    box.hidden = !message
-    clearTimeout(notice.timer)
-    if (message) notice.timer = setTimeout(() => { box.hidden = true }, 10000)
+    motion.appear(box, 0, -6)
+    notice.timer = setTimeout(() => motion.disappear(box, 0, -6), 10000)
 }
 
 const took = (state) => {
@@ -315,7 +614,8 @@ const failedHere = (job) => {
 // A running press's clock, each second, without redrawing anything else.
 const secondsSince = (at) => `${Math.max(0, Math.round((Date.now() - at) / 1000))} s`
 setInterval(() => {
-    for (const node of document.querySelectorAll('.live-clock')) node.textContent = secondsSince(Number(node.dataset.since))
+    // Only a clock that says since when: the copy of one fading where it was says nothing, and stops.
+    for (const node of document.querySelectorAll('.live-clock[data-since]')) node.textContent = secondsSince(Number(node.dataset.since))
 }, 1000)
 host.on('focus', (message) => focusLane(message.repo, message.lane))
 
@@ -354,7 +654,7 @@ const showJob = (id) => {
     shownJob = id
     shownFrom = 0
     $('job-out').textContent = ''
-    $('job').hidden = false
+    motion.appear($('job'), 0, 24)
     followJob(id)
     drawCommandBar()
 }
@@ -400,8 +700,7 @@ const followJob = async (id) => {
 
 $('job-close').addEventListener('click', () => {
     shownJob = null
-    $('job').hidden = true
-    drawCommandBar()
+    motion.disappear($('job'), 0, 24, drawCommandBar)
 })
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !$('job').hidden) $('job-close').click()
@@ -599,7 +898,10 @@ const agentChip = (repo, agent) => {
     const [tone, word] = AGENT_STATES[agent.state] ?? ['quiet', agent.state]
     const name = AGENT_NAMES[agent.agent] ?? agent.agent
     const busy = agent.state === 'thinking' || agent.state === 'running'
-    const chip = el('span', { class: `agent-chip${busy ? ' busy' : ''}${agent.state === 'needs-you' ? ' needs-you' : ''}` },
+    const chip = el('span', {
+        class: `agent-chip${busy ? ' busy' : ''}${agent.state === 'needs-you' ? ' needs-you' : ''}`,
+        'data-anim': `agent:${agent.key}`, 'data-sig': `${agent.state} ${agent.tool ?? ''}`
+    },
         icon('agent'),
         el('span', { class: 'agent-name', text: name }),
         state(tone, agent.tool && (agent.state === 'running' || agent.state === 'needs-you') ? `${word} · ${agent.tool}` : word, 'small'),
@@ -645,7 +947,8 @@ const agentsRow = (repo, laneName) => el('div', { class: 'agents', 'data-agents'
 
 /** The agents alone, drawn again where they are: they change every few seconds while one works, and a whole page
     drawn again under a pointer loses a click. */
-const drawAgents = () => {
+const drawAgents = () => moving(redrawAgents)
+const redrawAgents = () => {
     for (const row of document.querySelectorAll('.agents[data-agents]')) {
         const at = row.dataset.agents.indexOf('/')
         const repo = current?.repos.find((candidate) => candidate.id === row.dataset.agents.slice(0, at))
@@ -726,9 +1029,10 @@ const runningIn = (repo, lane) => (current?.jobs ?? []).find((job) => job.state 
 const liveOf = (repo, lane) => {
     const job = runningIn(repo, lane)
     if (!job) return null
-    return el('p', { class: 'live' },
-        state('info', `${DOING[job.verb] ?? job.verb}${job.dryRun ? ' (a check)' : ''}`, 'small'),
-        job.step ? el('span', { class: 'live-step', text: job.step }) : null,
+    const key = `${repo.id}/${lane.name}`
+    return el('p', { class: 'live', 'data-anim': `${key}:live` },
+        keyed(state('info', `${DOING[job.verb] ?? job.verb}${job.dryRun ? ' (a check)' : ''}`, 'small'), `${key}:live-verb`, true),
+        job.step ? el('span', { class: 'live-step', text: job.step, 'data-anim': `${key}:live-step`, 'data-sig': job.step }) : null,
         el('span', { class: 'live-clock', 'data-since': String(job.startedAt), text: secondsSince(job.startedAt) }),
         el('button', { type: 'button', class: 'btn link', text: 'Output', onclick: () => showJob(job.id) }))
 }
@@ -890,9 +1194,10 @@ const aboutCommit = (commit) => `${commit.subject}\n${commit.short} · ${commit.
 const commitRow = (repo, commit, className, label) => {
     const upstream = repo.main?.upstream
     const remote = upstream?.sha === commit.sha ? upstream.name : null
-    const row = el('li', { class: `commit ${className}`, 'data-sha': commit.sha },
-        label ? el('span', { class: 'tag', text: label }) : null,
-        remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch` }) : null,
+    // Main's name and origin's are keyed apart from the row they are on: when main moves, they slide up to its new commit.
+    const row = el('li', { class: `commit ${className}`, 'data-sha': commit.sha, 'data-anim': `${repo.id}@${commit.sha}` },
+        label ? el('span', { class: 'tag', text: label, 'data-anim': `${repo.id}:tag:${label}` }) : null,
+        remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch`, 'data-anim': `${repo.id}:tag:${remote}` }) : null,
         isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
             el('span', { class: 'subject', text: commit.subject }),
             el('span', { class: 'when', text: short(commit.at), title: exactly(commit.at) }),
@@ -953,7 +1258,7 @@ const changesOf = (repo, lane, key) => {
     const here = waiting?.where === 'changes' ? waiting : null
     const moving = lane.isMain || isMerged(lane)
     const carry = () => { pending.set(key, { verb: 'carry', stage: 'form', where: 'changes' }); draw(true) }
-    return el('div', { class: `changes${writing ? ' writing' : ''}` },
+    return el('div', { class: `changes${writing ? ' writing' : ''}`, 'data-anim-kids': true },
         el('div', { class: 'changes-actions tools' },
             host.inEditor ? verbLink('diff', 'View changes', `Everything uncommitted in ${who}, side by side`, () => openIn('uncommitted', { repo: repo.path, checkout: lane.path, name: who })) : null,
             verbLink('checkall', 'Select all', 'Tick every file', () => setChosen(key, lane, files.map((change) => change.path)), chosen.length === files.length),
@@ -970,7 +1275,7 @@ const changesOf = (repo, lane, key) => {
                     draw(true)
                 }
             })
-            return opens(el('li', {},
+            return opens(el('li', { 'data-anim': `${key}:file:${file.path}`, 'data-sig': file.status },
                 tick,
                 el('span', { class: `change-status s-${status}`, text: file.status === '?' ? 'U' : file.status, title: STATUS_WORD[file.status] ?? file.status }),
                 el('span', { class: `change-path s-${status}`, text: file.from ? `${file.from} → ${file.path}` : file.path })),
@@ -1117,7 +1422,7 @@ const carryForm = (repo, lane, key) => {
 const mainChangesRow = (repo) => {
     const main = repo.main
     if (!main?.dirty || main.operation || !main.onIntegration || !(main.changes ?? []).length) return null
-    return el('li', { class: 'main-changes' },
+    return el('li', { class: 'main-changes', 'data-anim': `${repo.id}:main-changes`, 'data-anim-kids': true },
         el('div', { class: 'main-changes-head' },
             state('warn', `${plural(main.dirty, 'uncommitted file')} in the main checkout`, 'small'),
             el('span', { class: 'muted small', text: `Land and Pull wait until ${main.dirty === 1 ? 'it is' : 'they are'} moved to a lane or discarded` })),
@@ -1136,7 +1441,10 @@ const FORESEEN = new Set(['new', 'rebase', 'commit', 'uncommit', 'discard', 'res
 /** A press accepted: what it will do is drawn from now until a reading taken after it ended says what it did. */
 const expect = (body, job) => {
     if (!FORESEEN.has(body.verb) || body.dryRun) return
-    optimistic.push({ jobId: job.id, body, at: Date.now() })
+    // The lane's newest commit as the press was made: a reading with another has the commit (or the uncommit) in it
+    // already, and it is drawn as it is, once, not with what the press will do drawn on top of it as well.
+    const lane = current?.repos.find((repo) => repo.id === body.repo)?.lanes.find((candidate) => candidate.name === body.lane)
+    optimistic.push({ jobId: job.id, body, at: Date.now(), head: lane ? lane.stack?.[0]?.sha ?? null : undefined })
 }
 const settleOptimistic = () => {
     optimistic = optimistic.filter((entry) => {
@@ -1161,9 +1469,11 @@ const viewOf = (repo) => {
         where.dirty = where.changes.length
         return going
     }
-    for (const { body, at } of mine) {
+    for (const { body, at, head } of mine) {
         const lane = view.lanes.find((candidate) => candidate.name === body.lane)
         const titleOf = (message) => String(message ?? '').split('\n')[0]
+        const made = lane && head !== undefined && (lane.stack[0]?.sha ?? null) !== head
+        if (made && (body.verb === 'commit' || body.verb === 'uncommit')) { lane.pending = { commit: 'Committing…', uncommit: 'Uncommitting…' }[body.verb]; continue }
         switch (body.verb) {
             case 'new':
                 if (!view.lanes.some((candidate) => candidate.name === body.name)) {
@@ -1426,12 +1736,18 @@ const drawDetails = () => {
         aside.hidden = true
         aside.replaceChildren()
         document.body.classList.remove('has-details')
+        detailsShown = null
         return
     }
     aside.replaceChildren(content)
-    aside.hidden = false
+    // Opened, it slides in from the side; another commit chosen in it, its words fade in. Drawn again as it was, it stays still.
+    const showing = JSON.stringify(selected)
+    if (aside.hidden) motion.appear(aside, 16, 0)
+    else if (showing !== detailsShown) motion.fadeIn(content)
+    detailsShown = showing
     document.body.classList.add('has-details')
 }
+let detailsShown = null
 /** In the side bar, the details of what is chosen, under its row. */
 const inlineDetails = (repo, commit) => (IN_SIDEBAR && selected?.sha && isSelected(repo, commit)
     ? el('li', { class: 'details-inline' }, commitPane(repo, commit, selected.lane)) : null)
@@ -1449,28 +1765,31 @@ const cancelJob = async (id) => {
     try { if (!await host.cancel(id)) notice('It had begun already, so it was not cancelled.') } catch { notice('LaneKit did not answer; nothing was cancelled.') }
     refresh()
 }
-const drawCommandBar = () => {
+const drawCommandBar = () => moving(drawBar)
+const drawBar = () => {
     const bar = $('cmdbar')
     const jobs = current?.jobs ?? []
     const running = jobs.find((job) => job.state === 'running')
     const waiting = jobs.filter((job) => job.state === 'queued').reverse()
     const last = running ?? jobs.find((job) => job.state === 'done')
     if (!last && !waiting.length) { bar.hidden = true; document.body.classList.remove('has-cmdbar'); return }
-    bar.hidden = false
+    motion.appear(bar, 0, 12)
     document.body.classList.add('has-cmdbar')
     const ok = last && last.state === 'done' && last.code === 0
     // Straight into replaceChildren, which writes a null as the word "null": the parts not there are left out first.
     const parts = (...kids) => kids.flat(Infinity).filter((kid) => kid !== null && kid !== undefined && kid !== false)
+    // The spinner and the mark are one thing, keyed alike: as a press ends its spinner ticks over into ✓ or ✗.
+    const mark = last ? `${last.id} ${running ? 'running' : ok ? 'ok' : 'bad'}` : null
     bar.replaceChildren(...parts(
-        last ? (running ? el('span', { class: 'spin', 'aria-hidden': 'true' })
-            : el('span', { class: `mark ${ok ? 'ok' : 'bad'}`, text: ok ? '✓' : '✗', title: ok ? 'It finished' : `It failed (exit ${last.code})` })) : null,
-        last ? el('code', { class: 'cmd', text: typed(last.command), title: last.command }) : null,
-        running?.step ? el('span', { class: 'cmd-step', text: running.step }) : null,
+        last ? (running ? el('span', { class: 'spin', 'aria-hidden': 'true', 'data-anim': 'cmd:mark', 'data-sig': mark })
+            : el('span', { class: `mark ${ok ? 'ok' : 'bad'}`, text: ok ? '✓' : '✗', title: ok ? 'It finished' : `It failed (exit ${last.code})`, 'data-anim': 'cmd:mark', 'data-sig': mark })) : null,
+        last ? el('code', { class: 'cmd', text: typed(last.command), title: last.command, 'data-anim': 'cmd:cmd', 'data-sig': last.id }) : null,
+        running?.step ? el('span', { class: 'cmd-step', text: running.step, 'data-anim': 'cmd:step', 'data-sig': running.step }) : null,
         running ? el('span', { class: 'live-clock', 'data-since': String(running.startedAt), text: secondsSince(running.startedAt) })
             : last?.endedAt ? el('span', { class: 'when', text: short(last.endedAt), title: exactly(last.endedAt) }) : null,
-        waiting.length ? el('span', { class: 'queued' },
+        waiting.length ? el('span', { class: 'queued', 'data-anim': 'cmd:queued' },
             el('span', { class: 'muted', text: 'then' }),
-            waiting.map((job) => el('span', { class: 'queued-job', title: typed(job.command) },
+            waiting.map((job) => el('span', { class: 'queued-job', title: typed(job.command), 'data-anim': `cmd:job:${job.id}` },
                 `${job.verb}${job.lane ? ` ${job.lane}` : ''}`,
                 el('button', { type: 'button', class: 'btn link cancel', text: '×', 'aria-label': `Cancel ${job.verb}${job.lane ? ` ${job.lane}` : ''}`, title: 'Take it out of the line', onclick: () => cancelJob(job.id) })))) : null,
         el('span', { class: 'grow' }),
@@ -1891,7 +2210,7 @@ const laneCard = (repo, lane, forked = true) => {
                     if (!wasOpen) toggle(moreKey); else draw(true)
                 }
             }),
-            moreOpen ? el('div', { class: 'more-menu', role: 'menu' }, more.map((button) => {
+            moreOpen ? el('div', { class: 'more-menu', role: 'menu', 'data-anim': `${key}:menu` }, more.map((button) => {
                 button.setAttribute('role', 'menuitem')
                 button.classList.add('quiet')   // every item alike in a menu: none is the next step
                 // Chosen: the menu closes, whatever the press then draws.
@@ -1902,27 +2221,30 @@ const laneCard = (repo, lane, forked = true) => {
 
     // What is true of it besides its state, in one quiet line: no count of its commits, which its dots show, nor of its
     // files, which its uncommitted node and its commits' details show.
+    const gate = lane.gate
     const facts = el('div', { class: 'facts' },
-        lane.quiet ? Object.assign(state('quiet', `Quiet for ${quietFor(lane.quietDays)}`, 'small quiet-for'), { title: `Nothing done in it since ${exactly(lane.lastActive)}: set it aside, or drop it, if it is not wanted now` }) : null,
+        lane.quiet ? Object.assign(keyed(state('quiet', `Quiet for ${quietFor(lane.quietDays)}`, 'small quiet-for'), `${key}:quiet`), { title: `Nothing done in it since ${exactly(lane.lastActive)}: set it aside, or drop it, if it is not wanted now` }) : null,
         lane.branch !== lane.name ? el('span', { text: `branch ${lane.branch}` }) : null,
-        lane.behind ? el('span', { text: `${lane.behind} behind ${repo.integrationBranch}` }) : null,
+        lane.behind ? el('span', { text: `${lane.behind} behind ${repo.integrationBranch}`, 'data-anim': `${key}:behind`, 'data-sig': lane.behind }) : null,
         forked ? null : historyButton(repo, `fork:${lane.name}`, 'Show where it forked', `Read ${repo.integrationBranch} down to the commit ${lane.name} forked from`,
             () => readHistory(repo, 'fork', `fork:${lane.name}`, lane)),
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         merged && lane.sinceMerge === null && lane.pull?.head ? el('span', { text: `#${lane.pull.number}'s commit is not in its history now: what it merged cannot be told apart` }) : null,
-        lane.pending ? null : gateOf(lane),
-        lane.pending ? null : pushedOf(lane),
-        stack0(lane) ? null : badgesOf(repo, lane),
-        serverOf(lane))
+        lane.pending ? null : keyed(gateOf(lane), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier}`),
+        lane.pending ? null : keyed(pushedOf(lane), `${key}:pushed`, true),
+        stack0(lane) ? null : keyed(badgesOf(repo, lane), `${key}:badges`, true),
+        keyed(serverOf(lane), `${key}:serving`))
 
     const stack = lane.stack ?? []
     const all = expanded.has(key)
     const shown = all ? stack : stack.slice(0, STACK_SHOWN)
     const hidden = stack.length - shown.length
+    // Each of its commits keyed by its hash, and known again by its words when they come back with another (made at
+    // last, amended, rebased), so the row settles where it is rather than going and coming.
     const stackList = stack.length
-        ? el('ul', { class: 'stack' },
+        ? el('ul', { class: 'stack', 'data-anim-kids': true },
             shown.map((commit, index) => {
-                const row = el('li', { class: `stack-commit${commit.pending ? ' pending' : ''}` },
+                const row = el('li', { class: `stack-commit${commit.pending ? ' pending' : ''}`, 'data-anim': `${key}@${commit.sha}`, 'data-alias': `${key}~${commit.subject}` },
                     isNaming(repo, commit) ? namingForm(repo, commit, lane.name) : [
                         el('span', { class: 'subject', text: commit.subject }),
                         el('span', { class: 'when', text: commit.pending ? '' : short(commit.at), title: exactly(commit.at) }),
@@ -1930,7 +2252,7 @@ const laneCard = (repo, lane, forked = true) => {
                     ])
                 return [
                     isNaming(repo, commit) ? row : selectable(row, repo, commit, lane.name),
-                    index === 0 && badgesOf(repo, lane) ? el('li', { class: 'stack-badges' }, badgesOf(repo, lane)) : null,
+                    index === 0 && badgesOf(repo, lane) ? el('li', { class: 'stack-badges' }, keyed(badgesOf(repo, lane), `${key}:badges`, true)) : null,
                     inlineDetails(repo, commit),
                     IN_SIDEBAR && index === 0 && selected?.form === 'reword' && selected.repo === repo.id && selected.lane === lane.name
                         ? el('li', { class: 'details-inline' }, paneFor(repo)) : null
@@ -1969,13 +2291,19 @@ const laneCard = (repo, lane, forked = true) => {
             }))
         : null
     // The state's reason is its title, except where it says what to do about a fault, which keeps a line.
-    const said = state(tone, word)
+    const said = keyed(state(tone, word), `${key}:state`, `${tone} ${word}`)
     if (detail) said.title = detail
     const changes = changesOf(repo, lane, key)
+    // A question asked in it ticks over as it moves on (checking, then asking), as its state does.
+    const asking = confirmOf(repo, lane, key)
+    if (asking) asking.dataset.sig = `${pending.get(key)?.verb} ${pending.get(key)?.stage}`
+    // Something running in it, or about to, by a press here or anywhere: a light runs down its line toward main.
+    const underway = Boolean(lane.pending || runningIn(repo, lane))
     const card = el('li', {
-        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
+        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${underway ? ' working' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
         'data-key': key, tabindex: '0', draggable: draggable ? 'true' : null,
-        title: draggable ? 'Drag it onto a commit of main to rebase it there' : null
+        title: draggable ? 'Drag it onto a commit of main to rebase it there' : null,
+        'data-anim': key, 'data-anim-kids': true
     },
         changes,
         stackList,
@@ -1990,7 +2318,7 @@ const laneCard = (repo, lane, forked = true) => {
         agentsRow(repo, lane.name),
         facts,
         collisions,
-        confirmOf(repo, lane, key),
+        asking,
         liveOf(repo, lane),
         detail && tone === 'risk' ? el('p', { class: 'why', text: detail }) : null,
         failureOf(repo, lane),
@@ -1999,7 +2327,7 @@ const laneCard = (repo, lane, forked = true) => {
                 el('div', { class: 'conflicts-head' },
                     el('span', { class: 'files-head', text: lane.conflicts?.length ? `Conflicts in ${plural(lane.conflicts.length, 'file')}` : 'Every conflict resolved: Continue carries on' }),
                     el('span', { class: 'grow' }), el('div', { class: 'actions' }, conflictButtons)),
-                el('ul', { class: 'conflict-list' }, (lane.conflicts ?? []).map((file) => el('li', {},
+                el('ul', { class: 'conflict-list' }, (lane.conflicts ?? []).map((file) => el('li', { 'data-anim': `${key}:conflict:${file}` },
                     opens(el('span', { class: 'conflict-path', text: file }), `Open ${file} to resolve it`,
                         () => openIn('conflicts', { repo: repo.path, lane: lane.name, path: file })),
                     el('button', {
@@ -2029,9 +2357,9 @@ const landedRow = (repo, lane) => {
     const sweepable = lane.kind === 'landed' && !lane.dirty
     // Landed, and something begun in it since: moved to a lane of its own, after which this one sweeps as usual.
     const carries = lane.kind === 'landed' && lane.dirty > 0 && lane.exists && !lane.operation
-    return el('li', { 'data-key': key, tabindex: '0' },
+    return el('li', { 'data-key': key, tabindex: '0', 'data-anim': `${key}:finished`, 'data-anim-kids': true },
         el('span', { class: 'lane-name', text: lane.name }),
-        state(tone, word),
+        keyed(state(tone, word), `${key}:finished-state`, `${tone} ${word}`),
         detail ? el('span', { class: 'muted', text: detail }) : null,
         carries ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         lane.port ? serverOf(lane) : null,
@@ -2105,8 +2433,9 @@ const headOf = (repo) => {
                 title: `${repo.name ?? repo.id} in a ${host.inEditor ? 'LaneKit' : 'browser'} tab of its own (a Cmd- or Ctrl-click on its name in the switcher does the same)`,
                 onclick: () => openOwnTab(repo.id)
             }, true) : null,
-            pullButton(repo),
-            pushMainButton(repo),
+            // Pull and Push come in as origin and main move apart, and their counts tick over.
+            keyed(pullButton(repo), `${repo.id}:pull`, true),
+            keyed(pushMainButton(repo), `${repo.id}:push-main`, true),
             terminalButton(repo, null),
             iconButton('fetch', 'Fetch', {
                 disabled: busyIn(repo.id),
@@ -2126,6 +2455,7 @@ const headOf = (repo) => {
     else if (up.ahead) facts.push(state('warn', `${plural(up.ahead, 'commit')} on ${base} not pushed`, 'small'))
     else if (up.behind) facts.push(state('info', `${up.behind} behind ${up.name}`, 'small'))
     else facts.push(state('done', `Up to date with ${up.name}`, 'small'))
+    keyed(facts[0], `${repo.id}:upstream`, true)
     // Where GitHub said main takes its changes another way, there is no Push for it, and this says why.
     if (up?.ahead && repo.github?.rules?.push?.allowed === false) facts.push(el('span', { text: `${repo.github.rules.push.why}: not pushed to from here` }))
     // When it last heard from origin: fetched by itself every few minutes while a page is open.
@@ -2244,8 +2574,8 @@ const logOf = (repo) => {
     // Origin ahead of main, with commits this log does not hold: a dashed row above main's newest says so, with Pull.
     const upstream = repo.main?.upstream
     if (upstream?.behind > 0 && !onSpine.has(upstream.sha)) {
-        rows.push(el('li', { class: 'commit remote-ahead' },
-            el('span', { class: 'tag remote', text: upstream.name }),
+        rows.push(el('li', { class: 'commit remote-ahead', 'data-anim': `${repo.id}:remote-ahead`, 'data-sig': upstream.behind },
+            el('span', { class: 'tag remote', text: upstream.name, 'data-anim': `${repo.id}:tag:${upstream.name}` }),
             el('span', { class: 'subject muted', text: `${plural(upstream.behind, 'newer commit')} than ${repo.integrationBranch}, as of the last fetch` }),
             pullButton(repo)))
     }
@@ -2363,12 +2693,16 @@ const queueOf = (repo) => {
     const busy = busyIn(repo.id)
     return [el('div', { class: 'queue' },
         el('span', { class: 'queue-title', text: 'Landing order' }),
-        el('div', { class: 'queue-groups' }, groups.map((group) => el('span', { class: 'queue-group' },
+        // A lane whose verdict changes slides from its old group to its new one.
+        el('div', { class: 'queue-groups' }, groups.map((group) => el('span', { class: 'queue-group', 'data-anim': `${repo.id}:queue:${group.verdict}` },
             el('span', { class: 'queue-label', text: group.label }),
             group.lanes.map((item) => {
                 const lane = repo.lanes.find((candidate) => candidate.name === item.name)
                 const words = item.after.length ? `${item.name}, after ${item.after.join(' and ')}` : item.days ? `${item.name}, quiet for ${quietFor(item.days)}` : item.name
-                const chip = el('span', { class: 'queue-item', tabindex: '0', role: 'button', title: `${words}: ${VERDICT_WORDS[lane?.queue?.verdict]?.[1] ?? group.label.toLowerCase()}` },
+                const chip = el('span', {
+                    class: 'queue-item', tabindex: '0', role: 'button', title: `${words}: ${VERDICT_WORDS[lane?.queue?.verdict]?.[1] ?? group.label.toLowerCase()}`,
+                    'data-anim': `${repo.id}:queue-lane:${item.name}`, 'data-sig': group.verdict
+                },
                     el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
                     el('span', { class: 'queue-name', text: item.name }),
                     item.after.length ? el('span', { class: 'queue-after', text: `after ${item.after.join(', ')}` }) : null)
@@ -2437,7 +2771,7 @@ window.addEventListener('resize', () => drawCollisions())
 const asideRow = (repo, lane) => {
     const key = `${repo.id}/${lane.name}`
     const busy = busyIn(repo.id) || Boolean(lane.pending)
-    return el('li', { 'data-key': key, tabindex: '0' },
+    return el('li', { 'data-key': key, tabindex: '0', 'data-anim': `${key}:aside`, 'data-anim-kids': true },
         el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) }),
         el('span', { class: 'muted', text: [lane.ahead ? plural(lane.ahead, 'commit') : 'nothing committed', lane.dirty ? `${lane.dirty} uncommitted` : null,
             lane.aside ? `set aside ${ago(Date.parse(lane.aside))}` : null, lane.quiet ? `quiet for ${quietFor(lane.quietDays)}` : null].filter(Boolean).join(' · ') }),
@@ -2477,6 +2811,8 @@ const liveLanes = (repo) => (repo.error ? [] : repo.lanes.filter((lane) => (lane
 /** Show one repository (its id), or every one (null): remembered where this page keeps it, and drawn at once. */
 const showRepo = (id) => {
     only = id
+    // Another repository, or home: drawn whole, not as what changed from the one before.
+    motion.hush()
     // What was chosen or being named in a repository no longer shown goes with it.
     if (id && selected && selected.repo !== id) selected = null
     if (id && naming && naming.repo !== id) naming = null
@@ -2515,8 +2851,8 @@ const drawSwitcher = () => {
         onauxclick: (event) => { if (host.inEditor && event.button === 1) { event.preventDefault(); if (id) openOwnTab(id) } }
     },
     el('span', { class: broken ? 'broken' : null, text: label }),
-    el('span', { class: 'n', text: String(count) }),
-    running ? el('span', { class: 'busy', title: 'Something is running in it' }) : null)
+    el('span', { class: 'n', text: String(count), 'data-anim': `switcher:${id ?? ''}:count`, 'data-sig': count }),
+    running ? el('span', { class: 'busy', title: 'Something is running in it', 'data-anim': `switcher:${id ?? ''}:busy` }) : null)
     nav.replaceChildren(
         tab(null, 'Home', repos.reduce((sum, repo) => sum + liveLanes(repo).length, 0), 'Every repository at a glance, each opened from its card ([ and ] step through them)'),
         ...repos.map((repo) => tab(repo.id, repo.name ?? repo.id, liveLanes(repo).length,
@@ -2675,7 +3011,8 @@ const homeCard = (repo) => {
     const running = glance.running
     const card = el('li', {
         class: `home-card${glance.needsYou ? ' wants-you' : ''}${repo.error ? ' broken' : ''}`,
-        'data-key': `home:${repo.id}`, 'data-home': repo.id, tabindex: '0', 'aria-label': `${name}: ${counts.filter(Boolean).join(', ')}. Enter opens it`
+        'data-key': `home:${repo.id}`, 'data-home': repo.id, tabindex: '0', 'aria-label': `${name}: ${counts.filter(Boolean).join(', ')}. Enter opens it`,
+        'data-anim': `home:${repo.id}`, 'data-anim-kids': true
     },
     el('div', { class: 'home-head' },
         // A link, so a browser opens it in a tab of its own on a Cmd- or Ctrl-click, as the switcher's tabs do.
@@ -2723,12 +3060,14 @@ const homeCard = (repo) => {
 const sectionFor = (repo) => {
     let kept = sections.get(repo.id)
     if (kept) return kept
+    // Each part keyed, its children by their place; the log is where what went from it fades.
+    const part = (name) => ({ 'data-anim': `${repo.id}:${name}`, 'data-anim-kids': true })
     kept = {
         root: el('section', { class: 'repo' }),
-        head: el('div', {}),
-        queue: el('div', {}),
-        log: (() => { const log = el('ol', { class: 'log' }); listenForDrops(log); return log })(),
-        settled: el('div', {})
+        head: el('div', part('head')),
+        queue: el('div', part('queue')),
+        log: (() => { const log = el('ol', { class: 'log', 'data-anim-scope': `${repo.id}:log`, 'data-anim-kids': true }); listenForDrops(log); return log })(),
+        settled: el('div', part('settled'))
     }
     kept.root.append(kept.head, kept.queue, kept.log, kept.settled)
     sections.set(repo.id, kept)
@@ -2766,6 +3105,9 @@ const draw = (force = false) => {
     if (!force && said === lastDrawn && Date.now() - lastDrawnAt < REDRAW_ANYWAY_MS) return
     lastDrawn = said
     lastDrawnAt = Date.now()
+    moving(drawPage)
+}
+const drawPage = () => {
     const focusedKey = document.activeElement?.closest?.('[data-key]') === document.activeElement ? document.activeElement.dataset.key : null
     // A field being typed in is drawn again with what was typed (drafts) and keeps the keyboard where it was.
     const typing = document.activeElement?.dataset?.draft
@@ -2800,6 +3142,8 @@ const draw = (force = false) => {
         kept.head.replaceChildren(...headOf(repo))
         kept.queue.replaceChildren(...queueOf(repo))
         kept.log.replaceChildren(...logOf(viewOf(repo)))
+        // Main pulled, fetched or pushed: a light runs down its line, as down a lane's while something runs in it.
+        kept.log.classList.toggle('working', (current.jobs ?? []).some((job) => job.state === 'running' && job.repo === repo.id && !job.lane))
         kept.settled.replaceChildren(...settledOf(repo))
         // Moved only when out of place: moving a section takes the focus out of its form.
         const there = pane.children[index]
@@ -2845,7 +3189,7 @@ const keysPanel = el('div', { class: 'keys', hidden: true, role: 'dialog', 'aria
     el('p', { class: 'keys-title', text: 'Keys' }),
     el('dl', {}, KEYS.map(([key, what]) => [el('dt', { text: key }), el('dd', { text: what })])))
 document.body.append(keysPanel)
-const toggleKeys = (show = keysPanel.hidden) => { keysPanel.hidden = !show }
+const toggleKeys = (show = keysPanel.hidden) => { if (show) motion.appear(keysPanel, 0, -6); else motion.disappear(keysPanel, 0, -6) }
 $('updated').before(el('button', { type: 'button', class: 'btn link keys-toggle', text: 'Keys', title: 'What the keyboard does here (?)', onclick: () => toggleKeys() }))
 
 const laneCards = () => [...document.querySelectorAll('li[data-key][tabindex]')]

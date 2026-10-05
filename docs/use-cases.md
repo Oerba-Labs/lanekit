@@ -2,8 +2,8 @@
 
 Every thing a person does with LaneKit, on the page or with `lane`, and the tests that show it works. A test is
 named by its file and its number in that file (`node --test --test-name-pattern "<words from its name>"` runs one).
-Use cases marked **new** came with the page's second round of changes (2 Oct), or with review lanes and the Claude
-Code plugin (3 Oct). Their tests are new too.
+Use cases marked **new** came with the page's second round of changes (2 Oct), with review lanes and the Claude Code
+plugin (3 Oct), or with the page's motion (4 Oct). Their tests are new too.
 
 The tests run against scratch repositories with a bare `origin` and a second clone that pushes to it; GitHub is
 lanekit's stand-in for `gh` (`test/fake-gh`); the page's own tests drive it in a real Chrome, as a browser shows it and
@@ -105,6 +105,9 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 40 | **new** No *You are here* (work goes on in many places at once), a terminal icon rather than *Goto*, no row saying a repository has no lanes, no count of a lane's files | the log | page 6, e2e 1, e2e 9, vscode 26 |
 | 41 | Press while something runs: the press waits its turn, and can be cancelled | the command bar | web 10, rebase 6 |
 | 42 | See main's uncommitted files where they are, on main's line, as a lane's are | the main checkout's node | carry 1, e2e 5 |
+| 58 | **new** Follow what changes as it happens, pressed here or done by an agent anywhere: what stays slides to its new place, a new commit fades in washed, what went fades from where it was (an inert copy, found as nothing), a lane landed slides into main's line as `main` slides up to its merge, words that change tick over, and nothing moves where the machine asks for less motion | the log, the landing order, the command bar | e2e 11, e2e 12, e2e 13 |
+| 59 | **new** See where something runs: a light down the line of a lane a press runs in (or is about to), and down main's while it is pulled, fetched or pushed; lit and still with less motion | the log | e2e 13 |
+| 60 | **new** A commit pressed here is drawn once: dashed until it is made, then settled in place, never drawn beside itself nor gone from the page in between | the lane's commits | page 8, service 14 |
 
 ## Installing and updating
 
@@ -147,6 +150,11 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 - **The keyboard** (`j`, `k`, `g`, `l`, `p`, …) has no test of its own.
 - **The side bar's layout** is looked at in screenshots only, and **dragging a lane** onto a commit is tested at the
   service and in `ontoOf`, not by a drag in the browser.
+- **The page's motion** is tested by what it starts (each animation's name, what it is on, whether it slides), not by
+  how it looks part-way, which was looked at by hand in frames held still. A commit pressed on the page settling into
+  its dashed row is looked at by hand: the press is quicker than any reading, so the page cannot be sure of drawing the
+  dashed row first (what it draws from the state is tested, 60). Home's cards, the side bar and the details pane move
+  too, untested.
 - The README's screenshots predate this round: they still show *You are here* and *Goto*.
 - **The workflows** (`.github/workflows/`) run on GitHub only: `node --test` does not run them, and Open VSX
   takes the `.vsix` only where its token is set (`OVSX_PAT`).
