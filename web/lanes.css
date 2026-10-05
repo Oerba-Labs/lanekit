@@ -638,7 +638,8 @@ html[data-surface="sidebar"] .log > li.foot .count { display: none; }
   content: ""; position: absolute; left: calc(var(--spine) - 1px); top: 0; bottom: 2px; width: 2px;
   background: repeating-linear-gradient(to bottom, var(--rail) 0 4px, var(--bg) 4px 8px);
 }
-.log:has(> li.foot:last-child)::before { bottom: 30px; }
+/* Its last row, whatever is laid over the log after it (the collisions' brackets, a row fading out). */
+.log:has(> li.foot:last-of-type)::before { bottom: 30px; }
 /* Main's first commit: its line stops at its dot, the rail below it painted over in the page's own colour. */
 .log > li.commit.root {
   /* Longhands, so a drop's wash on the row (its background-color) is kept. */
@@ -791,3 +792,28 @@ a.home-review-title:hover { color: var(--accent); text-decoration: underline; }
 .home-reviews .btn.link { font-size: var(--s12); }
 .waits-on-you { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
 .waits-on-you a { color: var(--warn); }
+
+/*
+ * ---- motion ----------------------------------------------------------------------
+ * The page slides, fades and ticks what changed from one drawing to the next (lanes.js, motion). Here: where what went
+ * is laid while it fades (a copy, inert, at the place it left, inside copies of what held it emptied of their own look
+ * so the rules that drew it still do), and a light running down the line of a lane something runs in, toward main, and
+ * down main's own while it is pulled, fetched or pushed. Where the machine asks for less motion the light stands still.
+ */
+:where([data-anim-scope]) { position: relative; }
+.leaving { position: absolute; z-index: 1; margin: 0; pointer-events: none; transform-origin: left center; }
+.leaving-shell {
+  display: block !important; position: static !important; transform: none !important; scale: none !important;
+  width: auto !important; height: auto !important; min-height: 0 !important; max-height: none !important;
+  margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important;
+  visibility: visible !important; opacity: 1 !important; overflow: visible !important;
+}
+.leaving-shell::before, .leaving-shell::after { content: none !important; }
+.lane.working:not(.wants-you)::before, .log.working::before {
+  background: linear-gradient(to bottom, var(--rail) 0 30%, var(--accent) 50%, var(--rail) 70% 100%) 0 0 / 100% 160px repeat-y;
+  animation: flow 1.2s linear infinite;
+}
+@keyframes flow { to { background-position: 0 160px; } }
+@media (prefers-reduced-motion: reduce) {
+  .lane.working:not(.wants-you)::before, .log.working::before { animation: none; background: var(--accent); }
+}

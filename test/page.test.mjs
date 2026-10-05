@@ -130,3 +130,27 @@ test('a review of somebody\'s pull request asks what you make of it, pulls what 
     assert.equal(prStepOf(repo(), review({ dirty: 3 })).next, 'verdict', 'a reviewer\'s own changes beside it change nothing')
     assert.equal(prStepOf(repo(), review({ operation: 'rebase' })), null, 'part-way through a rebase: that first')
 })
+
+test('a commit pressed is drawn at once, dashed, its files gone from the list; once a reading has it, it is drawn once, never beside itself', () => {
+    // viewOf, read from the page as it is written there and run here, with the presses it draws handed to it.
+    const start = page.indexOf('const viewOf = ')
+    assert.notEqual(start, -1, 'the page has viewOf')
+    const drawing = (optimistic) => new Function('optimistic', `${page.slice(start, page.indexOf('\n}\n', start) + 2)}; return viewOf`)(optimistic)
+    const shown = (lane) => lane.stack.map((commit) => `${commit.subject}${commit.pending ? ' (dashed)' : ''}`)
+    const feature = { name: 'feature', stack: [{ sha: 'a1', subject: 'Start the feature' }], changes: [{ path: 'x.txt', status: 'M' }], conflicts: [], dirty: 1, ahead: 1 }
+    const read = (lane) => ({ id: 'demo', spine: [{ sha: 'm1' }], main: { changes: [] }, lanes: [lane] })
+    // Pressed with the lane's newest commit a1: the page draws what the press will do.
+    const committing = drawing([{ jobId: 1, at: 5, head: 'a1', body: { repo: 'demo', verb: 'commit', lane: 'feature', message: 'Make it better\n\nWhy' } }])
+    const before = committing(read(feature)).lanes[0]
+    assert.deepEqual(shown(before), ['Make it better (dashed)', 'Start the feature'])
+    assert.deepEqual([before.changes, before.dirty, before.pending], [[], 0, 'Committing…'])
+    // A reading taken while its job is still finishing has the commit already: drawn once, as it is.
+    const made = { ...feature, stack: [{ sha: 'b2', subject: 'Make it better' }, ...feature.stack], changes: [], dirty: 0, ahead: 2 }
+    const after = committing(read(made)).lanes[0]
+    assert.deepEqual(shown(after), ['Make it better', 'Start the feature'], 'not the dashed one beside it')
+    assert.equal(after.pending, 'Committing…', 'said to be under way until its job is done')
+    // Uncommit likewise: its newest taken off at once, and not a second one once the reading has it gone.
+    const uncommitting = drawing([{ jobId: 2, at: 6, head: 'b2', body: { repo: 'demo', verb: 'uncommit', lane: 'feature' } }])
+    assert.deepEqual(shown(uncommitting(read(made)).lanes[0]), ['Start the feature'])
+    assert.deepEqual(shown(uncommitting(read(feature)).lanes[0]), ['Start the feature'], 'Start the feature stays')
+})

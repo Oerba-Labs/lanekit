@@ -142,8 +142,11 @@ window.acquireVsCodeApi = () => {
     }
 }`
 
-/** A tab on `url`, and what a test does with it: run a function in the page, wait for one to be true, point, click, type. */
-const open = async (browser, url, { editor = false } = {}) => {
+/**
+ * A tab on `url`, and what a test does with it: run a function in the page, wait for one to be true, point, click, type.
+ * `still`: a machine that asks for less motion.
+ */
+const open = async (browser, url, { editor = false, still = false } = {}) => {
     const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true })
     const send = (method, params) => browser.send(method, params, sessionId)
@@ -151,6 +154,7 @@ const open = async (browser, url, { editor = false } = {}) => {
     await send('Runtime.enable')
     await send('Page.setBypassCSP', { enabled: true })
     await send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false })
+    if (still) await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
     if (editor) await send('Page.addScriptToEvaluateOnNewDocument', { source: EDITOR })
     await send('Page.navigate', { url })
     // Each function is run with the finders below in its scope.
@@ -178,9 +182,11 @@ const open = async (browser, url, { editor = false } = {}) => {
         }).catch((error) => error.message)
         throw new Error(`waited ${timeout} ms for ${what}; last said ${JSON.stringify(last)}; the page showed ${shown}; LaneKit ran ${ran}`)
     }
-    /** The pointer onto the middle of what `find` finds in the page (a function there that returns an element). */
+    /** The pointer onto the middle of what `find` finds in the page (a function there that returns an element), once the
+        page has stopped moving: a person points at a thing where it comes to rest, not where it is sliding from. */
     const pointAt = async (find, ...args) => {
-        const at = await until(`(...args) => { const node = (${find})(...args); if (!node) return null; node.scrollIntoView({ block: 'center' });
+        const at = await until(`(...args) => { if (document.getAnimations().some((one) => /^motion-/.test(one.id))) return null;
+            const node = (${find})(...args); if (!node) return null; node.scrollIntoView({ block: 'center' });
             const box = node.getBoundingClientRect(); return box.width && box.height ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null }`, args, { what: `${find}` })
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
         return at
@@ -206,6 +212,34 @@ const laneButton = (name, label) => [...(document.querySelector(`li.lane[data-ke
     .find((button) => (button.getAttribute('aria-label') || button.textContent).trim().startsWith(label))
 /** The finders above, put in the scope of every function a test runs in the page. */
 const FINDERS = `const card = ${card}; const buttonIn = ${buttonIn}; const laneButton = ${laneButton};`
+
+/**
+ * What the page animates from now on, written down as each starts (window.__motion): its id, what it is on (its key, the
+ * lane it is in, whether it is the copy of something that went, inert and with nothing of the thing itself to find), its
+ * words, its transforms, and whether it slides or scales anything rather than only fading it. Run in the page.
+ */
+const RECORD = () => {
+    if (!window.__recording) {
+        window.__recording = true
+        const animate = Element.prototype.animate
+        Element.prototype.animate = function (keyframes, options) {
+            const frames = Array.isArray(keyframes) ? keyframes : [keyframes]
+            window.__motion?.push({
+                id: options?.id ?? '', key: this.dataset?.anim ?? null, lane: this.closest?.('li.lane')?.dataset.key ?? null,
+                leaving: this.matches?.('.leaving') ?? false, inert: this.inert === true,
+                findable: Boolean(this.matches?.('.leaving') && this.querySelector('[data-key], [data-anim], [tabindex], [id]')),
+                text: this.textContent.replace(/\s+/g, ' ').trim().slice(0, 240),
+                transforms: frames.map((frame) => frame.transform).filter((transform) => transform && transform !== 'none'),
+                moves: frames.some((frame) => (frame.transform && frame.transform !== 'none') || frame.scale)
+            })
+            return animate.call(this, keyframes, options)
+        }
+    }
+    window.__motion = []
+    return true
+}
+/** The page at rest: nothing of its own motion under way (its loops, a pulse or a spinner, go on). */
+const atRest = () => !document.getAnimations().some((one) => /^motion-/.test(one.id))
 
 // ---------------------------------------------------------------------------
 // the repositories, the server and the browser
@@ -517,5 +551,77 @@ test('a pull request waiting on your review opens in a lane of its own from Home
         assert.deepEqual(review && { state: review.state, body: review.body }, { state: 'APPROVED', body: 'It counts as it says.' }, 'the approval reached GitHub, in its words')
     } finally {
         await home.close()
+    }
+})
+
+test('what an agent commits comes in as it happens: the file it took fades from where it was, its commit fades in washed, and what is under it slides', { skip, timeout: 120_000 * SLOW }, async () => {
+    await page.run((() => { card('feature').scrollIntoView({ block: 'center' }); return true }))
+    await page.until(atRest, [], { what: 'the page at rest' })
+    await page.run(RECORD)
+    // Committed by somebody else, in the lane's own folder: nothing pressed on the page, so nothing drawn before it is done.
+    git(laneDir('feature'), 'add', 'feature.txt')
+    git(laneDir('feature'), 'commit', '-qm', 'Make the feature better')
+    const sha = git(laneDir('feature'), 'rev-parse', 'HEAD')
+    await page.until((() => card('feature').querySelector('.stack .subject')?.textContent === 'Make the feature better' &&
+        [...card('feature').querySelectorAll(':scope > .changes .change-path')].map((node) => node.textContent).join() === 'notes.txt'),
+    [], { what: 'feature with its new commit, and notes.txt left uncommitted' })
+    const seen = await page.run(() => window.__motion)
+    const said = JSON.stringify(seen.map((one) => `${one.id} ${one.key ?? one.text.slice(0, 40)}`))
+    const went = seen.filter((one) => one.id === 'motion-leave' && one.leaving && /feature\.txt/.test(one.text))
+    assert.ok(went.length, `feature.txt fades from where it was: ${said}`)
+    assert.ok(went.every((one) => one.inert && !one.findable), 'its copy is inert, and nothing in it is found as the file itself')
+    assert.ok(seen.some((one) => one.id === 'motion-fade' && one.key === `demo/feature@${sha}`), `its commit fades in: ${said}`)
+    assert.ok(seen.some((one) => one.id === 'motion-wash' && one.key === `demo/feature@${sha}`), `washed, so a glance finds it: ${said}`)
+    assert.ok(seen.some((one) => one.id === 'motion-move' && one.lane === 'demo/feature' && one.moves), `what is under it slides rather than jumps: ${said}`)
+    await page.until(() => !document.querySelector('.leaving'), [], { what: 'the copy of what went, gone once faded' })
+    assert.equal(await page.run(() => document.querySelectorAll('li.lane[data-key="demo/feature"]').length), 1)
+})
+
+test('a lane an agent lands slides into main\'s line as it goes, its merge commit comes onto main washed, and main\'s name slides up to it', { skip, timeout: 180_000 * SLOW }, async () => {
+    lane('new', 'tiny')
+    commit(laneDir('tiny'), 'tiny.txt', 'tiny\n', 'Add a tiny thing')
+    execFileSync(process.execPath, [path.join(KIT, 'dev', 'gate.mjs')], { cwd: laneDir('tiny'), env, stdio: ['ignore', 'pipe', 'pipe'] })
+    await page.until((() => card('tiny')?.querySelector('.lane-title > .state')?.textContent === 'Ready to land'), [], { what: 'tiny, gated green' })
+    await page.run(() => { window.scrollTo(0, 0); return true })
+    await page.until(atRest, [], { what: 'the page at rest' })
+    await page.run(RECORD)
+    lane('land', 'tiny')
+    const tip = git(repo, 'rev-parse', 'HEAD')
+    await page.until((sha) => !card('tiny') && document.querySelector('li.commit.tip')?.dataset.sha === sha, [tip], { what: 'tiny gone, and main at its merge' })
+    const seen = await page.run(() => window.__motion)
+    const said = JSON.stringify(seen.map((one) => `${one.id} ${one.key ?? one.text.slice(0, 40)} ${one.transforms.join(' ')}`))
+    assert.ok(seen.some((one) => one.id === 'motion-leave' && /Add a tiny thing/.test(one.text) && one.transforms.some((transform) => /translateX\(-/.test(transform))),
+        `tiny slides into main's line as it goes: ${said}`)
+    assert.ok(seen.some((one) => one.id === 'motion-wash' && one.key === `demo@${tip}`), `the merge commit is washed onto main: ${said}`)
+    assert.ok(seen.some((one) => one.id === 'motion-move' && one.key === 'demo:tag:main'), `main's name slides up to it: ${said}`)
+})
+
+test('where the machine asks for less motion nothing slides and what changes only fades; a lane something runs in is lit along its line', { skip, timeout: 120_000 * SLOW }, async () => {
+    const still = await open(browser, `${base}?repo=demo`, { still: true })
+    try {
+        // feature, the newest of the lanes beside it since the agent's commit: another keeps it where it is, in sight.
+        await still.until((() => card('feature')), [], { what: 'feature drawn' })
+        await still.run((() => { card('feature').scrollIntoView({ block: 'center' }); return true }))
+        await still.until(atRest, [], { what: 'the page at rest' })
+        await still.run(RECORD)
+        commit(laneDir('feature'), 'more.txt', 'more\n', 'Say a little more')
+        const sha = git(laneDir('feature'), 'rev-parse', 'HEAD')
+        await still.until((() => card('feature').querySelector('.stack .subject')?.textContent === 'Say a little more'), [], { what: 'feature with its new commit' })
+        const seen = await still.run(() => window.__motion)
+        assert.ok(seen.some((one) => one.id === 'motion-fade' && one.key === `demo/feature@${sha}`), `its commit fades in: ${JSON.stringify(seen.map((one) => `${one.id} ${one.key}`))}`)
+        assert.deepEqual(seen.filter((one) => one.moves).map((one) => `${one.id} ${one.key}`), [], 'nothing slides, scales or pops')
+
+        // A press running in ready, as the service says one is: its line lit and still here, a light running down it
+        // where motion is welcome.
+        const running = (name) => {
+            current.jobs.unshift({ id: 'e2e-running', repo: 'demo', lane: name, verb: 'gate', state: 'running', startedAt: Date.now(), command: 'gate' })
+            draw(true)
+            return card(name).classList.contains('working') && getComputedStyle(card(name), '::before').animationName
+        }
+        assert.equal(await still.run(running, 'ready'), 'none')
+        assert.equal(await page.run(running, 'ready'), 'flow')
+        await page.run(() => refresh().then(() => true))
+    } finally {
+        await still.close()
     }
 })

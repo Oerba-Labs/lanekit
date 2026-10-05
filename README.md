@@ -299,6 +299,14 @@ The page in the picture above, for every repository in a folder:
 - **What a press will do is drawn at once**, before it has: a commit appears in its lane, dashed,
   as its files leave the list; a rebased lane moves above its new commit; a new lane appears where
   it will start. The next reading after it ends says what really happened.
+- **What changes moves, rather than jumping**, whoever changed it: you, or an agent in a lane. What
+  stays slides to its new place; a new commit fades in, washed in the accent so a glance finds it; a
+  file committed, a lane dropped or a question answered fades from where it was; a lane that lands
+  slides into main's line as its merge commit arrives and `main`'s tag slides up to it; a state, a
+  gate or a count that changes ticks over; lanes that swap places pass each other dimmed. A lane
+  with something running in it, and main while it is pulled or fetched, has a light running down
+  its line. Nothing waits for the motion, and with *reduce motion* set on the machine nothing
+  slides: things only fade.
 - **Its buttons show when the pointer or the keyboard is on it**, the way Sapling's Interactive
   Smartlog does, so a page of lanes reads calmly until you reach for one, and sit beside its name
   and state, never across the page from them. They are lane's own commands, run as a terminal would
