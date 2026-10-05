@@ -204,9 +204,11 @@ test('the page reads a review lane\'s pull request by its number, and its presse
     try {
         forgetGithub(repo)
         let seen = null
+        // What its review said comes in GitHub's second answer, asked once the list that finds it is in: waited for too,
+        // or a reading between the two (a busy CI runner's) finds the pull request with no review yet.
         for (let i = 0; i < 80; i++) {
             seen = (await service.state()).repos[0].lanes.find((candidate) => candidate.name === 'review-5')
-            if (seen?.pull?.number === 5) break
+            if (seen?.pull?.number === 5 && seen.pull.review) break
             await new Promise((resolve) => setTimeout(resolve, 100))
         }
         assert.equal(seen.pull.number, 5, 'found by its number, its branch being the reviewer\'s own name for it')
