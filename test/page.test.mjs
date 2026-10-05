@@ -117,3 +117,16 @@ test('the page no longer says where you are, nor Goto, nor that a repository has
     assert.doesNotMatch(page, /\$\{plural\(files\.length, 'file'\)\} changed/)
     assert.doesNotMatch(page, /host\.on\('here'/)
 })
+
+test('a review of somebody\'s pull request asks what you make of it, pulls what its author pushed first, and goes once it is merged', () => {
+    const review = (extra) => lane({ review: 7, pull: { state: 'OPEN', number: 7, author: 'zoe', title: 'Add the feature' }, upstream: { name: 'origin/feature-x', ahead: 0, behind: 0, foreign: 0 }, ...extra })
+    const asked = prStepOf(repo(), review())
+    assert.deepEqual([asked.word, asked.next, asked.detail], ['Reviewing #7 by zoe', 'verdict', 'Add the feature'])
+    const behind = prStepOf(repo(), review({ upstream: { name: 'origin/feature-x', ahead: 0, behind: 2, foreign: 2 } }))
+    assert.equal(behind.next, 'update')
+    assert.match(behind.detail, /2 new from its author: pull them first/)
+    assert.equal(prStepOf(repo(), review({ pull: { state: 'MERGED', number: 7 } })).next, 'drop')
+    assert.equal(prStepOf(repo(), review({ pull: null, upstream: null })).next, 'verdict', 'a fork\'s, before GitHub has said anything of it')
+    assert.equal(prStepOf(repo(), review({ dirty: 3 })).next, 'verdict', 'a reviewer\'s own changes beside it change nothing')
+    assert.equal(prStepOf(repo(), review({ operation: 'rebase' })), null, 'part-way through a rebase: that first')
+})

@@ -2,7 +2,8 @@
 
 Every thing a person does with LaneKit, on the page or with `lane`, and the tests that show it works. A test is
 named by its file and its number in that file (`node --test --test-name-pattern "<words from its name>"` runs one).
-Use cases marked **new** came with the page's second round of changes (2 Oct): their tests are new too.
+Use cases marked **new** came with the page's second round of changes (2 Oct), or with review lanes and the Claude
+Code plugin (3 Oct). Their tests are new too.
 
 The tests run against scratch repositories with a bare `origin` and a second clone that pushes to it; GitHub is
 lanekit's stand-in for `gh` (`test/fake-gh`); the page's own tests drive it in a real Chrome, as a browser shows it and
@@ -17,8 +18,11 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | [flow](../test/flow.test.mjs) | a lane between being made and landing |
 | [github](../test/github.test.mjs) | pull requests, through `gh` |
 | [loader](../test/loader.test.mjs) | the extension's loader: installing lanekit, and keeping it current |
+| [mcp](../test/mcp.test.mjs) | the MCP server, spoken to as an agent's client speaks to it |
 | [page](../test/page.test.mjs) | what the page decides from the state alone |
+| [plugin](../test/plugin.test.mjs) | the Claude Code plugin: its manifests, skills, hooks and launcher |
 | [rebase](../test/rebase.test.mjs) | moving a lane along main |
+| [review](../test/review.test.mjs) | reviewing somebody's pull request in a lane of its own |
 | [service](../test/service.test.mjs) | what the page is told, and what it may open |
 | [tidy](../test/tidy.test.mjs) | lanes set aside, quiet, or dropped; home |
 | [updates](../test/updates.test.mjs) | the editor's own copy of lanekit, cloned and fast-forwarded |
@@ -79,7 +83,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 28 | Land by pull request where main takes its changes that way | the lane's next step; **Merge…**; `lane merge` | github 5–7 |
 | 29 | **new** Clear away a lane whose pull request was merged: pull main, then sweep it (a merge commit), or drop it (squashed) | its next step: **Pull main**, **Sweep…** or **Drop…** | github 5, github 7, page 4, e2e 8 |
 | 30 | **new** A pull request merged while work went on in its lane: said, Commit and Push held, and the work since (commits after the one merged, and files) moved to a new lane from main, the old lane left as it was merged | **Move to a new lane…**; `lane new <name> --carry --from <lane> --after <commit>` | github 8, page 4, carry 5, carry 6, e2e 8 |
-| 31 | See pull requests anywhere that wait on your review | home's list, a repository's header | github 9 |
+| 31 | See pull requests anywhere that wait on your review | home's list, a repository's header | github 9, e2e 10 |
 
 ## Tidying
 
@@ -112,6 +116,26 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 46 | **new** Release the extension to Open VSX, and as a file on a GitHub release (`releases/latest/download/lanekit.vsix`), by a tag | `.github/workflows/extension.yml` | vscode 18 (the `.vsix` as the stores take it) |
 | 47 | **new** Keep the extension itself current with no extension store: a newer build of it in the copy of lanekit is built there and installed, once, with a reload offered; never another extension's, one the editor is too old for, in a remote window, or in a development host | the same check as 44 | loader 6–7, updates 7 |
 
+## Reviewing somebody's pull request
+
+| | use case | how | tests |
+|---|---|---|---|
+| 48 | **new** Check out a pull request waiting on your review in a lane of its own, `review-<number>`, to run, gate and read: one from this repository following its branch, one from a fork from GitHub's copy of its head | **Review in a lane** on Home and in a repository's header (**Its review lane** once made); `lane new --pr <n>` | review 1, review 2, review 7, e2e 10 |
+| 49 | **new** Be refused before anything is made: a pull request merged, closed or not there, a number that is not one, `--base`, `--existing` or `--carry` with `--pr`, a folder in the way, a second lane for one pull request | the press's answer; `lane new --pr` | review 3, review 7 |
+| 50 | **new** Bring in what the author pushed since: a fast-forward, or their newest outright where the lane has no commits of the reviewer's own (after a force-push, or the gate's rebase); never over the reviewer's own commits | **Pull**, its next step; ⋯ **Pull what its author pushed**; `lane pull <lane>` | review 4, page 7 |
+| 51 | **new** Say on GitHub what you make of it: approve, request changes or comment, in your words | **Review…** and its form; `lane review <lane> --approve \| --request-changes \| --comment -m <words>` | review 6, review 7, e2e 10 |
+| 52 | **new** Never push, land or open a pull request from somebody else's pull request; keep it out of the landing order; drop it once merged or closed | Land and Push not offered, **Drop…** its next step once done; `lane push`, `lane land`, `lane pr` refuse | review 1, review 5, review 7, page 7, e2e 10 |
+
+## From Claude Code
+
+| | use case | how | tests |
+|---|---|---|---|
+| 53 | **new** Install LaneKit in Claude Code from its own marketplace, following `stable` | `/plugin marketplace add Oerba-Labs/lanekit`, `/plugin install lanekit@lanekit` | plugin 1, plugin 2, plugin 7 |
+| 54 | **new** Start, land and review by a word: the ones that change what lands only when a person types them, the ones that read or help whenever the conversation calls for them, none letting a land, drop, push or review past without asking | `/lanekit:lane`, `/lanekit:land`, `/lanekit:land-ready`; `/lanekit:lanes`, `/lanekit:review`, `/lanekit:resolve-conflicts` | plugin 3 |
+| 55 | **new** Let an agent work lanes through tools rather than a shell, with the page's rules and in its words: made, carried into, committed, refused a land before its gate, gated, landed; each tool saying whether it only reads, reaches GitHub or removes something | the MCP server, `lanekit` (`bin/mcp.mjs`) | mcp 1–3 |
+| 56 | **new** See the agent's state on the page and in the editor with nothing set up by hand, each event said once, even where lanekit's own hooks report already | the plugin's hooks | plugin 4, plugin 6 |
+| 57 | **new** Run one lanekit for the agent, the editor and `lane`: the machine's copy where it has what is asked for, else the plugin's own | `bin/plugin-run.mjs` | plugin 5, plugin 6 |
+
 ## Not covered, or not done
 
 - **Fold commits into each other**, ISL's *Fold*/*Combine*: LaneKit has none. **Amend** folds uncommitted files into a
@@ -128,3 +152,10 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
   takes the `.vsix` only where its token is set (`OVSX_PAT`).
 - **The VS Code Marketplace** is not published to: VS Code installs the extension from a release's file, and it
   keeps itself current from `stable` (47). Its install command, run in a real editor, is tested only in a stand-in.
+- **A review's comments on lines** are not LaneKit's: **Review…** sends one review of the whole pull request; comments
+  on a line are written on GitHub, or in the editor's GitHub extension.
+- **Review in a lane** is offered only for a repository LaneKit has here; a pull request waiting on you anywhere else
+  is listed, with a link to it.
+- **The plugin's marketplace** serves `stable`, so an install has main's newest commit that passed CI, never one
+  newer. Claude Code installing it from GitHub is not tested. Its validator is, and the server and the launcher are
+  started in the tests as Claude Code starts them.

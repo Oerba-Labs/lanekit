@@ -88,6 +88,19 @@ if (one === 'pr' && two === 'merge') {
     save()
     out('')
 }
+if (one === 'pr' && two === 'review') {
+    // A review given: kept as this person's newest on the pull request, and its decision where it decides one.
+    const pr = find(args[2])
+    if (!pr || pr.state !== 'OPEN') no('no open pull request to review')
+    const verdict = args.includes('--approve') ? 'APPROVED' : args.includes('--request-changes') ? 'CHANGES_REQUESTED' : args.includes('--comment') ? 'COMMENTED' : null
+    if (!verdict) no('one of --approve, --request-changes or --comment is needed')
+    if (verdict !== 'APPROVED' && !valueOf('--body')) no('that review needs a body')
+    const me = state.me ?? 'me'
+    pr.latestReviews = [...(pr.latestReviews ?? []).filter((review) => review.author?.login !== me), { author: { login: me }, state: verdict, body: valueOf('--body') ?? '' }]
+    if (verdict !== 'COMMENTED') pr.reviewDecision = verdict
+    save()
+    out('')
+}
 if (one === 'repo' && two === 'view') out(pick(state.repo ?? {}, valueOf('--json')))
 if (one === 'search' && two === 'prs') out((state.search ?? []).map((pr) => pick(pr, valueOf('--json'))))
 

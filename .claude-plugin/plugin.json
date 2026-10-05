@@ -1,0 +1,16 @@
+{
+  "name": "lanekit",
+  "displayName": "LaneKit",
+  "description": "Work on several things at once in one repository, each in a lane of its own: a second checkout with its own branch, port and environment. Tools, skills and commands to start, gate and land lanes, carry work into them and review pull requests in them; and each agent's state on LaneKit's page.",
+  "author": {
+    "name": "Andrei Villasana",
+    "url": "https://github.com/Oerba-Labs"
+  },
+  "homepage": "https://github.com/Oerba-Labs/lanekit#readme",
+  "repository": "https://github.com/Oerba-Labs/lanekit",
+  "license": "Apache-2.0",
+  "keywords": ["git", "worktree", "lanes", "pull-request", "code-review", "agents"],
+  "skills": "./claude/skills",
+  "hooks": "./claude/hooks.json",
+  "mcpServers": "./claude/mcp.json"
+}

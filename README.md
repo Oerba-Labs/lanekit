@@ -201,6 +201,36 @@ running a tool, done, or waiting on you, which turns its lane's line amber, as d
 the picture at the top. *In your editor*, below, says how the agents report, and what a click
 on one does there.
 
+### LaneKit in Claude Code, as a plugin
+
+In Claude Code, LaneKit is also a plugin, from a marketplace in this repository that follows
+`stable` (the commits whose tests passed):
+
+```
+/plugin marketplace add Oerba-Labs/lanekit
+/plugin install lanekit@lanekit
+```
+
+It brings every project the same words, whether or not the repository has its own commands:
+
+- **Skills.** You start `/lanekit:lane <what the work is>`, `/lanekit:land` and
+  `/lanekit:land-ready` yourself, and Claude never does. Claude may reach for
+  `/lanekit:lanes` (what is going on, and to work in a lane rather than the main checkout),
+  `/lanekit:review <number>` and `/lanekit:resolve-conflicts` when the conversation calls for them.
+  No skill allows landing, dropping, pushing or sending a review by itself, so Claude Code asks
+  you first, unless you have allowed those tools yourself.
+- **Tools** (an MCP server, `lanekit`). They let the agent work lanes the way the page does:
+  `lanes`, `new_lane` (with `carry`, and `pr` to review one), `commit`, `gate`, `pull`, `rebase`,
+  `resolve`, `push`, `pull_request`, `review`, `land` and `drop`. The page's own rules apply, so
+  a land before the gate is green is refused, in the same words. `lanes` only reads.
+  `land` and `drop` say that they remove something. The tools that reach GitHub say so too.
+- **Hooks.** The agent's state goes to the page and the editor (Thinking, Running, Needs you)
+  with nothing set up by hand. Where lanekit's own hooks are in `~/.claude/settings.json` already,
+  the plugin's stay quiet, so each event is said once.
+
+It runs the machine's lanekit where there is one (`$LANEKIT`, `/opt/lanekit`, `~/.lanekit`, as
+the editor finds it), so the agent, the editor and `lane` agree. Elsewhere it runs its own copy.
+
 ## See every lane at once
 
 ```
@@ -333,6 +363,16 @@ The page in the picture above, for every repository in a folder:
   the lane is then landed and swept as usual; squashed or rebased otherwise, and the lane says
   *Merged on GitHub*, to drop) and brings main here up to it. It merges only at the lane's own
   commit, and never steps past a rule. A pull request merged on GitHub some other way is said too.
+- **Review somebody's pull request in a lane of its own.** Next to each pull request that waits on
+  your review, on Home and in a repository's header, **Review in a lane** checks it out as
+  `review-<number>`, with its own port and its own `.env`, ready to run and gate. Its lane says
+  *Reviewing #8 by kim*. **Review…**, its one solid button, opens a form for your words, with
+  **Approve**, **Request changes** and **Comment**, and sends the review to GitHub. When the author
+  pushes again, its next step is **Pull** (also behind ⋯ as **Pull what its author pushed**). That
+  is a fast-forward, or the author's newest outright when the lane has no commits of yours, as
+  after a force-push. It is never pushed, landed or given a pull request of its own, and it stays
+  out of the landing order. Once the pull request is merged or closed, its next step is **Drop…**.
+  Once its lane is made, the button becomes **Its review lane**, which opens it.
 - **A pull request merged while work went on in its lane** says *Merged on GitHub, with work since*:
   the commits made after the one GitHub merged, and the files not committed, are in no pull request
   now. Commit and Push are held there, and its one solid button is **Move to a new lane…**, which
@@ -484,6 +524,7 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ./<project> lane new <name>      start a lane: a folder, a branch, a port, its own state
 ./<project> lane new <name> --carry [-- <file>…]   …with what is uncommitted in the main checkout, moved into it
 ./<project> lane new <name> --carry --from <lane> [--after <commit>]   …with a lane's files, and its commits after one
+./<project> lane new --pr <n>    review somebody's pull request in a lane of its own, review-<n>
 ./<project> lane list            what exists, each lane's port, and what is serving
 ./<project> lane queue [name]    which lane should land next, and which would collide
 ./<project> gate                 in a lane: is this branch ready to merge?
@@ -494,7 +535,10 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ./<project> lane pr <name>       open a pull request for a pushed lane, through gh: --draft, --reviewer
                                  alice,org/team (on an open one too), --ready for a draft, --push first
 ./<project> lane merge <name>    merge a lane's pull request on GitHub, at its own commit, then bring main here up to it
-./<project> lane pull [name]     fast-forward main to origin (or a lane to its copy there), fetched first
+./<project> lane pull [name]     fast-forward main to origin (or a lane to its copy there), fetched first;
+                                 in a review lane, what its author pushed since
+./<project> lane review <name>   say on GitHub what you make of a review lane's pull request: --approve,
+                                 --request-changes or --comment, -m <words>
 ./<project> lane push --main     send main to origin, a fast-forward, where its rules on GitHub allow
 ./<project> lane commit <name>   commit what is uncommitted: -m <message>, --amend, --reword, -- <file>…
 ./<project> lane uncommit <name> take the newest commit back out, its changes left uncommitted
@@ -512,6 +556,8 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 `--existing` to make a lane of a branch that is there already (one dropped earlier), `--carry` to
 move work begun elsewhere into it (it moves all of it, or, where any of it no longer applies,
 nothing),
+`--pr <n>` to check out somebody's pull request to review (from this repository, following its
+branch; from a fork, GitHub's copy of its head; never with `--base`, `--existing` or `--carry`),
 `--install` to build the lane's own copies of what would otherwise be shared, `--no-seed` to
 skip filling what it must own, and `--no-provision` to make the folder and stop. `gate` takes
 `--fast` (tier 1 whatever the change earns; it says `UNDER-GATED` rather than `READY`),
