@@ -144,7 +144,8 @@ window.acquireVsCodeApi = () => {
 
 /**
  * A tab on `url`, and what a test does with it: run a function in the page, wait for one to be true, point, click, type.
- * `still`: a machine that asks for less motion.
+ * `still`: a machine that asks for less motion. Without it, one that does not, whatever the machine running the tests
+ * says: CI's macOS runners ask for less motion, and Chrome follows them.
  */
 const open = async (browser, url, { editor = false, still = false } = {}) => {
     const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' })
@@ -154,7 +155,7 @@ const open = async (browser, url, { editor = false, still = false } = {}) => {
     await send('Runtime.enable')
     await send('Page.setBypassCSP', { enabled: true })
     await send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false })
-    if (still) await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: still ? 'reduce' : 'no-preference' }] })
     if (editor) await send('Page.addScriptToEvaluateOnNewDocument', { source: EDITOR })
     await send('Page.navigate', { url })
     // Each function is run with the finders below in its scope.
