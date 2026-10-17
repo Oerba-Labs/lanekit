@@ -3,7 +3,8 @@
 Every thing a person does with LaneKit, on the page or with `lane`, and the tests that show it works. A test is
 named by its file and its number in that file (`node --test --test-name-pattern "<words from its name>"` runs one).
 Use cases marked **new** came with the page's second round of changes (2 Oct), with review lanes and the Claude Code
-plugin (3 Oct), or with the page's motion (4 Oct). Their tests are new too.
+plugin (3 Oct), with the page's motion (4 Oct), or with the tests' counts from their JUnit (17 Oct). Their tests are
+new too.
 
 The tests run against scratch repositories with a bare `origin` and a second clone that pushes to it; GitHub is
 lanekit's stand-in for `gh` (`test/fake-gh`); the page's own tests drive it in a real Chrome, as a browser shows it and
@@ -22,6 +23,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | [page](../test/page.test.mjs) | what the page decides from the state alone |
 | [plugin](../test/plugin.test.mjs) | the Claude Code plugin: its manifests, skills, hooks and launcher |
 | [rebase](../test/rebase.test.mjs) | moving a lane along main |
+| [results](../test/results.test.mjs) | what a gate's tests said, read from the JUnit they wrote into `$LAB_RESULTS` |
 | [review](../test/review.test.mjs) | reviewing somebody's pull request in a lane of its own |
 | [service](../test/service.test.mjs) | what the page is told, and what it may open |
 | [tidy](../test/tidy.test.mjs) | lanes set aside, quiet, or dropped; home |
@@ -71,6 +73,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 21 | Know which lane lands first, and which collide | the landing order | tidy 2, tidy 8 |
 | 22 | Land a ready lane, then sweep it | **Land…**, **Land next**, **Sweep…**; `lane land`, `lane sweep` | web 7–9 |
 | 23 | Push main, only where the repository takes it | **Push** beside the repository's name; `lane push --main` | flow 20–22 |
+| 61 | **new** Know what the tests said: how many passed, failed, errored and were skipped, and the first five that did not pass, wherever a gate's result is shown; a file that cannot be read said once, and never deciding the gate; nothing new for a project that writes no JUnit | `./check` writes JUnit XML into `$LAB_RESULTS`; the gate, the page, the editor's notice, the `gate` tool | results 1–17, page 9 |
 
 ## Pull requests
 
@@ -156,6 +159,9 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
   dashed row first (what it draws from the state is tested, 60). Home's cards, the side bar and the details pane move
   too, untested.
 - The README's screenshots predate this round: they still show *You are here* and *Goto*.
+- **The tests' counts in the editor's notice** (a gate that ends while LaneKit is out of sight) are tested where the
+  service hands them to the notice (results 15), not in the notice itself; JUnit from Xcode and Jest is read by the
+  same rules as pytest's, `node --test`'s and Go's, and has no fixture of its own.
 - **The workflows** (`.github/workflows/`) run on GitHub only: `node --test` does not run them, and Open VSX
   takes the `.vsix` only where its token is set (`OVSX_PAT`).
 - **The VS Code Marketplace** is not published to: VS Code installs the extension from a release's file, and it
