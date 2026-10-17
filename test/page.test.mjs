@@ -154,3 +154,27 @@ test('a commit pressed is drawn at once, dashed, its files gone from the list; o
     assert.deepEqual(shown(uncommitting(read(made)).lanes[0]), ['Start the feature'])
     assert.deepEqual(shown(uncommitting(read(feature)).lanes[0]), ['Start the feature'], 'Start the feature stays')
 })
+
+test('a gate whose tests wrote JUnit says their counts beside it, and a failed one names the tests that did not pass', () => {
+    const { testsSaidOf } = fromPage('testsSaidOf', 'testsSaidOf', ['testsSaidOf'])
+    const { failingOf } = fromPage('failingOf', 'failingOf', ['failingOf'])
+    const tests = {
+        files: 2, total: 1626, passed: 1617, failed: 5, errored: 1, skipped: 3, more: 1, said: '1,617 passed, 5 failed, 1 errored, 3 skipped', unread: null,
+        failing: [
+            { name: 'tests.test_api::test_login', outcome: 'failed' }, { name: 'tests.test_api::test_upload', outcome: 'failed' },
+            { name: 'tests.test_db::test_migrations', outcome: 'errored' }, { name: 'tests.test_api::test_logout', outcome: 'failed' },
+            { name: 'tests.test_api::test_refresh', outcome: 'failed' }
+        ]
+    }
+    assert.equal(testsSaidOf({ current: true, tests }), ' · 1,617 passed, 5 failed, 1 errored, 3 skipped')
+    assert.equal(testsSaidOf({ current: false, tests }), '', 'an older commit\'s counts are not this one\'s')
+    assert.equal(testsSaidOf({ current: true }), '', 'a gate whose tests wrote no JUnit reads as it did')
+    assert.equal(testsSaidOf(null), '')
+    assert.deepEqual(failingOf(tests), {
+        head: '6 tests did not pass',
+        names: ['tests.test_api::test_login', 'tests.test_api::test_upload', 'tests.test_db::test_migrations (errored)', 'tests.test_api::test_logout', 'tests.test_api::test_refresh'],
+        more: 'and 1 more'
+    })
+    assert.equal(failingOf({ ...tests, failing: [] }), null)
+    assert.equal(failingOf(undefined), null)
+})

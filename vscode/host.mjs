@@ -378,9 +378,11 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         if (anyVisible() || job.verb === 'fetch' || job.dryRun) return
         const [good, bad] = SAID[job.verb] ?? ['finished', 'failed']
         const what = `${job.lane ?? job.repo} ${job.code === 0 ? good : bad}`
+        // A gate whose tests wrote JUnit says what they said, as its run recorded it: "tests: 118 passed, 2 failed".
+        const tests = job.tests?.said ? `; tests: ${job.tests.said}` : ''
         const choices = job.lane ? ['Show', 'Show output'] : ['Show output']
-        const said = job.code === 0 ? vscode.window.showInformationMessage(`LaneKit: ${what}.`, ...choices)
-            : vscode.window.showErrorMessage(`LaneKit: ${what} (exit ${job.code}).`, ...choices)
+        const said = job.code === 0 ? vscode.window.showInformationMessage(`LaneKit: ${what}${tests}.`, ...choices)
+            : vscode.window.showErrorMessage(`LaneKit: ${what} (exit ${job.code})${tests}.`, ...choices)
         Promise.resolve(said).then((choice) => {
             if (choice === 'Show output') output.show(true)
             if (choice === 'Show') reveal({ repo: job.repo, lane: job.lane })
