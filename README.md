@@ -280,8 +280,9 @@ The page in the picture above, for every repository in a folder:
   commit is its words and its age (*22m*, *3d*); its hash is in its tooltip. Under the name, quietly:
   its last gate, whether it is pushed (or what origin has of it that it lacks), its pull request when
   `gh` is signed in, and what serves on its port while anything does. While a press runs in it, it says
-  so live: *Gating · running the tests… · 12 s*. A failed gate shows the failing step and its last
-  lines, kept with the run, so it is still there tomorrow.
+  so live: *Gating · running the tests… · 12 s*. Where its tests wrote JUnit, the gate says their counts
+  (*Gate failed · tier 1 · 2 passed, 1 failed, 1 skipped*). A failed gate shows the tests that did not
+  pass, then the failing step and its last lines, kept with the run, so it is still there tomorrow.
 - **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
   difference in the editor), and what can be done with it: its terminal (in the editor), **View
@@ -570,6 +571,68 @@ branch; from a fork, GitHub's copy of its head; never with `--base`, `--existing
 skip filling what it must own, and `--no-provision` to make the folder and stop. `gate` takes
 `--fast` (tier 1 whatever the change earns; it says `UNDER-GATED` rather than `READY`),
 `--tier <n>` and `--json`. `land` and `sweep` take `--dry-run`.
+
+## What the tests said: `$LAB_RESULTS`
+
+A gate can say more than whether its steps passed. Each step is given `LAB_RESULTS`, the path of a
+folder, and a gate's tests may write JUnit XML there: what they write is counted, and the gate says
+how many passed, failed, errored and were skipped, and names the first five that did not pass. From a
+real run, with `node --test` in `./check`:
+
+```
+$ ./piano-sheets gate
+[gate   0s] already on top of main
+[gate   0s] 0 generated artifacts checked
+[gate   0s] 1 file changed — server or tooling only
+[gate   0s] tier 1: the tests
+[gate   0s] running ./check…
+.X.X.
+  …the failure, as the test runner prints it…
+[gate   1s] tests: 2 passed, 1 failed, 1 skipped
+  failed   test::a long score splits into pages
+
+[gate] running ./check failed
+
+
+────────────────────────────────────────────────────────────────────
+  NOT READY  ·  midi-export  ·  tier 1 failed  ·  1s
+────────────────────────────────────────────────────────────────────
+```
+
+Most test runners write JUnit when asked:
+
+| runner | in `./check` |
+|---|---|
+| pytest | `pytest -q --junitxml "$LAB_RESULTS/pytest.xml"` |
+| `node --test` | `node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination="$LAB_RESULTS/node.xml"` |
+| Go | `go test -v ./... 2>&1 \| go-junit-report -set-exit-code -iocopy -out "$LAB_RESULTS/go.xml"` |
+| Jest | `JEST_JUNIT_OUTPUT_DIR="$LAB_RESULTS" jest --reporters=default --reporters=jest-junit` |
+
+`./check` run by hand has no `LAB_RESULTS`: `results=${LAB_RESULTS:-.lab-results}`, with
+`.lab-results/` in `.gitignore`, gives it somewhere to write. The files can be anywhere under the
+folder, so a repository of several parts can give each part a folder of its own.
+
+- **Whoever runs the tests chooses the folder.** The gate gives its steps `.lanekit/results/` in the
+  checkout it gates, which git ignores in a repository `lane adopt` or `lane init` set up (where it does
+  not, the checkout's own git directory instead, so a gate never leaves the tree dirty for the next), and
+  empties it before the steps run, so nothing is counted from an earlier run. Where the environment the
+  gate starts in sets `LAB_RESULTS` already, as a CI job's may, the gate uses that folder as it is:
+  it removes nothing from it, and reads only the files the steps wrote or rewrote.
+- **The exit code is the verdict.** The counts say what the tests said; they never pass or fail a
+  gate. A step that exits 0 while its JUnit names a failure still passes, with the counts beside it.
+- **A file that is not well-formed XML is said once**, plainly, with what is wrong with it, and its
+  tests are not counted; the others still are. A file with a DOCTYPE is refused the same way, so nothing
+  in a file expands into anything else. XML that is not JUnit (a coverage report) is passed over.
+- **What is read is bounded:** at most 200 files, four folders down, 32 MB of one file and 128 MB in
+  all. A file past a bound is not read, and the gate says so. Symbolic links are not followed.
+- **A project whose tests write no JUnit** is reported exactly as before.
+
+The counts are kept with the run (`gate --json` prints them), and shown wherever a gate's result is:
+beside the lane's gate on the page and in the editor, with the failing tests above a failed step's last
+lines; in the editor's notice when a gate ends out of sight (*LaneKit: midi-export failed (exit 1);
+tests: 2 passed, 1 failed, 1 skipped.*); and first in the answer of the agents' `gate` tool. lanekit
+reads JUnit itself, with no XML library, so it still has no dependencies. Anything else that runs the
+same `./check` with `LAB_RESULTS` set, a CI job say, can read the same files.
 
 ## The config
 

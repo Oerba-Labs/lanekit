@@ -203,6 +203,20 @@ rather than change the tests. It must work without a network or a person, becaus
 it unattended. If the repository has no tests, leave the placeholder, which passes and says it
 checked nothing, and say so in the report.
 
+Where the test runner writes JUnit XML with a flag and no new package (pytest's `--junitxml`,
+`node --test`'s junit reporter), have `./check` write it into `$LAB_RESULTS`, so the gate can say
+how many passed and name what failed (README, *What the tests said*):
+
+```sh
+#!/bin/sh
+results=${LAB_RESULTS:-.lab-results}
+mkdir -p "$results"
+exec .venv/bin/python -m pytest -q --junitxml "$results/pytest.xml"
+```
+
+and add `.lab-results/` to `.gitignore`, for `./check` run by hand. Do not add a dependency for it:
+a check that writes no JUnit is gated exactly as before.
+
 Tier 1 runs `./check` for every change. Add tier 2 only if some checks are slow and needed only
 when one side of the project changes (a front-end build, an end-to-end run):
 

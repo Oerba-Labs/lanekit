@@ -845,18 +845,22 @@ const pullBlockOf = (repo) => {
     return mainBlockOf(repo)
 }
 
+/** What a gate's tests said, where they wrote JUnit: " · 1,617 passed, 2 failed", for a gate of the commit there now. */
+const testsSaidOf = (gate) => (gate?.current && gate.tests?.said ? ` · ${gate.tests.said}` : '')
+
 /** A lane's last gate, where there is one. None is not said: the lane's state says what it needs instead. */
 const gateOf = (lane) => {
     const gate = lane.gate
     if (!gate) return null
     const when = gate.at ? ` · ${ago(gate.at)}` : ''
+    const tests = testsSaidOf(gate)
     let node
-    if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Gate passed · tier ${gate.tier}${when}`, 'small')
-    else if (gate.result === 'passed' && gate.current) node = state('warn', `Under-gated: tier ${gate.tier} of ${gate.earned}${when}`, 'small')
+    if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Gate passed · tier ${gate.tier}${tests}${when}`, 'small')
+    else if (gate.result === 'passed' && gate.current) node = state('warn', `Under-gated: tier ${gate.tier} of ${gate.earned}${tests}${when}`, 'small')
     else if (gate.result === 'passed') node = state('quiet', `Last gate passed, on an older commit${when}`, 'small')
-    else if (gate.current) node = state('risk', `Gate failed · tier ${gate.tier}${when}`, 'small')
+    else if (gate.current) node = state('risk', `Gate failed · tier ${gate.tier}${tests}${when}`, 'small')
     else node = state('quiet', `Last gate failed, on an older commit${when}`, 'small')
-    node.title = exactly(gate.at)
+    node.title = [exactly(gate.at), gate.current ? gate.tests?.unread : null].filter(Boolean).join('\n')
     return node
 }
 
@@ -1057,14 +1061,33 @@ const tailOf = (repo, lane, text) => {
     return pre
 }
 
-/** Why the lane's gate on this commit failed: each failing step, and its last lines. */
+/** The tests a gate's JUnit names as not passing, the first few, and how many more: plain words, for failureOf. */
+const failingOf = (tests) => {
+    const failing = tests?.failing ?? []
+    if (!failing.length) return null
+    const count = (tests.failed ?? 0) + (tests.errored ?? 0)
+    return {
+        head: `${count.toLocaleString('en-US')} ${count === 1 ? 'test' : 'tests'} did not pass`,
+        names: failing.map((test) => `${test.name}${test.outcome === 'errored' ? ' (errored)' : ''}`),
+        more: tests.more ? `and ${tests.more.toLocaleString('en-US')} more` : null
+    }
+}
+
+/** Why the lane's gate on this commit failed: the tests that did not pass, where they wrote JUnit; then each failing
+    step, and its last lines. */
 const failureOf = (repo, lane) => {
     const gate = lane.gate
     if (!gate || gate.result !== 'failed' || !gate.current || !gate.failures?.length) return null
-    return el('div', { class: 'failure' }, gate.failures.flatMap((failure) => [
-        el('div', { class: 'files-head', text: `${failure.what} failed${failure.status !== null && failure.status !== undefined ? ` (exit ${failure.status})` : ''}` }),
-        failure.tail ? tailOf(repo, lane, failure.tail) : null
-    ]))
+    const failing = failingOf(gate.tests)
+    return el('div', { class: 'failure' },
+        failing ? [
+            el('div', { class: 'files-head', text: failing.head }),
+            el('ul', { class: 'failing' }, [...failing.names, failing.more].filter(Boolean).map((text) => el('li', { text })))
+        ] : null,
+        gate.failures.flatMap((failure) => [
+            el('div', { class: 'files-head', text: `${failure.what} failed${failure.status !== null && failure.status !== undefined ? ` (exit ${failure.status})` : ''}` }),
+            failure.tail ? tailOf(repo, lane, failure.tail) : null
+        ]))
 }
 
 /** A new lane's name, typed in the row of the commit it will start from. Enter makes it; Escape leaves it. */
@@ -2230,7 +2253,7 @@ const laneCard = (repo, lane, forked = true) => {
             () => readHistory(repo, 'fork', `fork:${lane.name}`, lane)),
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         merged && lane.sinceMerge === null && lane.pull?.head ? el('span', { text: `#${lane.pull.number}'s commit is not in its history now: what it merged cannot be told apart` }) : null,
-        lane.pending ? null : keyed(gateOf(lane), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier}`),
+        lane.pending ? null : keyed(gateOf(lane), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier} ${testsSaidOf(gate)}`),
         lane.pending ? null : keyed(pushedOf(lane), `${key}:pushed`, true),
         stack0(lane) ? null : keyed(badgesOf(repo, lane), `${key}:badges`, true),
         keyed(serverOf(lane), `${key}:serving`))

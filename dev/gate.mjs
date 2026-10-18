@@ -22,12 +22,17 @@
  * WHAT IT REFUSES TO GUESS. A dirty tree, because a result names a sha and
  * uncommitted work is not in one. A rebase that conflicts, because resolving
  * somebody's conflict unattended is worse than stopping.
+ *
+ * WHAT THE TESTS SAID. Its steps are given `LAB_RESULTS`, a folder for JUnit
+ * XML (lib/results.mjs), and what the tests write there is counted and kept
+ * with the run. The steps' exit codes alone decide the result.
  */
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
+import { prepareResults, readResults, resultsFolderFor, testsLines } from '../lib/results.mjs'
 import { mintRunId, recordRun } from '../lib/runs.mjs'
 import { tierFor } from '../lib/tiers.mjs'
 
@@ -256,12 +261,12 @@ log(`tier ${chosen}: ${plan.label}`)
 const TAIL_LINES = 40
 // eslint-disable-next-line no-control-regex
 const plain = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-const runStep = (step) => new Promise((resolve) => {
+const runStep = (step, env) => new Promise((resolve) => {
     const cwd = step.cwd ? path.join(REPO, step.cwd) : REPO
     const command = expand(step.command)
     const args = (step.args ?? []).map(expand)
     if (process.stdout.isTTY) {
-        const result = spawnSync(command, args, { cwd, stdio: 'inherit' })
+        const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' })
         resolve({ status: result.status ?? -1, tail: '' })
         return
     }
@@ -271,7 +276,7 @@ const runStep = (step) => new Promise((resolve) => {
         to.write(chunk)
         tail = (tail + chunk.toString('utf8')).split('\n').slice(-(TAIL_LINES + 1)).join('\n')
     }
-    const child = spawn(command, args, { cwd, stdio: ['inherit', 'pipe', 'pipe'] })
+    const child = spawn(command, args, { cwd, env, stdio: ['inherit', 'pipe', 'pipe'] })
     child.stdout.on('data', (chunk) => keep(chunk, process.stdout))
     child.stderr.on('data', (chunk) => keep(chunk, process.stderr))
     const end = (status, note) => { if (settled) return; settled = true; resolve({ status, tail: plain(note ?? tail).trimEnd() }) }
@@ -279,11 +284,38 @@ const runStep = (step) => new Promise((resolve) => {
     child.on('close', (code) => end(code ?? -1))
 })
 
+/**
+ * Where the steps may leave JUnit XML: the folder the environment names as LAB_RESULTS, else one of this checkout's
+ * own, emptied first, so what is counted afterwards is this run's. Nothing here can fail the gate: a folder that cannot
+ * be made is said, and the steps run as they would have.
+ */
+let results = null
+let before = null
+try {
+    results = resultsFolderFor(REPO)
+    before = prepareResults(results)
+} catch (error) {
+    log(`${YELLOW}could not ready a folder for the tests' JUnit: ${error.message}${OFF}`)
+}
+const stepEnv = results ? { ...process.env, LAB_RESULTS: results.dir } : process.env
+
 const failures = []
 for (const step of plan.steps ?? []) {
     log(`${step.what}…`)
-    const { status, tail } = await runStep(step)
+    const { status, tail } = await runStep(step, stepEnv)
     if (status !== 0) failures.push({ what: step.what, status, tail })
+}
+
+let tests = null
+try {
+    if (results) tests = readResults(results.dir, { before })
+} catch (error) {
+    log(`${YELLOW}could not read the tests' JUnit in ${results.dir}: ${error.message}${OFF}`)
+}
+if (tests) {
+    const [first, ...rest] = testsLines(tests)
+    log(first)
+    for (const line of rest) console.log(/^ {2}(failed|errored) /.test(line) ? line.replace(/^( {2})(\w+)/, `$1${RED}$2${OFF}`) : line)
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +337,9 @@ const record = {
     files: files.length,
     startedAt: new Date(started).toISOString(),
     durationSeconds: Math.round((Date.now() - started) / 1000),
-    failures
+    failures,
+    // What the tests' JUnit said, where they wrote any: a run without it is recorded as it always was.
+    ...(tests ? { tests } : {})
 }
 const recordFile = recordRun(record, REPO)
 

@@ -24,6 +24,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 
 import { PACKAGE_ROOT } from '../lib/config.mjs'
+import { testsLines } from '../lib/results.mjs'
 import { createService } from '../lib/service.mjs'
 import { findRepos } from '../lib/state.mjs'
 
@@ -87,11 +88,16 @@ const pressed = async (held, request, { minutes = 10 } = {}) => {
     }
     if (!job) return { refused: 'LaneKit kept nothing of what it ran' }
     if (job.state !== 'done') return { refused: `it is still running after ${minutes} minutes: \`${job.command}\`; lanes shows it when it ends` }
-    return { code: job.code, command: job.command, output: job.output }
+    return { code: job.code, command: job.command, output: job.output, tests: job.tests ?? null }
 }
 const said = (result, words) => (result.refused
     ? done(`Refused: ${result.refused}.`, true)
-    : done(`${result.code === 0 ? words : `It failed (exit ${result.code})`}.\n\n$ ${result.command}\n${tail(result.output)}`, result.code !== 0))
+    : done(`${result.code === 0 ? words : `It failed (exit ${result.code})`}.\n${testsOf(result)}\n$ ${result.command}\n${tail(result.output)}`, result.code !== 0))
+/** A gate's tests, where they wrote JUnit: the counts and what did not pass, said before the output, which may be cut. */
+const testsOf = (result) => {
+    const lines = testsLines(result.tests)
+    return lines.length ? `${lines.map((line, i) => (i === 0 && line.startsWith('tests: ') ? `Tests: ${line.slice(7)}` : line)).join('\n')}\n` : ''
+}
 
 // ---------------------------------------------------------------------------
 // what a repository's lanes are, in words an agent reads
