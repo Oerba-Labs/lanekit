@@ -89,6 +89,9 @@ body {
   background: var(--bg);
   color: var(--ink);
   font: 400 var(--s14)/1.45 var(--sans);
+  /* The ground of the lane under the pointer, and of what floats over it: the editor's own list hover, or the page's
+     soft grey, laid over the page. On body, where the editor's colours are set, so it is made from the right ground. */
+  --wash: color-mix(in srgb, var(--vscode-list-hoverBackground, var(--soft)) 70%, var(--bg));
 }
 code, pre, .mono { font-family: var(--mono); font-size: 0.92em; }
 a { color: var(--accent); text-decoration: none; }
@@ -141,6 +144,8 @@ a:hover { text-decoration: underline; }
 .notice.ok { background: var(--accent-wash); color: var(--ink); }
 
 .pane { padding: 24px 24px 160px; }
+/* A column of reading width on a wide screen: what acts on the log (Fetch, Land next) stays near it. */
+html:not([data-compact]) .pane > * { max-width: 1080px; }
 
 /* ---- a repository ------------------------------------------------------ */
 .repo { margin: 0 0 48px; }
@@ -214,7 +219,7 @@ a.btn { display: inline-block; text-decoration: none; }
 /* A commit's words, then its age, then (on hover) what can be done with it, side by side as ISL sets them: the words
    do not stretch across the row, and words longer than a line's worth are clipped, whole in the title and the details. */
 .subject { flex: 0 1 auto; max-width: 56ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-html[data-surface="sidebar"] .subject { max-width: none; }
+html[data-compact] .subject { max-width: none; }
 .when { color: var(--muted); font-size: var(--s12); flex: none; font-variant-numeric: tabular-nums; }
 .older { padding: 8px 0 4px calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12); }
 
@@ -270,7 +275,10 @@ html[data-surface="sidebar"] .subject { max-width: none; }
 /*
  * The side bar's page (the LaneKit icon): narrow, so the same page with less of each thing. The side bar's
  * own ground, no paths or times, each lane's buttons on a line of their own, and the terminal crib left
- * to the tab.
+ * to the tab. Two marks on <html> say where the page is drawn: data-surface="sidebar" for what is the side
+ * bar's own (its ground, its sizes, no paths), and data-compact for the narrow layout, which the page sets
+ * for the side bar and for any window too narrow for a toolbar beside a lane's state and a pane beside the
+ * log (lanes.js, compact): a lane's buttons float over its corner, and a commit's details open under its row.
  */
 html[data-surface="sidebar"] body.vscode-light, html[data-surface="sidebar"] body.vscode-dark,
 html[data-surface="sidebar"] body.vscode-high-contrast, html[data-surface="sidebar"] body.vscode-high-contrast-light {
@@ -278,6 +286,11 @@ html[data-surface="sidebar"] body.vscode-high-contrast, html[data-surface="sideb
   --soft: var(--vscode-editor-background, #f7f8fa);
 }
 html[data-surface="sidebar"] .bar { padding: 6px 12px; }
+/* The bar's own line (Keys, and whether the page is up to date) only while LaneKit does not answer: the side bar is
+   short, and ? lists the keys. With no switcher either, no bar. */
+html[data-surface="sidebar"] .bar-line { display: none; }
+html[data-surface="sidebar"] .bar-line:has(.updated.lost) { display: flex; }
+html[data-surface="sidebar"] .bar:not(:has(.updated.lost)):not(:has(.switcher:not([hidden]))) { display: none; }
 html[data-surface="sidebar"] .where { display: none; }
 html[data-surface="sidebar"] .switcher { flex-wrap: wrap; margin: 4px -6px -6px; overflow-x: visible; }
 html[data-surface="sidebar"] .switcher a { padding: 2px 6px 4px; font-size: var(--s12); }
@@ -299,8 +312,9 @@ html[data-surface="sidebar"] .lane::before { top: 16px; bottom: 14px; }
 html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
 html[data-surface="sidebar"] .lane-head { gap: 4px 6px; min-height: 24px; }
 html[data-surface="sidebar"] .lane-head .grow { display: none; }
-html[data-surface="sidebar"] .lane-head .actions { flex-basis: 100%; }
-html[data-surface="sidebar"] .lane-title { gap: 4px 6px; flex: 1 1 100%; }
+html[data-compact] .lane-head .actions { flex-basis: 100%; }
+html[data-surface="sidebar"] .lane-title { gap: 4px 6px; }
+html[data-compact] .lane-title { flex: 1 1 100%; }
 html[data-surface="sidebar"] .stack-commit { gap: 6px; padding: 3px 0; font-size: var(--s12); }
 html[data-surface="sidebar"] .stack-commit::before { left: calc(var(--column) - var(--indent) - 4px); top: 8px; width: 8px; height: 8px; }
 html[data-surface="sidebar"] .landed li { gap: 4px 8px; }
@@ -320,7 +334,10 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 .files > div:not(.conflicts-head) { font-family: var(--mono); white-space: nowrap; }
 .files.conflicts { background: var(--warn-wash); }
 /* The queue: the order to land in, at the head of a repository. */
-.queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 12px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); }
+.queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 12px 0 0; padding: 8px 0 6px; border-top: 1px solid var(--line); }
+/* The landing order stays under the bar as the log scrolls past it, so Land next is at hand; stuck, a line under it. */
+html:not([data-compact]) .queue-row { position: sticky; top: var(--bar-h, 45px); z-index: 3; background: var(--bg); }
+html:not([data-compact]) .queue-row.stuck { box-shadow: 0 1px 0 var(--line); }
 .queue-title { font-size: var(--s11); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 /* The landing order in groups: what each needs, and an order only where lanes collide ("after …"). */
 .queue-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: var(--s13); min-width: 0; }
@@ -345,22 +362,35 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 
 /*
  * ISL's way: a lane shows what it is; what can be done with it shows on hover, or when the keyboard is on
- * it. On a wide page the toolbar keeps its room, so nothing moves under the pointer. In the side bar a hover
- * floats the next thing to do and a ⋯ over the lane's corner, and ⋯ opens the rest in the card. A screen
- * with no pointer to hover shows them always.
+ * it, and the lane is washed meanwhile, so its rows read as one. On a wide page the toolbar keeps its room,
+ * so nothing moves under the pointer. In a narrow column (data-compact: the side bar, or a narrow window) a
+ * hover floats the next thing to do and a ⋯ over the lane's corner, and ⋯ opens the rest in the card. A
+ * screen with no pointer to hover shows them always.
  */
 .lane .hover-actions { visibility: hidden; opacity: 0; transition: opacity 0.12s ease; }
+/* The lane under the pointer, washed from its own line rightward: main's line stays clear. */
+.lane:hover, .lane.pointer, .lane:focus-within, .lane:focus, .lane.more-open, .lane.tools-open {
+  background: linear-gradient(to right, transparent calc(var(--column) - 10px), var(--wash) calc(var(--column) - 10px));
+}
 /* Floated just after the lane's state, not in the head's flow: a toolbar kept in the flow would hold its room at rest,
    and when the column is narrow (the details pane open) wrap into an empty line under every lane's name. */
 .lane > .lane-head { position: relative; }
-html:not([data-surface="sidebar"]) .lane-title > .hover-actions {
+html:not([data-compact]) .lane-title > .hover-actions {
   position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 2;
-  flex-wrap: nowrap; padding: 0 4px 0 10px; border-radius: 6px; background: var(--bg);
+  flex-wrap: nowrap; padding: 0 4px 0 10px; border-radius: 6px; background: var(--wash);
 }
-/* A screen too narrow to float it beside the state keeps it in the flow, on a line of its own. */
-@media (max-width: 640px) {
-  html:not([data-surface="sidebar"]) .lane-title { flex-wrap: wrap; }
-  html:not([data-surface="sidebar"]) .lane-title > .hover-actions { position: static; transform: none; flex-basis: 100%; padding: 0; flex-wrap: wrap; }
+/* A column too narrow for the whole toolbar beside the state (the details pane open in a window of middling width):
+   every button but the next step is its icon alone, its word its name, and the toolbar floats under the name as a
+   small popover, over the row below for the moment, rather than running under the pane. The pane's column is the
+   measure, not the window. */
+.split > .pane { container-type: inline-size; }
+@container (max-width: 720px) {
+  html:not([data-compact]) .lane-title > .hover-actions {
+    left: 0; top: calc(100% + 2px); transform: none; padding: 4px;
+    background: var(--vscode-menu-background, var(--bg)); border: 1px solid var(--vscode-menu-border, var(--line)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  }
+  html:not([data-compact]) .lane-title > .hover-actions .btn:not(.primary):not(.more) .label { display: none; }
+  html:not([data-compact]) .lane-title > .hover-actions .btn:not(.primary):not(.more) { padding-left: 5px; padding-right: 5px; }
 }
 .lane:hover .hover-actions, .lane.pointer .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions, .lane.more-open .hover-actions { visibility: visible; opacity: 1; }
 /* A lane's ⋯ in a tab: what is done now and then (push, set aside, drop), in a small menu under it. */
@@ -370,22 +400,25 @@ html:not([data-surface="sidebar"]) .lane-title > .hover-actions {
   background: var(--vscode-menu-background, var(--bg)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16); }
 .more-menu .btn { justify-content: flex-start; width: 100%; border-color: transparent; }
 .lane .corner { display: none; }
-html[data-surface="sidebar"] .lane .hover-actions { display: none; }
-html[data-surface="sidebar"] .lane.tools-open .hover-actions { display: flex; visibility: visible; opacity: 1; }
-html[data-surface="sidebar"] .lane .corner {
+html[data-compact] .lane .hover-actions { display: none; }
+html[data-compact] .lane.tools-open .hover-actions { display: flex; visibility: visible; opacity: 1; }
+html[data-compact] .lane .corner {
   display: flex; gap: 4px; align-items: center;
   position: absolute; top: 4px; right: 0; z-index: 2;
   padding: 0 0 0 16px;
-  background: linear-gradient(to right, transparent, var(--bg) 14px);
+  background: linear-gradient(to right, transparent, var(--wash) 14px);
   visibility: hidden; opacity: 0; transition: opacity 0.12s ease;
 }
-html[data-surface="sidebar"] .lane:hover .corner, html[data-surface="sidebar"] .lane.pointer .corner, html[data-surface="sidebar"] .lane:focus-within .corner,
-html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .lane.tools-open .corner { visibility: visible; opacity: 1; }
+html[data-compact] .lane:hover .corner, html[data-compact] .lane.pointer .corner, html[data-compact] .lane:focus-within .corner,
+html[data-compact] .lane:focus .corner, html[data-compact] .lane.tools-open .corner { visibility: visible; opacity: 1; }
+/* The next step in the corner is its icon, its word its name and first in its title: the state's words keep their room. */
+html[data-compact] .corner .btn.primary .label { display: none; }
+html[data-compact] .corner .btn.primary { padding-left: 6px; padding-right: 6px; }
 .lane .more { min-width: 26px; padding-left: 6px; padding-right: 6px; letter-spacing: 0.05em; }
 .lane .more[aria-expanded="true"] { background: var(--soft); }
 @media (hover: none) {
   .lane .hover-actions { visibility: visible; opacity: 1; }
-  html[data-surface="sidebar"] .lane .corner { visibility: visible; opacity: 1; }
+  html[data-compact] .lane .corner { visibility: visible; opacity: 1; }
   .row-actions { display: inline-flex !important; }
 }
 /* A commit's own actions, after its age while the pointer or the keyboard is on it. */
@@ -393,8 +426,8 @@ html[data-surface="sidebar"] .lane:focus .corner, html[data-surface="sidebar"] .
 .commit:hover .row-actions, .commit.pointer .row-actions, .commit:focus-within .row-actions, .stack-commit:hover .row-actions, .stack-commit.pointer .row-actions, .stack-commit:focus-within .row-actions { display: inline-flex; }
 .row-actions .btn { padding: 1px 8px; font-size: var(--s12); }
 .row-actions .btn.icon-only { padding: 2px 4px; }
-html[data-surface="sidebar"] .row-actions .btn.solid .label { display: none; }
-html[data-surface="sidebar"] .row-actions .btn.solid { padding: 2px 4px; }
+html[data-compact] .row-actions .btn.solid .label { display: none; }
+html[data-compact] .row-actions .btn.solid { padding: 2px 4px; }
 /* A new lane named in the row of the commit it starts from. */
 .name-lane { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
 .name-lane input, .commit-form input {
@@ -472,7 +505,7 @@ li[data-key]:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--
 
 .confirm {
   display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap;
-  margin: 12px 0 0; padding: 10px 12px;
+  margin: 12px 0 0; padding: 10px 12px; max-width: 76ch;
   border-radius: 8px; background: var(--accent-wash); font-size: var(--s13);
 }
 .confirm.refused { background: var(--warn-wash); }
@@ -540,11 +573,7 @@ html[data-surface="sidebar"] .bare-path { display: none; }
 .section-title { display: flex; align-items: center; gap: 8px; margin: 18px 0 6px; font-size: var(--s11); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .section-title .count { padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .small { font-size: var(--s12); }
-@media (max-width: 760px) {
-  .split { flex-direction: column; align-items: stretch; }
-  .details { flex-basis: auto; max-width: none; width: 100%; position: static; max-height: none; border-left: 0; border-top: 1px solid var(--line); }
-}
-html[data-surface="sidebar"] .details { display: none; }
+html[data-compact] .details { display: none; }
 /* In the side bar: under the row it is about, set in a little from the line. */
 .log > li.details-inline, .stack > li.details-inline {
   margin: 2px 0 8px calc(var(--spine) + 20px); padding: 10px 12px;
@@ -728,7 +757,7 @@ body:not(.in-editor) .row-actions .btn.solid { background: #5f6b7a; color: #fff;
 body.has-cmdbar .job { bottom: 34px; }
 body.has-cmdbar .pane { padding-bottom: 180px; }
 html[data-surface="sidebar"] .cmdbar { padding: 4px 12px; gap: 6px; }
-html[data-surface="sidebar"] .cmdbar .cmd-step, html[data-surface="sidebar"] .cmdbar .queued { display: none; }
+html[data-compact] .cmdbar .cmd-step, html[data-compact] .cmdbar .queued { display: none; }
 @media (max-width: 640px) { .cmdbar { padding-left: 16px; padding-right: 16px; } }
 
 /* A button with an icon: the icon in the button's own ink, beside its word, or alone with the word as its title. */

@@ -1,8 +1,9 @@
 /**
  * The page itself, end to end: `lane web` serving scratch repositories, and the page driven in a real Chrome as a
  * person drives it, pointer and keyboard, over the DevTools protocol (node's own WebSocket: no dependency). Once as a
- * browser shows it, and once as the editor does, with a stand-in for the extension that answers from the same server
- * and writes down what the page asked it to open. GitHub is lanekit's stand-in for gh (test/fake-gh).
+ * browser shows it, once as the editor does, with a stand-in for the extension that answers from the same server and
+ * writes down what the page asked it to open, and at the widths of a narrow window and a middling one. GitHub is
+ * lanekit's stand-in for gh (test/fake-gh).
  *
  *     node --test test/e2e.test.mjs
  *
@@ -147,14 +148,16 @@ window.acquireVsCodeApi = () => {
  * `still`: a machine that asks for less motion. Without it, one that does not, whatever the machine running the tests
  * says: CI's macOS runners ask for less motion, and Chrome follows them.
  */
-const open = async (browser, url, { editor = false, still = false } = {}) => {
+const open = async (browser, url, { editor = false, still = false, width = 1400, height = 1000 } = {}) => {
     const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true })
     const send = (method, params) => browser.send(method, params, sessionId)
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.setBypassCSP', { enabled: true })
-    await send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false })
+    /** The window's size: 1400 by 1000 unless a test asks for less, as a narrow window is. */
+    const resize = (w, h) => send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false })
+    await resize(width, height)
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: still ? 'reduce' : 'no-preference' }] })
     if (editor) await send('Page.addScriptToEvaluateOnNewDocument', { source: EDITOR })
     await send('Page.navigate', { url })
@@ -202,7 +205,7 @@ const open = async (browser, url, { editor = false, still = false } = {}) => {
     const type = (text) => send('Input.insertText', { text })
     // Closing a tab never holds a test past what it found: a failure's own words are what it reports.
     const close = () => Promise.race([browser.send('Target.closeTarget', { targetId }).catch(() => null), sleep(5000)])
-    return { run, until, pointAt, click, type, close }
+    return { run, until, pointAt, click, type, close, resize }
 }
 
 // Finders, run in the page: each is a function there.
@@ -624,5 +627,96 @@ test('where the machine asks for less motion nothing slides and what changes onl
         await page.run(() => refresh().then(() => true))
     } finally {
         await still.close()
+    }
+})
+
+test('a window narrower than 760px lays the page out as the side bar does: the next step and ⋯ float over a lane\'s corner, no hidden toolbar keeps a line under its name, and a commit\'s details open under its row', { skip, timeout: 120_000 * SLOW }, async () => {
+    const narrow = await open(browser, `${base}?repo=demo`, { width: 640, height: 900 })
+    try {
+        await narrow.until((() => card('feature') && document.documentElement.hasAttribute('data-compact')), [], { what: 'the narrow page, laid out compact' })
+        // The name's row is one line: nothing invisible holds a second under it.
+        const rows = await narrow.run((() => {
+            const lane = card('feature')
+            return { title: lane.querySelector('.lane-title').getBoundingClientRect().height, name: lane.querySelector('.lane-name').getBoundingClientRect().height, toolbar: getComputedStyle(lane.querySelector('.hover-actions')).display }
+        }))
+        assert.ok(rows.title < rows.name * 2, `one line under the name, not two: ${JSON.stringify(rows)}`)
+        assert.equal(rows.toolbar, 'none', 'the toolbar is not in the flow')
+        // The pointer on it: its next step, as its icon with its word first in its title, and ⋯, in its corner, inside the window.
+        await narrow.pointAt((() => card('feature').querySelector('.lane-title')))
+        const corner = await narrow.until((() => {
+            const corner = card('feature').querySelector('.corner')
+            if (!corner || getComputedStyle(corner).visibility !== 'visible') return null
+            const buttons = [...corner.querySelectorAll('button')]
+            // A word the stylesheet hides is still in textContent: what shows is what is asked.
+            const shows = (button) => { const label = button.querySelector('.label'); return Boolean(label && getComputedStyle(label).display !== 'none') }
+            return {
+                right: corner.getBoundingClientRect().right, width: innerWidth, primary: buttons[0]?.classList.contains('primary'),
+                names: buttons.map((button) => button.getAttribute('aria-label')), worded: buttons.map(shows), titles: buttons.map((button) => button.title)
+            }
+        }), [], { what: 'feature\'s corner under the pointer' })
+        assert.ok(corner.right <= corner.width, `inside the window: ${JSON.stringify(corner)}`)
+        assert.equal(corner.names.length, 2, `the next step and ⋯: ${JSON.stringify(corner)}`)
+        assert.ok(corner.primary && corner.names[0] && corner.worded[0] === false && corner.titles[0].startsWith(`${corner.names[0]}: `),
+            `the next step as its icon, its word its name and first in its title: ${JSON.stringify(corner)}`)
+        assert.equal(corner.names[1], 'Everything feature can do')
+        // A commit chosen: its details right under its row, the pane beside the log left hidden.
+        await narrow.click((() => card('feature').querySelector('.stack .subject')))
+        const placed = await narrow.until((() => {
+            const inline = card('feature').querySelector('.details-inline')
+            if (!inline?.querySelector('.change-list')) return null
+            const row = card('feature').querySelector('.stack .selected').getBoundingClientRect()
+            return { below: inline.getBoundingClientRect().top - row.bottom, pane: document.getElementById('details').hidden }
+        }), [], { what: 'the details under the row' })
+        assert.ok(placed.below >= 0 && placed.below < 40, `right under its row: ${JSON.stringify(placed)}`)
+        assert.equal(placed.pane, true, 'the pane beside the log stays hidden')
+        // Widened past the line, the same page goes back to the toolbar beside the name and the pane beside the log.
+        await narrow.resize(1200, 900)
+        await narrow.until((() => !document.documentElement.hasAttribute('data-compact') && !document.getElementById('details').hidden && !card('feature').querySelector('.details-inline')), [], { what: 'wide again: the details in the pane' })
+        assert.equal(await narrow.run((() => getComputedStyle(card('feature').querySelector('.lane-title > .hover-actions')).position)), 'absolute', 'the toolbar floats beside the name again')
+    } finally {
+        await narrow.close()
+    }
+})
+
+test('with the details pane open in a window of middling width, a lane\'s toolbar keeps to the log\'s column: every button but the next step its icon alone, under the name', { skip, timeout: 120_000 * SLOW }, async () => {
+    const middling = await open(browser, `${base}?repo=demo`, { editor: true, width: 1000, height: 900 })
+    try {
+        await middling.until((() => card('feature') && !document.documentElement.hasAttribute('data-compact')), [], { what: 'the editor tab, 1000 wide' })
+        await middling.click((() => card('feature').querySelector('.stack .subject')))
+        await middling.until((() => !document.getElementById('details').hidden && document.querySelector('.details .change-list')), [], { what: 'the details beside the log' })
+        await middling.pointAt((() => card('feature').querySelector('.lane-title')))
+        const seen = await middling.until((() => {
+            const toolbar = card('feature').querySelector('.lane-title > .hover-actions')
+            if (getComputedStyle(toolbar).visibility !== 'visible') return null
+            const said = (button) => button.querySelector('.label') && getComputedStyle(button.querySelector('.label')).display !== 'none'
+            return {
+                right: toolbar.getBoundingClientRect().right, pane: document.getElementById('details').getBoundingClientRect().left,
+                count: toolbar.querySelectorAll('.btn').length,
+                said: [...toolbar.querySelectorAll('.btn')].filter(said).map((button) => `${button.getAttribute('aria-label')}${button.classList.contains('primary') ? ' (next)' : ''}`)
+            }
+        }), [], { what: 'feature\'s toolbar under the pointer' })
+        assert.ok(seen.right <= seen.pane, `the toolbar ends before the pane begins: ${JSON.stringify(seen)}`)
+        assert.ok(seen.count >= 5, `the editor's whole toolbar: ${JSON.stringify(seen)}`)
+        assert.deepEqual(seen.said, ['Gate (next)'], `only the next step keeps its word: ${JSON.stringify(seen)}`)
+    } finally {
+        await middling.close()
+    }
+})
+
+test('a wide window keeps the page to a column of reading width, and the landing order under the bar as the log scrolls past it', { skip, timeout: 60_000 * SLOW }, async () => {
+    const wide = await open(browser, `${base}?repo=demo`, { width: 1600, height: 500 })
+    try {
+        await wide.until((() => card('feature') && document.querySelector('.queue-row .queue-item')), [], { what: 'the page, with its landing order' })
+        const column = await wide.run((() => ({ repo: document.querySelector('section.repo').getBoundingClientRect().width, window: innerWidth })))
+        assert.ok(column.repo <= 1080 && column.window === 1600, `a column of 1080 at most in a window of 1600: ${JSON.stringify(column)}`)
+        await wide.run((() => { window.scrollTo(0, 600); return true }))
+        const stuck = await wide.until((() => {
+            const row = document.querySelector('.queue-row')
+            if (!row.classList.contains('stuck')) return null
+            return { top: row.getBoundingClientRect().top, bar: document.querySelector('header.bar').getBoundingClientRect().bottom, scrolled: scrollY, lanes: row.querySelectorAll('.queue-item').length }
+        }), [], { what: 'the landing order stuck under the bar' })
+        assert.ok(Math.abs(stuck.top - stuck.bar) < 2 && stuck.scrolled > 0 && stuck.lanes > 0, `under the bar, with its lanes: ${JSON.stringify(stuck)}`)
+    } finally {
+        await wide.close()
     }
 })

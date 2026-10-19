@@ -72,6 +72,16 @@ const state = (tone, word, extra = '') => el('span', { class: `state ${tone} ${e
 // Only an address that is plainly a web page becomes a link; anything else stays words.
 const safeHref = (url) => (typeof url === 'string' && /^https:\/\//.test(url) ? url : null)
 
+/** A path said from home, where the server said where home is (~/code/piano-sheets); the whole of it is for a title.
+    Plain data in and out, so lanekit's tests run it as it is written here (test/page.test.mjs). */
+const fromHome = (file, home) => {
+    if (typeof file !== 'string' || typeof home !== 'string' || !home) return file
+    const sep = home.includes('\\') ? '\\' : '/'
+    const root = home.length > 1 && home.endsWith(sep) ? home.slice(0, -1) : home
+    if (file === root) return '~'
+    return file.startsWith(root + sep) ? `~${file.slice(root.length)}` : file
+}
+
 // ---------------------------------------------------------------------------
 // the host: lane web over HTTP, or the editor by message
 // ---------------------------------------------------------------------------
@@ -990,18 +1000,18 @@ const terminalButton = (repo, lane, extra = {}) => host.inEditor && (!lane || la
 
 const openLinks = (repo, lane) => {
     if (host.inEditor) {
-        // In the editor: its changes as diffs, an agent in it, and its terminal.
+        // In the editor: its changes as diffs, an agent in it, and its terminal, each an icon with its word as its name.
         if (!lane.exists) return []
         const holds = lane.kind === 'working' || lane.dirty > 0
         return [
             holds ? iconButton('diff', 'Changes', {
-                title: `Everything ${lane.name} holds that ${repo.integrationBranch} does not, committed or not, side by side`,
+                title: `Changes: everything ${lane.name} holds that ${repo.integrationBranch} does not, committed or not, side by side`,
                 onclick: () => openIn('changes', { repo: repo.path, lane: lane.name })
-            }) : null,
+            }, true) : null,
             iconButton('agent', 'Agent', {
-                title: `Start Claude Code or OpenCode in ${lane.name}, in a terminal named for it and in its colour`,
+                title: `Agent: start Claude Code or OpenCode in ${lane.name}, in a terminal named for it and in its colour`,
                 onclick: () => openIn('agent', { repo: repo.path, lane: lane.name })
-            }),
+            }, true),
             terminalButton(repo, lane)
         ]
     }
@@ -1316,7 +1326,7 @@ const changesOf = (repo, lane, key) => {
                 lane.ahead ? verbLink('amend', `Amend${count}…`, `Fold the ticked files into ${lane.name}'s newest commit`, () => select({ repo: repo.id, lane: lane.name, form: 'amend' }), busy || !chosen.length) : null
             ]),
         isMerged(lane) ? el('p', { class: 'muted small merged-note', text: `#${lane.pull.number} was merged on GitHub, so a commit here would be in no pull request.` }) : null,
-        IN_SIDEBAR && writing ? messageForm(repo, lane) : null)
+        compact() && writing ? messageForm(repo, lane) : null)
 }
 
 /** Discard, asked beside the files it throws away: what each goes back to, and that nothing keeps a copy. */
@@ -1567,8 +1577,8 @@ const select = (what) => {
     selected = what
     draw(true)
     if (IN_SIDEBAR) return
-    // The message form's title takes the keyboard, ready to type.
-    if (what?.form) setTimeout(() => document.querySelector('.details .msg-title')?.focus(), 0)
+    // The message form's title takes the keyboard, ready to type: in the pane, or under the lane's files in a narrow window.
+    if (what?.form) setTimeout(() => document.querySelector('.message-form .msg-title')?.focus(), 0)
 }
 const isSelected = (repo, commit) => selected?.repo === repo.id && selected?.sha === commit.sha
 const toggleSelect = (repo, commit, laneName) => select(isSelected(repo, commit) ? null : { repo: repo.id, sha: commit.sha, lane: laneName })
@@ -1625,7 +1635,7 @@ const commitPane = (repo, commit, laneName) => {
     const files = details?.files ?? []
     const tip = !lane && repo.spine[0]?.sha === commit.sha
     return el('div', { class: 'pane-commit' },
-        el('div', { class: 'details-head' }, el('h3', { text: commit.subject }), IN_SIDEBAR ? null : closeButton()),
+        el('div', { class: 'details-head' }, el('h3', { text: commit.subject }), compact() ? null : closeButton()),
         el('div', { class: 'details-meta' },
             lane ? el('span', { class: 'tag', text: lane.name }) : tip ? el('span', { class: 'tag', text: repo.integrationBranch }) : null,
             el('span', { class: 'mono', text: commit.short }),
@@ -1707,7 +1717,7 @@ const messageForm = (repo, lane) => {
         }))) : null,
     title,
     description,
-    form !== 'reword' && !IN_SIDEBAR ? [
+    form !== 'reword' && !compact() ? [
         el('div', { class: 'section-title' }, form === 'amend' ? 'Changes to amend' : 'Changes to commit', el('span', { class: 'count', text: `${chosen.length} of ${files.length}` })),
         el('ul', { class: 'change-list' }, files.map((file) => {
             const status = file.status === '?' ? 'new' : file.status
@@ -1745,17 +1755,17 @@ const paneFor = (repo) => {
     if (selected.form === 'reword' && !lane.ahead) return null
     const heading = selected.form === 'reword' ? `Edit the message of "${lane.stack?.[0]?.subject ?? ''}"` : selected.form === 'amend' ? `Amend ${lane.name}'s newest commit` : `Commit in ${lane.name}`
     return el('div', { class: 'pane-form' },
-        el('div', { class: 'details-head' }, el('h3', { text: heading }), IN_SIDEBAR ? null : closeButton()),
+        el('div', { class: 'details-head' }, el('h3', { text: heading }), compact() ? null : closeButton()),
         messageForm(repo, lane))
 }
 
-/** The details pane beside the log, in a tab or a browser; the side bar shows what is chosen under its row. */
+/** The details pane beside the log, where the window has room for it; a narrow column shows what is chosen under its row. */
 const drawDetails = () => {
     const aside = $('details')
     const repo = selected && current?.repos.find((candidate) => candidate.id === selected.repo && !candidate.error)
-    const content = !IN_SIDEBAR && repo ? paneFor(viewOf(repo)) : null
+    const content = !compact() && repo ? paneFor(viewOf(repo)) : null
     if (!content) {
-        if (!IN_SIDEBAR && selected && current) selected = null
+        if (!compact() && selected && current) selected = null
         aside.hidden = true
         aside.replaceChildren()
         document.body.classList.remove('has-details')
@@ -1771,8 +1781,8 @@ const drawDetails = () => {
     document.body.classList.add('has-details')
 }
 let detailsShown = null
-/** In the side bar, the details of what is chosen, under its row. */
-const inlineDetails = (repo, commit) => (IN_SIDEBAR && selected?.sha && isSelected(repo, commit)
+/** In a narrow column, the details of what is chosen, under its row. */
+const inlineDetails = (repo, commit) => (compact() && selected?.sha && isSelected(repo, commit)
     ? el('li', { class: 'details-inline' }, commitPane(repo, commit, selected.lane)) : null)
 
 // ---------------------------------------------------------------------------
@@ -1867,10 +1877,11 @@ const icon = (name) => {
     for (const [tag, attrs] of ICONS[name] ?? []) svg.append(svgEl(tag, attrs))
     return svg
 }
-/** A button with an icon and its word; `only` keeps the word for the tooltip and the screen reader. */
+/** A button with an icon and its word, which is its name wherever the stylesheet shows the icon alone; `only` keeps
+    the word for the tooltip and the screen reader. */
 const iconButton = (name, label, props = {}, only = false) => el('button', {
     type: 'button', ...props, class: `${props.class ?? 'btn'} with-icon${only ? ' icon-only' : ''}`,
-    title: props.title ?? (only ? label : undefined), 'aria-label': only ? label : props['aria-label']
+    title: props.title ?? (only ? label : undefined), 'aria-label': props['aria-label'] ?? label
 }, icon(name), only ? null : el('span', { class: 'label', text: label }))
 const PR_WORD = { OPEN: 'Open', MERGED: 'Merged', CLOSED: 'Closed' }
 /**
@@ -2216,8 +2227,8 @@ const laneCard = (repo, lane, forked = true) => {
         }
     }
     if (lane.pending) { buttons.length = 0; more.length = 0 }
-    // The side bar opens every button in the card behind its own ⋯ (below); a tab keeps the rest in a menu of its own.
-    if (IN_SIDEBAR) buttons.push(...more.splice(0))
+    // A narrow column opens every button in the card behind its own ⋯ (below); a wide one keeps the rest in a menu of its own.
+    if (compact()) buttons.push(...more.splice(0))
     const moreKey = `${key}:more`
     const moreOpen = more.length > 0 && expanded.has(moreKey)
     const moreMenu = more.length
@@ -2277,7 +2288,7 @@ const laneCard = (repo, lane, forked = true) => {
                     isNaming(repo, commit) ? row : selectable(row, repo, commit, lane.name),
                     index === 0 && badgesOf(repo, lane) ? el('li', { class: 'stack-badges' }, keyed(badgesOf(repo, lane), `${key}:badges`, true)) : null,
                     inlineDetails(repo, commit),
-                    IN_SIDEBAR && index === 0 && selected?.form === 'reword' && selected.repo === repo.id && selected.lane === lane.name
+                    compact() && index === 0 && selected?.form === 'reword' && selected.repo === repo.id && selected.lane === lane.name
                         ? el('li', { class: 'details-inline' }, paneFor(repo)) : null
                 ]
             }),
@@ -2297,13 +2308,15 @@ const laneCard = (repo, lane, forked = true) => {
 
     // Dragged onto a commit of main, a clean lane is rebased there (after a look): ISL's drag-to-rebase.
     const draggable = !lane.dirty && !lane.operation && (lane.kind === 'working' || lane.kind === 'fresh') && !busy
-    // The side bar is too narrow for the toolbar to keep its room, and opening it under the pointer would move
-    // every lane below. So a hover there floats the one thing to do next and a ⋯ over the lane's corner, and ⋯
-    // opens the rest in the card: a click, so the card growing is what was asked for.
+    // A narrow column (the side bar, or a narrow window) is too narrow for the toolbar to keep its room, and opening
+    // it under the pointer would move every lane below. So a hover there floats the one thing to do next (its icon,
+    // its word first in its title) and a ⋯ over the lane's corner, and ⋯ opens the rest in the card: a click, so the
+    // card growing is what was asked for.
     const toolsKey = `${key}:tools`
-    const toolsOpen = IN_SIDEBAR && expanded.has(toolsKey)
-    const next = IN_SIDEBAR ? buttons.find((button) => button.classList.contains('primary')) : null
-    const corner = IN_SIDEBAR && buttons.length
+    const toolsOpen = compact() && expanded.has(toolsKey)
+    const next = compact() ? buttons.find((button) => button.classList.contains('primary')) : null
+    if (next) next.title = [next.querySelector('.label')?.textContent, next.title].filter(Boolean).join(': ')
+    const corner = compact() && buttons.length
         ? el('div', { class: 'corner' },
             next ?? null,
             el('button', {
@@ -2449,7 +2462,7 @@ const headOf = (repo) => {
     const parts = []
     parts.push(el('div', { class: 'repo-head' },
         el('h2', { text: repo.name ?? repo.id }),
-        el('span', { class: 'repo-sub mono', text: repo.path }),
+        el('span', { class: 'repo-sub mono', text: fromHome(repo.path, current?.home), title: repo.path }),
         el('span', { class: 'grow' }),
         repo.error ? null : el('div', { class: 'actions' },
             shownRepos().length > 1 ? iconButton('tab', 'A tab of its own', {
@@ -2517,6 +2530,15 @@ const headOf = (repo) => {
 // forked from, and at least four; the tab and a browser show it whole.
 const IN_SIDEBAR = document.documentElement.dataset.surface === 'sidebar'
 const SIDEBAR_SPINE = 4
+// A narrow column: the side bar, or a window too narrow for a toolbar beside a lane's state and a details pane
+// beside the log. There a lane's buttons float over its corner (the next step, and ⋯ for the rest) and a commit's
+// details open under its row. Said on <html> as data-compact, for the stylesheet, and the page drawn whole again as
+// a window crosses the line.
+const NARROW = window.matchMedia?.('(max-width: 760px)') ?? null
+const compact = () => IN_SIDEBAR || Boolean(NARROW?.matches)
+const markCompact = () => document.documentElement.toggleAttribute('data-compact', compact())
+markCompact()
+NARROW?.addEventListener?.('change', () => { markCompact(); motion.hush(); draw(true) })
 const spineOf = (repo, live) => {
     if (!IN_SIDEBAR) return repo.spine
     const deepest = Math.max(-1, ...live.map((lane) => repo.spine.findIndex((commit) => commit.sha === lane.base)))
@@ -2706,7 +2728,7 @@ const glanceOf = (repo, agents, jobs, reviews = []) => {
     }
 }
 
-/** The landing order at the head of a repository, in groups, with Land next when one is ready. */
+/** The landing order at the head of a repository, in groups, with Land next beside them when one is ready. */
 const queueOf = (repo) => {
     if (repo.error) return []
     const groups = landingGroupsOf(repo.lanes)
@@ -2733,7 +2755,6 @@ const queueOf = (repo) => {
                 chip.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); focusLane(repo.id, item.name) } })
                 return chip
             })))),
-        el('span', { class: 'grow' }),
         next && !byPullRequest(repo) ? (() => {
             const block = landBlockOf(repo, next)
             return iconButton('land', `Land ${next.name}…`, {
@@ -2879,7 +2900,7 @@ const drawSwitcher = () => {
     nav.replaceChildren(
         tab(null, 'Home', repos.reduce((sum, repo) => sum + liveLanes(repo).length, 0), 'Every repository at a glance, each opened from its card ([ and ] step through them)'),
         ...repos.map((repo) => tab(repo.id, repo.name ?? repo.id, liveLanes(repo).length,
-            `${repo.path}${repo.error ? ` — ${repo.error}` : ''}\n${host.inEditor ? 'Cmd- or Ctrl-click, or a middle click' : 'Cmd- or Ctrl-click'}: a tab of its own`,
+            `${fromHome(repo.path, current.home)}${repo.error ? ` — ${repo.error}` : ''}\n${host.inEditor ? 'Cmd- or Ctrl-click, or a middle click' : 'Cmd- or Ctrl-click'}: a tab of its own`,
             { running: repo.id !== showing && busy(repo.id), broken: !!repo.error })))
 }
 
@@ -2948,7 +2969,7 @@ const bareRow = (bare) => {
                     dismiss('Cancel'))
     return el('li', {},
         el('span', { class: 'bare-name', text: bare.id }),
-        el('span', { class: 'muted mono bare-path', text: bare.path }),
+        el('span', { class: 'muted mono bare-path', text: fromHome(bare.path, current?.home), title: bare.path }),
         el('span', { class: 'grow' }),
         giving ? state('info', 'Giving it lanes…', 'small')
             : iconButton('plus', 'Give it lanes…', { disabled: busy, title: `Shows what LaneKit would write into ${bare.id}, then asks (lane adopt --commit)`, onclick: () => adoptCheck(bare) }),
@@ -3052,7 +3073,7 @@ const homeCard = (repo) => {
         el('span', { class: 'grow' }),
         host.inEditor ? el('button', { type: 'button', class: 'btn quiet', text: 'Open in a tab', title: `${name} in an editor tab of its own`, onclick: () => openOwnTab(repo.id) }) : null),
     // Cut short from its start, so the end of it, the repository's own folder, is what is read.
-    el('div', { class: 'home-path', title: repo.path }, el('bdi', { dir: 'ltr', text: repo.path })),
+    el('div', { class: 'home-path', title: repo.path }, el('bdi', { dir: 'ltr', text: fromHome(repo.path, current?.home) })),
     repo.error ? state('risk', repo.error, 'small') : [
         el('div', { class: 'home-row' }, mainWords(repo)),
         el('div', { class: 'home-row home-queue' }, glance.groups.length
@@ -3088,7 +3109,7 @@ const sectionFor = (repo) => {
     kept = {
         root: el('section', { class: 'repo' }),
         head: el('div', part('head')),
-        queue: el('div', part('queue')),
+        queue: el('div', { class: 'queue-row', ...part('queue') }),
         log: (() => { const log = el('ol', { class: 'log', 'data-anim-scope': `${repo.id}:log`, 'data-anim-kids': true }); listenForDrops(log); return log })(),
         settled: el('div', part('settled'))
     }
@@ -3136,8 +3157,11 @@ const drawPage = () => {
     const typing = document.activeElement?.dataset?.draft
     const caret = typing ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null
 
-    const where = (current.roots?.length ? current.roots : [current.scan]).join(', ')
+    // Where LaneKit looks, said from home; the whole of it as the title.
+    const roots = current.roots?.length ? current.roots : [current.scan]
+    const where = roots.map((dir) => fromHome(dir, current.home)).join(', ')
     $('where').textContent = where + (current.kit ? ` · lanekit ${current.kit}` : '')
+    $('where').title = roots.join(', ')
     drawSwitcher()
     sayTitle()
     const pane = $('repos')
@@ -3193,6 +3217,7 @@ const drawPage = () => {
         if (again) { again.focus({ preventScroll: true }); try { again.setSelectionRange(...caret) } catch { /* a field with no caret */ } }
     }
     drawCollisions()
+    stickQueues()
     markPointer()
 }
 
@@ -3299,6 +3324,12 @@ const header = document.querySelector('header.bar')
 const measureBar = () => document.documentElement.style.setProperty('--bar-h', `${header.offsetHeight}px`)
 if (typeof ResizeObserver === 'function') new ResizeObserver(measureBar).observe(header)
 measureBar()
+/** The landing order stuck under the bar as the log scrolls past it (lanes.css, .queue-row): marked, for the line under it. */
+const stickQueues = () => {
+    const under = header.offsetHeight + 0.5
+    for (const row of document.querySelectorAll('.queue-row')) row.classList.toggle('stuck', row.childElementCount > 0 && row.getBoundingClientRect().top <= under)
+}
+window.addEventListener('scroll', stickQueues, { passive: true })
 
 host.ready?.()
 loop()
