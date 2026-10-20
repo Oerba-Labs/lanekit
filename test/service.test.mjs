@@ -247,17 +247,17 @@ const finishedIn = async (service, id) => {
 
 test('main\'s line is read further back a page at a time when a page asks, kept for every page, and the newest alone again', async () => {
     const other = path.join(scratch, 'history')
-    const commit = longHistory(path.join(other, 'long'), 40, 19901)
+    const commit = longHistory(path.join(other, 'long'), 53, 19901)
     lane(path.join(other, 'long'), 'new', 'old', '--base', commit[3])
     // The worker reads at the depth asked too: it is the reader the editor uses.
     const service = createService({ dirs: [other], reader: 'worker' })
     try {
         const at = (state) => state.repos.find((candidate) => candidate.id === 'long')
         const first = at(await service.state())
-        assert.equal(first.spine.length, 12)
-        assert.equal(first.spine[0].subject, 'Commit 40')
+        assert.equal(first.spine.length, 25)
+        assert.equal(first.spine[0].subject, 'Commit 53')
         assert.deepEqual([first.spineMore, first.spineDeeper, first.spineAtMost], [true, false, false])
-        assert.deepEqual([first.spineTotal, first.spineNext], [40, 25], 'main\'s line is forty long, and the next ask reads twenty-five more')
+        assert.deepEqual([first.spineTotal, first.spineNext], [53, 25], 'main\'s line is fifty-three long, and the next ask reads twenty-five more')
         const old = first.lanes.find((candidate) => candidate.name === 'old')
         assert.equal(old.base, commit[3])
         assert.ok(!first.spine.some((shown) => shown.sha === old.base), 'the lane forked further back than the log reads')
@@ -267,16 +267,16 @@ test('main\'s line is read further back a page at a time when a page asks, kept 
 
         const once = await service.history('long', 'older')
         assert.equal(once.status, 200, JSON.stringify(once.body))
-        assert.equal(at(once.body).spine.length, 37)
+        assert.equal(at(once.body).spine.length, 50)
         assert.equal(at(once.body).spine.at(-1).subject, 'Commit 4')
         assert.deepEqual([at(once.body).spineMore, at(once.body).spineDeeper], [true, true])
         assert.equal(at(once.body).spineNext, 3, 'only as many as are left')
-        assert.equal(at(await service.state()).spine.length, 37, 'kept for the next reading, whoever asks it')
+        assert.equal(at(await service.state()).spine.length, 50, 'kept for the next reading, whoever asks it')
 
         const twice = at((await service.history('long', 'older')).body)
-        assert.equal(twice.spine.length, 40, 'as far as there is')
+        assert.equal(twice.spine.length, 53, 'as far as there is')
         assert.equal(twice.spine.at(-1).subject, 'Commit 1')
-        assert.deepEqual([twice.spineMore, twice.spineNext, twice.spineTotal], [false, 0, 40])
+        assert.deepEqual([twice.spineMore, twice.spineNext, twice.spineTotal], [false, 0, 53])
         assert.ok(twice.spine.some((shown) => shown.sha === old.base), 'the lane is on main\'s line now')
         const nothing = await service.history('long', 'older')
         assert.equal(nothing.status, 409)
@@ -288,15 +288,15 @@ test('main\'s line is read further back a page at a time when a page asks, kept 
         assert.equal((await finishedIn(service, back.body.id)).code, 0)
 
         const newest = at((await service.history('long', 'newest')).body)
-        assert.deepEqual([newest.spine.length, newest.spineMore, newest.spineDeeper], [12, true, false])
-        assert.equal(at(await service.state()).spine.length, 12)
+        assert.deepEqual([newest.spine.length, newest.spineMore, newest.spineDeeper], [25, true, false])
+        assert.equal(at(await service.state()).spine.length, 25)
 
         // A lane listed as forked further back is read down to in one ask: its fork, now commit 2, the log's last row.
         const fork = at((await service.history('long', 'fork', 'old')).body)
-        assert.equal(fork.spine.length, 39)
+        assert.equal(fork.spine.length, 52)
         assert.equal(fork.spine.at(-1).sha, commit[2])
         assert.equal((await service.history('long', 'fork', 'old')).status, 200, 'asked again, it is shown already')
-        assert.equal(at(await service.state()).spine.length, 39)
+        assert.equal(at(await service.state()).spine.length, 52)
         assert.equal((await service.history('long', 'fork', 'ghost')).status, 404)
 
         assert.equal((await service.history('long', 'sideways')).status, 400)
