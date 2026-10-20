@@ -1668,20 +1668,21 @@ const commitPane = (repo, commit, laneName) => {
     return el('div', { class: 'pane-commit' },
         el('div', { class: 'details-head' }, el('h3', { text: commit.subject }), compact() ? null : closeButton()),
         el('div', { class: 'details-meta' },
-            lane ? el('span', { class: 'tag', text: lane.name }) : tip ? el('span', { class: 'tag', text: repo.integrationBranch }) : null,
+            lane ? el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name }) : tip ? el('span', { class: 'tag', text: repo.integrationBranch }) : null,
             el('span', { class: 'mono', text: commit.short }),
             el('span', { text: commit.author || details?.author || '' }),
             el('span', { text: ago(commit.at), title: exactly(commit.at) })),
         details?.error ? el('p', { class: 'muted', text: details.error })
             : !details ? el('p', { class: 'muted', text: 'Reading…' })
                 : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
+        // One row where it fits: words only on what changes the commit, first; then the icons, which wrap together.
         el('div', { class: 'details-actions' },
-            newest || tip ? terminalButton(repo, newest ? lane : null, { class: 'btn' }) : null,
-            host.inEditor ? iconButton('diff', 'View changes', { onclick: showCommit(repo, commit), title: 'Every file it changed, side by side' }) : null,
             newest ? iconButton('pencil', 'Edit message', { onclick: () => select({ repo: repo.id, lane: lane.name, form: 'reword' }), title: 'A new title and description, nothing else' }) : null,
             newest ? iconButton('uncommit', 'Uncommit', { onclick: () => uncommitLane(repo, lane), title: 'Take it back out, its changes left uncommitted' }) : null,
-            iconButton('branch', 'New lane here', { onclick: () => { select(null); startNaming(repo, commit, lane?.name ?? null) } }),
-            iconButton('copy', 'Copy hash', { onclick: () => copyHash(commit.sha) })),
+            newest || tip ? terminalButton(repo, newest ? lane : null, { class: 'btn' }) : null,
+            host.inEditor ? iconButton('diff', 'View changes', { onclick: showCommit(repo, commit), title: 'View changes: every file it changed, side by side' }, true) : null,
+            iconButton('branch', 'New lane here', { onclick: () => { select(null); startNaming(repo, commit, lane?.name ?? null) }, title: 'New lane here: a lane of its own, starting from this commit' }, true),
+            iconButton('copy', 'Copy hash', { onclick: () => copyHash(commit.sha), title: `Copy hash: ${commit.sha}` }, true)),
         details && !details.error ? el('div', { class: 'section-title' }, 'Files changed', el('span', { class: 'count', text: String(files.length) })) : null,
         details && !details.error ? el('ul', { class: 'change-list' }, files.map((file) => fileRow(file, () => openIn('commit', { repo: repo.path, sha: commit.sha, path: file.path })))) : null)
 }
@@ -2335,7 +2336,7 @@ const laneCard = (repo, lane, forked = true) => {
 
     const collisions = (lane.queue?.collisions ?? []).map((collision) => {
         const more = collision.paths.length > 3 ? `, and ${collision.paths.length - 3} more` : ''
-        return el('p', { class: 'collide', text: `Collides with ${collision.lane} in ${collision.paths.slice(0, 3).join(', ')}${more}` })
+        return el('p', { class: 'collide' }, 'Collides with ', el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, collision.lane), text: collision.lane }), ` in ${collision.paths.slice(0, 3).join(', ')}${more}`)
     })
 
     // Dragged onto a commit of main, a clean lane is rebased there (after a look): ISL's drag-to-rebase.
@@ -2782,7 +2783,7 @@ const queueOf = (repo) => {
                     'data-anim': `${repo.id}:queue-lane:${item.name}`, 'data-sig': group.verdict
                 },
                     el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
-                    el('span', { class: 'queue-name', text: item.name }),
+                    el('span', { class: 'queue-name', 'data-hue': hueName(repo, item.name), text: item.name }),
                     item.after.length ? el('span', { class: 'queue-after', text: `after ${item.after.join(', ')}` }) : null)
                 chip.addEventListener('click', () => focusLane(repo.id, item.name))
                 chip.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); focusLane(repo.id, item.name) } })
@@ -2833,7 +2834,8 @@ const drawCollisions = () => {
             const y1 = Math.round(one.top - box.top + one.height / 2)
             const y2 = Math.round(two.top - box.top + two.height / 2)
             const x = 12 - (index % 3) * 4
-            const path = svgEl('path', { d: `M 0 ${y1} H ${x} V ${y2} H 0`, fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round' })
+            // In the colour of the lane it starts from, a bracket to the one it collides with.
+            const path = svgEl('path', { d: `M 0 ${y1} H ${x} V ${y2} H 0`, fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round', 'data-hue': hueName(repo, a) })
             const title = svgEl('title')
             title.textContent = `${a} and ${b} both change ${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` and ${paths.length - 3} more` : ''}`
             path.append(title)
@@ -3114,7 +3116,7 @@ const homeCard = (repo) => {
                 el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
                 el('span', { class: 'queue-label', text: group.label }),
                 group.names.slice(0, 3).map((laneName) => el('button', {
-                    type: 'button', class: 'btn link home-lane', text: laneName, title: `Open ${name} at ${laneName}`, onclick: () => openFromHome(repo, laneName)
+                    type: 'button', class: 'btn link home-lane', 'data-hue': hueName(repo, laneName), text: laneName, title: `Open ${name} at ${laneName}`, onclick: () => openFromHome(repo, laneName)
                 })),
                 group.names.length > 3 ? el('span', { class: 'muted', text: `and ${group.names.length - 3} more` }) : null))
             : el('span', { class: 'muted', text: glance.lanes ? 'Nothing in the landing order' : 'No lanes yet' })),
@@ -3199,6 +3201,8 @@ const drawPage = () => {
     sayTitle()
     const pane = $('repos')
     const home = atHome()
+    // Every repository's lanes' colours, for its log, its landing order and its card at home alike.
+    for (const repo of current.repos) huesByRepo.set(repo.id, huesOf((repo.error ? [] : repo.lanes ?? []).map((lane) => lane.name)))
     const shown = home ? [] : shownRepos()
     const ids = new Set(shown.map((repo) => repo.id))
     for (const [id, kept] of sections) {
@@ -3218,7 +3222,6 @@ const drawPage = () => {
     const empty = $('empty')
     if (empty) empty.remove()
     shown.forEach((repo, index) => {
-        huesByRepo.set(repo.id, huesOf((repo.error ? [] : repo.lanes).map((lane) => lane.name)))
         const kept = sectionFor(repo)
         kept.head.replaceChildren(...headOf(repo))
         kept.queue.replaceChildren(...queueOf(repo))

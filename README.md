@@ -287,8 +287,8 @@ The page in the picture above, for every repository in a folder:
   pass, then the failing step and its last lines, kept with the run, so it is still there tomorrow.
 - **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
-  difference in the editor), and what can be done with it: its terminal (in the editor), **View
-  changes**, **New lane here**, **Copy hash**, and on a lane's newest commit **Edit message** and
+  difference in the editor), and what can be done with it: as icons its terminal (in the editor),
+  **View changes**, **New lane here** and **Copy hash**, and on a lane's newest commit **Edit message** and
   **Uncommit**. In the side bar, or a window narrower than about 760 pixels, the details open under
   the row instead. A double click opens a commit's changes.
 - **A commit's commands sit beside it**, after its words and its age, as ISL sets them, when the

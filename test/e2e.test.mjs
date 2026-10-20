@@ -367,6 +367,7 @@ test('a lane is drawn from its name down, in a colour of its own: its name at th
             hue: lane.dataset.hue,
             line: getComputedStyle(lane, '::before').backgroundColor, dot: getComputedStyle(commits[0], '::before').backgroundColor,
             tag: getComputedStyle(lane.querySelector('.lane-head .lane-name')).color,
+            chip: [...document.querySelectorAll('.queue-name')].find((one) => one.textContent === 'feature')?.dataset.hue,
             hues: [...document.querySelectorAll('li.lane[data-key]')].map((one) => one.dataset.hue)
         }
     }))
@@ -374,6 +375,7 @@ test('a lane is drawn from its name down, in a colour of its own: its name at th
     assert.ok(layout.nameAboveFiles && layout.filesAboveCommits, JSON.stringify(layout))
     assert.equal(layout.name, 'feature')
     assert.match(layout.hue, /^(cyan|magenta|yellow|green|blue|red)$/)
+    assert.equal(layout.chip, layout.hue, 'the landing order names it in the same colour')
     assert.ok(layout.line === layout.dot && layout.line === layout.tag, `its line, its dots and its name in one colour: ${JSON.stringify(layout)}`)
     assert.equal(new Set(layout.hues).size, layout.hues.length, `each lane a colour of its own: ${layout.hues.join(', ')}`)
 })
