@@ -371,7 +371,6 @@ test('a lane is drawn from its name down, in a colour of its own: its name at th
             hue: lane.dataset.hue,
             line: getComputedStyle(lane, '::before').backgroundColor, dot: getComputedStyle(commits[0], '::before').borderColor,
             tag: getComputedStyle(lane.querySelector('.lane-head .lane-name')).color,
-            chip: [...document.querySelectorAll('.queue-name')].find((one) => one.textContent === 'feature')?.dataset.hue,
             hues: [...document.querySelectorAll('li.lane[data-key]')].map((one) => one.dataset.hue)
         }
     }))
@@ -379,7 +378,6 @@ test('a lane is drawn from its name down, in a colour of its own: its name at th
     assert.ok(layout.nameAboveFiles && layout.filesAboveCommits, JSON.stringify(layout))
     assert.equal(layout.name, 'feature')
     assert.match(layout.hue, /^(cyan|magenta|yellow|green|blue|red)$/)
-    assert.equal(layout.chip, layout.hue, 'the landing order names it in the same colour')
     assert.ok(layout.line === layout.dot && layout.line === layout.tag, `its line, its dots and its name in one colour: ${JSON.stringify(layout)}`)
     assert.equal(new Set(layout.hues).size, layout.hues.length, `each lane a colour of its own: ${layout.hues.join(', ')}`)
 })
@@ -727,19 +725,19 @@ test('with the details pane open in a window of middling width, a lane\'s toolba
     }
 })
 
-test('a wide window keeps the page to a column of reading width, and the landing order under the bar as the log scrolls past it', { skip, timeout: 60_000 * SLOW }, async () => {
+test('a wide window keeps the page to a column of reading width, and the Log and Landing tabs under the bar as the log scrolls past them', { skip, timeout: 60_000 * SLOW }, async () => {
     const wide = await open(browser, `${base}?repo=demo`, { width: 1600, height: 500 })
     try {
-        await wide.until((() => card('feature') && document.querySelector('.queue-row .queue-item')), [], { what: 'the page, with its landing order' })
+        await wide.until((() => card('feature') && document.querySelector('.queue-row .view-tab')), [], { what: 'the page, with its tabs' })
         const column = await wide.run((() => ({ repo: document.querySelector('section.repo').getBoundingClientRect().width, window: innerWidth })))
         assert.ok(column.repo <= 1080 && column.window === 1600, `a column of 1080 at most in a window of 1600: ${JSON.stringify(column)}`)
         await wide.run((() => { window.scrollTo(0, 600); return true }))
         const stuck = await wide.until((() => {
             const row = document.querySelector('.queue-row')
             if (!row.classList.contains('stuck')) return null
-            return { top: row.getBoundingClientRect().top, bar: document.querySelector('header.bar').getBoundingClientRect().bottom, scrolled: scrollY, lanes: row.querySelectorAll('.queue-item').length }
-        }), [], { what: 'the landing order stuck under the bar' })
-        assert.ok(Math.abs(stuck.top - stuck.bar) < 2 && stuck.scrolled > 0 && stuck.lanes > 0, `under the bar, with its lanes: ${JSON.stringify(stuck)}`)
+            return { top: row.getBoundingClientRect().top, bar: document.querySelector('header.bar').getBoundingClientRect().bottom, scrolled: scrollY, tabs: row.querySelectorAll('.view-tab').length, counts: row.querySelectorAll('.view-count').length }
+        }), [], { what: 'the tabs stuck under the bar' })
+        assert.ok(Math.abs(stuck.top - stuck.bar) < 2 && stuck.scrolled > 0 && stuck.tabs === 2 && stuck.counts > 0, `under the bar, the Landing tab with its counts: ${JSON.stringify(stuck)}`)
     } finally {
         await wide.close()
     }
@@ -860,31 +858,44 @@ test('the landing order has a view of its own: a table of every lane in its grou
     }), [], { what: 'the Log and Landing tabs' })
     assert.equal(tabs.length, 2)
     assert.deepEqual(tabs.map((tab) => tab.selected), ['true', 'false'], 'the log first')
-    assert.match(tabs[1].text, /^Landing\d+$/)
-    const inOrder = await page.run(() => [...document.querySelectorAll('.queue-row .queue-item .queue-name')].map((name) => name.textContent))
+    assert.match(tabs[1].text, /^Landing(\d+)+$/)
+    // No line of the landing order over the log: the Landing tab counts each group in its colour instead.
+    const over = await page.run(() => ({
+        line: document.querySelectorAll('.queue-row .queue-item, .queue-row .queue-title').length,
+        landNext: [...document.querySelectorAll('.views-row > button')].map((button) => button.getAttribute('aria-label')),
+        counts: [...document.querySelectorAll('.view-tab .view-count')].map((count) => ({ verdict: count.dataset.verdict, n: Number(count.textContent), dot: count.querySelector('.queue-dot').className })),
+        groups: landingGroupsOf(current.repos.find((repo) => repo.id === 'demo').lanes).map((group) => ({ verdict: group.verdict, names: group.lanes.map((item) => item.name) }))
+    }))
+    assert.equal(over.line, 0, 'no line of the landing order over the log')
+    assert.deepEqual(over.counts.map((count) => [count.verdict, count.n]), over.groups.map((group) => [group.verdict, group.names.length]), `a count for each group, in its order: ${JSON.stringify(over)}`)
+    assert.ok(over.counts.every((count) => /queue-dot (done|info|warn|risk|quiet)/.test(count.dot)), 'each in its group\'s colour')
+    const ready = over.groups.find((group) => group.verdict === 'land now')
+    assert.deepEqual(over.landNext, ready ? [`Land ${ready.names[0]}…`] : [], 'Land next at the end of the tabs, where a lane is ready')
+    const inOrder = over.groups.flatMap((group) => group.names)
     await page.click((() => [...document.querySelectorAll('.view-tab')].find((tab) => tab.textContent.startsWith('Landing'))))
     const table = await page.until((() => {
         const landing = document.querySelector('.landing:not([hidden]) .landing-table')
-        // The one-line landing order, once it has faded from the row.
-        if (!landing || document.querySelectorAll('.queue-row .queue-item').length) return null
+        if (!landing) return null
         return {
             heads: [...landing.querySelectorAll('thead th')].map((th) => th.textContent),
             groups: [...landing.querySelectorAll('.landing-group-head th')].map((th) => th.textContent),
             lanes: [...landing.querySelectorAll('tr.landing-lane')].map((row) => ({
                 name: row.querySelector('.lane-name').textContent,
                 needs: row.querySelector('td[data-label="Needs"] .state').textContent,
-                step: row.querySelector('.landing-step').textContent.trim()
+                step: row.querySelector('.landing-step').textContent.trim(),
+                hue: row.querySelector('.lane-name').dataset.hue,
+                cardHue: card(row.querySelector('.lane-name').textContent)?.dataset.hue
             })),
-            log: getComputedStyle(document.querySelector('ol.log')).display,
-            strip: document.querySelectorAll('.queue-row .queue-item').length
+            log: getComputedStyle(document.querySelector('ol.log')).display
         }
     }), [], { what: 'the landing view' })
     assert.deepEqual(table.heads, ['Lane', 'Needs', 'Verified', 'Changes', 'Collides with', 'Pull request', 'Agents', ''])
     assert.ok(table.groups.length > 0, 'its groups, each a heading')
     for (const name of inOrder) assert.ok(table.lanes.some((lane) => lane.name === name), `${name}, in the landing order, has a row: ${JSON.stringify(table.lanes)}`)
+    assert.deepEqual(table.lanes.slice(0, inOrder.length).map((lane) => lane.name), inOrder, 'in the landing order\'s groups and order')
     assert.ok(table.lanes.every((lane) => lane.needs && lane.step), `each with what it needs and a next step: ${JSON.stringify(table.lanes)}`)
+    assert.ok(table.lanes.every((lane) => lane.hue && lane.hue === lane.cardHue), `each named in its lane's colour: ${JSON.stringify(table.lanes)}`)
     assert.equal(table.log, 'none', 'the log out of sight, kept')
-    assert.equal(table.strip, 0, 'the one-line landing order gives way to the table')
     // Remembered by the page: drawn again, it stays.
     await page.run(() => refresh().then(() => true))
     assert.equal(await page.run(() => Boolean(document.querySelector('.landing:not([hidden]) .landing-table'))), true)
