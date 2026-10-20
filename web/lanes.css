@@ -106,12 +106,12 @@ a:hover { text-decoration: underline; }
 @media (prefers-color-scheme: dark) {
   :root { --hue-cyan: #22d3ee; --hue-magenta: #e879f9; --hue-yellow: #facc15; --hue-green: #4ade80; --hue-blue: #60a5fa; --hue-red: #f87171; }
 }
-.lane[data-hue="cyan"], .tag[data-hue="cyan"] { --lane: var(--vscode-terminal-ansiCyan, var(--hue-cyan)); }
-.lane[data-hue="magenta"], .tag[data-hue="magenta"] { --lane: var(--vscode-terminal-ansiMagenta, var(--hue-magenta)); }
-.lane[data-hue="yellow"], .tag[data-hue="yellow"] { --lane: var(--vscode-terminal-ansiYellow, var(--hue-yellow)); }
-.lane[data-hue="green"], .tag[data-hue="green"] { --lane: var(--vscode-terminal-ansiGreen, var(--hue-green)); }
-.lane[data-hue="blue"], .tag[data-hue="blue"] { --lane: var(--vscode-terminal-ansiBlue, var(--hue-blue)); }
-.lane[data-hue="red"], .tag[data-hue="red"] { --lane: var(--vscode-terminal-ansiRed, var(--hue-red)); }
+.lane[data-hue="cyan"], [data-hue="cyan"]:not(.lane) { --lane: var(--vscode-terminal-ansiCyan, var(--hue-cyan)); }
+.lane[data-hue="magenta"], [data-hue="magenta"]:not(.lane) { --lane: var(--vscode-terminal-ansiMagenta, var(--hue-magenta)); }
+.lane[data-hue="yellow"], [data-hue="yellow"]:not(.lane) { --lane: var(--vscode-terminal-ansiYellow, var(--hue-yellow)); }
+.lane[data-hue="green"], [data-hue="green"]:not(.lane) { --lane: var(--vscode-terminal-ansiGreen, var(--hue-green)); }
+.lane[data-hue="blue"], [data-hue="blue"]:not(.lane) { --lane: var(--vscode-terminal-ansiBlue, var(--hue-blue)); }
+.lane[data-hue="red"], [data-hue="red"]:not(.lane) { --lane: var(--vscode-terminal-ansiRed, var(--hue-red)); }
 
 /* ---- the bar ---------------------------------------------------------- */
 .bar {
@@ -370,6 +370,7 @@ html:not([data-compact]) .queue-row.stuck { box-shadow: 0 1px 0 var(--line); }
 .queue-item:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; }
 .queue-after { font-size: var(--s11); color: var(--muted); }
 .queue-name { font-family: var(--mono); font-size: var(--s12); }
+.queue-name[data-hue] { color: var(--lane); }
 .queue-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 .queue-dot.done { background: var(--done); }
 .queue-dot.warn { background: var(--warn); }
@@ -380,7 +381,7 @@ html:not([data-compact]) .queue-row.stuck { box-shadow: 0 1px 0 var(--line); }
 /* A collision drawn: a bracket in the log's right margin, from one lane to the other. */
 .log.has-collisions { padding-right: 18px; }
 .log > svg.collisions { position: absolute; top: 0; right: 0; overflow: visible; pointer-events: stroke; }
-.log > svg.collisions path { stroke: var(--warn); }
+.log > svg.collisions path { stroke: var(--lane, var(--warn)); }
 
 /*
  * ISL's way: a lane shows what it is; what can be done with it shows on hover, or when the keyboard is on
@@ -822,6 +823,7 @@ html[data-compact] .cmdbar .cmd-step, html[data-compact] .cmdbar .queued { displ
 .home-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
 .home-group .queue-label { font-size: var(--s12); }
 .home-lane { font-size: var(--s12); font-family: var(--mono); }
+.home-lane[data-hue] { color: var(--lane); }
 .home-agents { display: flex; flex-direction: column; gap: 3px; }
 .home-agents:empty { display: none; }
 .home-agent { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: var(--s12); min-width: 0; }
