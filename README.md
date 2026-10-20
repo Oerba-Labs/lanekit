@@ -408,9 +408,9 @@ The page in the picture above, for every repository in a folder:
   and the header says which, unless its ruleset lets you past or you are an admin of a protection that
   does not hold admins. Where GitHub cannot say (another host, `gh` signed out), the push is tried and
   the remote's own answer shown.
-- **Main's line shows its newest twelve commits**, and its foot says how many of how many ("12 of
+- **Main's line shows its newest twenty-five commits**, and its foot says how many of how many ("25 of
   1,204 shown") beside **25 older commits**, which reads that much further back each time, as far
-  as 500. Once it reads further back, **Newest only** goes back to the twelve, at the foot and beside
+  as 500. Once it reads further back, **Newest only** goes back to the twenty-five, at the foot and beside
   the repository's name; where it reaches main's first commit the line stops there. How far back is
   kept for every page LaneKit answers, the side bar's and each tab's, until it is asked back or
   restarts. A lane that forked further back than the log reads is listed under *Forked from further
