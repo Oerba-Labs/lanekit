@@ -420,6 +420,9 @@ The page in the picture above, for every repository in a folder:
   newest commit (or main's), `[` and `]` show the repository before or the next, `Esc` closes the
   details, `?` lists them; in the message form,
   `⌘ Enter` commits.
+- **What waits on you is one line under the switcher** on a repository's page: an agent that needs you,
+  a gate that failed, a lane ready to land, a pull request waiting on your review, each opening what it
+  names. Home's cards say the same for every repository.
 - **On a wide screen the page keeps to a column** of about 1,080 pixels, so Fetch and Land next stay
   near what they act on; a question's buttons sit beside its words; and the landing order stays under
   the bar as the log scrolls past it. Paths are said from home (`~/code/piano-sheets`), the whole path
