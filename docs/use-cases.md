@@ -116,6 +116,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 62 | **new** Read the page in a narrow window as in the side bar: a lane's next step (its icon, its word first in its title) and ⋯ float over its corner, nothing hidden keeps a line under its name, a commit's details open under its row, and the page goes back to its wide layout as the window widens | any window narrower than 760 pixels, and the side bar | e2e 14 |
 | 63 | **new** Keep a lane's toolbar inside the log's column while the details pane is open in a window of middling width: every button but the next step its icon alone, under the lane's name, never under the pane | the toolbar | e2e 15 |
 | 64 | **new** Read the page as a column of reading width on a wide screen, Land next beside the landing order, a question's buttons beside its words, the lane under the pointer washed, and the landing order kept under the bar as the log scrolls past it | the page | e2e 16 |
+| 68 | **new** See what waits on you in one line under the switcher: an agent that needs you, a gate that failed, a lane ready to land, a pull request waiting on your review, each opening what it names | the strip | e2e 17 |
 | 65 | **new** Read paths from home (`~/code/api`) wherever the page says one, the whole of it as its tooltip | the bar, a repository's header, Home's cards, Without lanes | page 10 |
 
 ## Installing and updating

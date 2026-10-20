@@ -518,7 +518,7 @@ const keyed = (node, key, sig) => {
     return node
 }
 // The parts of the page that are kept between drawings, where what went from them fades.
-for (const [id, scope] of [['repos', 'page'], ['cmdbar', 'commands'], ['switcher', 'switcher']]) $(id).dataset.animScope = scope
+for (const [id, scope] of [['repos', 'page'], ['cmdbar', 'commands'], ['switcher', 'switcher'], ['strip', 'strip']]) $(id).dataset.animScope = scope
 
 // ---------------------------------------------------------------------------
 // what the page remembers between answers
@@ -1005,6 +1005,7 @@ const redrawAgents = () => {
         row.replaceChildren(...homeAgentsOf(repo, glance))
         row.closest('.home-card')?.classList.toggle('wants-you', glance.needsYou > 0)
     }
+    drawStrip()
     markPointer()
 }
 
@@ -2939,6 +2940,33 @@ const drawSwitcher = () => {
             { running: repo.id !== showing && busy(repo.id), broken: !!repo.error })))
 }
 
+/**
+ * What waits on you in the repository shown, in one line under the switcher: an agent that needs you, a gate that
+ * failed, a lane ready to land, a pull request waiting on your review. Each opens what it names. Nothing while nothing
+ * waits, and nothing at Home, whose cards say it for every repository.
+ */
+const drawStrip = () => {
+    const strip = $('strip')
+    const repo = shownId() ? current?.repos.find((candidate) => candidate.id === shownId() && !candidate.error) : null
+    const items = []
+    if (repo) {
+        const lanes = repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
+        const open = (lane) => () => focusLane(repo.id, lane.name)
+        for (const lane of lanes) {
+            const words = wantsWords(repo.id, lane.name)
+            if (words) items.push(['warn', `${words} in ${lane.name}`, `${repo.id}/${lane.name}:needs`, open(lane)])
+        }
+        for (const lane of lanes) if (lane.gate?.current && lane.gate.result === 'failed') items.push(['risk', `${lane.name}'s gate failed`, `${repo.id}/${lane.name}:failed`, open(lane)])
+        for (const lane of lanes) if (lane.queue?.verdict === 'land now' && !lane.review) items.push(['done', `${lane.name} ready to land`, `${repo.id}/${lane.name}:ready`, open(lane)])
+        const mine = repo.github?.slug ? (current.reviews ?? []).filter((review) => review.repo === repo.github.slug) : []
+        for (const review of mine) items.push(['warn', `#${review.number} waits on your review`, `${repo.id}:review:${review.number}`, safeHref(review.url)])
+    }
+    strip.hidden = !items.length
+    strip.replaceChildren(...items.map(([tone, text, key, go]) => (typeof go === 'string'
+        ? el('a', { class: 'strip-item', href: go, target: '_blank', rel: 'noopener noreferrer', 'data-anim': key, 'data-sig': text }, state(tone, text, 'small'))
+        : el('button', { type: 'button', class: 'strip-item', 'data-anim': key, 'data-sig': text, onclick: go ?? undefined }, state(tone, text, 'small')))))
+}
+
 /** The page's title, and the editor's tab's: the repository's name while one is shown, LaneKit while every one is. */
 let titled = null
 const sayTitle = () => {
@@ -3198,6 +3226,7 @@ const drawPage = () => {
     $('where').textContent = where + (current.kit ? ` · lanekit ${current.kit}` : '')
     $('where').title = roots.join(', ')
     drawSwitcher()
+    drawStrip()
     sayTitle()
     const pane = $('repos')
     const home = atHome()

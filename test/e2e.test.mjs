@@ -730,3 +730,26 @@ test('a wide window keeps the page to a column of reading width, and the landing
         await wide.close()
     }
 })
+
+test('what waits on you is one line under the switcher: a lane ready to land, a pull request waiting on your review, each opening what it names', { skip, timeout: 60_000 * SLOW }, async () => {
+    const said = await page.until((() => {
+        const strip = [...document.querySelectorAll('#strip .strip-item')].map((item) => ({ text: item.textContent.trim(), link: item.tagName === 'A' ? item.href : null }))
+        if (!strip.length) return null
+        return {
+            strip, hidden: document.getElementById('strip').hidden,
+            ready: [...document.querySelectorAll('li.lane[data-key]')].filter((lane) => lane.querySelector('.lane-title > .state')?.textContent === 'Ready to land').map((lane) => lane.dataset.key.split('/')[1]),
+            needs: [...document.querySelectorAll('li.lane[data-key]')].filter((lane) => lane.querySelector('.wants-badge')?.textContent).map((lane) => lane.dataset.key.split('/')[1])
+        }
+    }), [], { what: 'the strip, with something in it' })
+    assert.equal(said.hidden, false)
+    for (const name of said.ready) assert.ok(said.strip.some((item) => item.text === `${name} ready to land`), `${name} is ready, and the strip says so: ${JSON.stringify(said.strip)}`)
+    for (const name of said.needs) assert.ok(said.strip.some((item) => item.text.endsWith(` in ${name}`)), `an agent waits in ${name}, and the strip says so`)
+    const review = said.strip.find((item) => /^#8 waits on your review$/.test(item.text))
+    assert.ok(review, `#8 waits on this person's review, as the header says: ${JSON.stringify(said.strip)}`)
+    assert.match(review.link, /github\.com\/acme\/demo\/pull\/8/, 'a link to it on GitHub')
+    // A lane named in it, pressed: the lane is brought into view and marked.
+    if (said.ready.length) {
+        await page.click((() => [...document.querySelectorAll('#strip button')].find((item) => / ready to land$/.test(item.textContent))))
+        await page.until((name) => card(name)?.classList.contains('flash'), [said.ready[0]], { what: `${said.ready[0]} marked` })
+    }
+})
