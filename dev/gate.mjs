@@ -17,7 +17,7 @@
  * deferring and the cheap ones are not worth skipping, and a person choosing
  * under time pressure chooses wrong in one predictable direction. `--fast`
  * exists for the iteration loop and is honest about what it did: it prints
- * UNDER-GATED rather than READY, because it cannot certify the branch.
+ * INCOMPLETE rather than VERIFIED, because it cannot certify the branch.
  *
  * WHAT IT REFUSES TO GUESS. A dirty tree, because a result names a sha and
  * uncommitted work is not in one. A rebase that conflicts, because resolving
@@ -79,7 +79,7 @@ const banner = (word, colour, detail) => {
 const fail = (stage, message, help) => {
     console.error(`\n${RED}[gate] ${message}${OFF}\n`)
     if (help) console.error(`${help}\n`)
-    banner('NOT READY', RED, `${stage}  ·  ${elapsed()}`)
+    banner('FAILED', RED, `${stage}  ·  ${elapsed()}`)
     process.exit(1)
 }
 
@@ -347,19 +347,19 @@ if (options.json) console.log(JSON.stringify({ ...record, certifies: passed && !
 
 if (!passed) {
     console.error(`\n${RED}[gate] ${failures.map((f) => f.what).join(', ')} failed${OFF}\n`)
-    banner('NOT READY', RED, `${branch}  ·  tier ${chosen} failed  ·  ${elapsed()}`)
+    banner('FAILED', RED, `${branch}  ·  tier ${chosen} failed  ·  ${elapsed()}`)
     console.log(`  run  → ${path.relative(REPO, recordFile)}\n`)
     process.exit(1)
 }
 
 if (short) {
-    banner('UNDER-GATED', YELLOW, `${branch}  ·  tier ${chosen} green, but the diff earns ${earned}  ·  ${elapsed()}`)
+    banner('INCOMPLETE', YELLOW, `${branch}  ·  tier ${chosen} green, but the diff earns ${earned}  ·  ${elapsed()}`)
     console.log(`  This run is green for what it covered and is ${YELLOW}not${OFF} a green for the branch.`)
-    console.log(`  Run the full gate before landing: it is what certifies the sha.\n`)
+    console.log(`  Verify in full before landing (gate, without --fast): that is what certifies the sha.\n`)
     process.exit(0)
 }
 
-banner('READY', GREEN, `${branch}  ·  tier ${chosen} green on ${sha.slice(0, 10)}  ·  ${elapsed()}`)
+banner('VERIFIED', GREEN, `${branch}  ·  tier ${chosen} green on ${sha.slice(0, 10)}  ·  ${elapsed()}`)
 console.log(`  run  → ${path.relative(REPO, recordFile)}`)
 console.log(`\n  ${DIM}Nothing has been merged. From a checkout of ${base}:${OFF}`)
 console.log(`    git merge --no-ff ${branch}\n`)

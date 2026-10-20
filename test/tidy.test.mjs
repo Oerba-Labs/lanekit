@@ -229,7 +229,7 @@ test('the page groups the landing order by what each lane needs, with an order o
         at('i', 'gate now', 0, { aside: '2026-09-01T00:00:00.000Z' }),
         { name: 'j', queue: null }
     ])
-    assert.deepEqual(groups.map((group) => group.label), ['Ready', 'Needs a gate', 'Commit first', 'Waiting', 'Part-way', 'Quiet'])
+    assert.deepEqual(groups.map((group) => group.label), ['Ready', 'Needs verifying', 'Commit first', 'Waiting', 'Part-way', 'Quiet'])
     assert.deepEqual(groups[0].lanes.map((item) => item.name), ['a', 'b', 'h'], 'a ready lane stays ready, quiet or not')
     assert.deepEqual(groups[3].lanes, [{ name: 'e', after: ['b'] }, { name: 'f', after: ['b', 'e'] }], 'each waits for the lanes it collides with that land first')
     assert.deepEqual(groups[5].lanes, [{ name: 'g', after: [], days: 30 }], 'quiet and not ready, last')
@@ -269,7 +269,7 @@ test('home says each repository at a glance: its lanes, its landing order, its a
     assert.deepEqual([glance.lanes, glance.aside, glance.finished], [4, 1, 2])
     assert.deepEqual(glance.groups, [
         { verdict: 'land now', label: 'Ready', names: ['ready'] },
-        { verdict: 'gate now', label: 'Needs a gate', names: ['also', 'gate-me'] },
+        { verdict: 'gate now', label: 'Needs verifying', names: ['also', 'gate-me'] },
         { verdict: 'empty', label: 'Nothing committed', names: ['empty'] }
     ])
     assert.deepEqual(glance.agents.map((agent) => agent.lane), ['also', 'gate-me', 'ready'], 'waiting on you, then at work, then the rest; its own only')

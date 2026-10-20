@@ -1,7 +1,7 @@
 {
   "name": "lanekit",
   "displayName": "LaneKit",
-  "description": "Every lane of every repository as a smartlog you act on inside the editor: open a lane's terminal with your files following, see which agent works where and which needs you, and gate, land and sweep.",
+  "description": "Every lane of every repository as a smartlog you act on inside the editor: open a lane's terminal with your files following, see which agent works where and which needs you, and verify, land and sweep.",
   "publisher": "lanekit",
   "version": "0.26.0",
   "license": "Apache-2.0",
@@ -93,7 +93,7 @@
       },
       {
         "command": "lanekit.gate",
-        "title": "Gate This Lane\u2026",
+        "title": "Verify This Lane\u2026",
         "category": "LaneKit"
       },
       {
@@ -259,7 +259,7 @@
         "lanekit.gateOnCommit": {
           "type": "boolean",
           "default": false,
-          "description": "Gate a lane by itself when a commit lands in it and nothing is uncommitted. The gate rebases the lane onto the integration branch first, as it always does."
+          "description": "Verify a lane by itself when a commit lands in it and nothing is uncommitted: the gate rebases the lane onto the integration branch and runs the tests its change earns, as it always does."
         }
       }
     }

@@ -35,7 +35,7 @@ Every lane starts from `main`, and comes back to it with a merge commit of its o
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-graph-dark.svg">
-  <img alt="main as a line of commits. Two lanes start from it with lane new: midi-export, whose gate says READY and which lane land brings back as a merge commit of its own, and dark-mode, still in progress." src="docs/images/lanes-graph-light.svg">
+  <img alt="main as a line of commits. Two lanes start from it with lane new: midi-export, whose gate says VERIFIED and which lane land brings back as a merge commit of its own, and dark-mode, still in progress." src="docs/images/lanes-graph-light.svg">
 </picture>
 
 ## The loop
@@ -44,8 +44,8 @@ Every lane starts from `main`, and comes back to it with a merge commit of its o
 |---|---|---|
 | **1. Start** | `./piano-sheets lane new midi-export` | a folder beside the repository, a branch, the next free port, and the lane's own `.env` |
 | **2. Work** | `cd ../piano-sheets-midi-export` | edit, run, commit; nothing here touches `main` or any other lane |
-| **3. Gate** | `./piano-sheets gate`, in the lane | rebases onto `main`, runs the tests the change earns, and records the result against the commit. It never merges |
-| **4. Land** | `./piano-sheets lane land midi-export`, in `main` | merges with `--no-ff` once the gate is green, stops the lane's server, removes its folder, keeps its branch |
+| **3. Verify** | `./piano-sheets gate`, in the lane | rebases onto `main`, runs the tests the change earns, and records the result against the commit. It never merges |
+| **4. Land** | `./piano-sheets lane land midi-export`, in `main` | merges with `--no-ff` once the lane is verified, stops the lane's server, removes its folder, keeps its branch |
 
 `./piano-sheets` is the project's shim: a small script, named after the project, that finds
 lanekit on the machine and hands over. What each step prints, from a real run:
@@ -106,7 +106,7 @@ $ ./piano-sheets gate
   check: nothing is checked yet. Put this project's tests in ./check.
 
 ────────────────────────────────────────────────────────────────────
-  READY  ·  midi-export  ·  tier 1 green on a5aacd3061  ·  0s
+  VERIFIED  ·  midi-export  ·  tier 1 green on a5aacd3061  ·  0s
 ────────────────────────────────────────────────────────────────────
 
   Nothing has been merged. From a checkout of main:
@@ -260,7 +260,7 @@ The page in the picture above, for every repository in a folder:
   name), its author and its age. A repository's card, and its own header, say how many of its own
   wait on you.
 - **Each repository** opens with its **landing order**, grouped by what each lane needs: *Ready*,
-  *Needs a gate*, *Commit first*, *Waiting* (each with the lanes it waits for: "dark-mode after
+  *Needs verifying*, *Commit first*, *Waiting* (each with the lanes it waits for: "dark-mode after
   midi-export"), *Rebase first*, *Part-way* (a rebase not finished), and *Quiet*. An order only holds
   between lanes that change the same files, so it is said only there, the costlier first; two such
   lanes are joined by a bracket in the margin. **Land next** lands the first ready one, after a
@@ -285,8 +285,8 @@ The page in the picture above, for every repository in a folder:
   commit is its words and its age (*22m*, *3d*); its hash is in its tooltip. Under the name, quietly:
   its last gate, whether it is pushed (or what origin has of it that it lacks), its pull request when
   `gh` is signed in, and what serves on its port while anything does. While a press runs in it, it says
-  so live: *Gating · running the tests… · 12 s*. Where its tests wrote JUnit, the gate says their counts
-  (*Gate failed · tier 1 · 2 passed, 1 failed, 1 skipped*). A failed gate shows the tests that did not
+  so live: *Verifying · running the tests… · 12 s*. Where its tests wrote JUnit, the gate says their counts
+  (*Verification failed · tier 1 · 2 passed, 1 failed, 1 skipped*). A failed gate shows the tests that did not
   pass, then the failing step and its last lines, kept with the run, so it is still there tomorrow.
 - **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
@@ -319,22 +319,22 @@ The page in the picture above, for every repository in a folder:
   and state, never across the page from them; the lane is washed meanwhile, so its rows read as one.
   Where the column is too narrow for them beside the state (the details pane open in a window of
   middling width), every button but the next step is its icon alone, under the name. They are lane's own commands, run as a terminal would
-  run them, with their output underneath: **Gate**, **Land**, **Sweep**, **Rebase** (a lane that is
+  run them, with their output underneath: **Verify**, **Land**, **Sweep**, **Rebase** (a lane that is
   behind), **Push** (one with commits origin lacks), **Pull** (one whose copy on origin has commits
   somebody else pushed: a colleague, GitHub's *Update branch*, a suggestion from review), **Pull
   request** (one pushed without one), **Pull** for main (main behind origin), **Push** for main (main
   ahead of origin) and **Fetch**, an icon the size of the terminal's beside it. A button is drawn even while what it needs is not there yet, held,
-  with what it waits for as its title: **Gate** until the lane has a commit and nothing uncommitted,
-  **Land** until it is gated green on its newest commit and first among those it collides with, and
+  with what it waits for as its title: **Verify** until the lane has a commit and nothing uncommitted,
+  **Land** until it is verified on its newest commit and first among those it collides with, and
   both of Land and Pull while main's checkout is on another branch, part-way through something, or
   has uncommitted files. A push never replaces commits on origin that are not the lane's own: a
   rebased lane's old commits are each the same change as one of its new ones, and anything else is
   somebody's work, which is brought in first. Land and Sweep check first with `--dry-run` and ask; a push that would
   replace origin's copy of a rebased branch asks too, and so does a push of main. A rebase that conflicts stops with the files named, and waits for **Continue** or
-  **Abort**. The one thing to do next is solid (**Gate** when it needs a gate, **Land** when it is
+  **Abort**. The one thing to do next is solid (**Verify** when it needs verifying, **Land** when it is
   ready, **Rebase** when it conflicts with main); what is done now and then, **Push**, **Pull
   request**, **Set aside** and **Drop**, sits behind **⋯** at the toolbar's end.
-- **Its state is said once**, beside its name ("Needs a gate", "Ready to land"), with the gate's
+- **Its state is said once**, beside its name ("Needs verifying", "Ready to land"), with the gate's
   last result under it only where there is one. A lane whose agent waits on you says so there too
   ("Claude needs you"), in amber, so a glance down the page finds it.
 - **A new lane starts from a commit.** Point at any commit, of main or of a lane, choose **New lane
@@ -418,14 +418,14 @@ The page in the picture above, for every repository in a folder:
   there; a lane can be dragged onto any commit the log shows.
 - **It stays current by itself:** while it is open, each repository is fetched every five minutes,
   so "behind origin" is true without anybody asking; nothing is pulled or merged by it.
-- **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` gates, `l` lands, `r`
+- **The keyboard:** `j` and `k` move between lanes, `Enter` opens one, `g` (or `v`) verifies, `l` lands, `r`
   rebases, `p` pushes (or pulls what origin has of it), `c` commits, `u` uncommits, `o` is its terminal
   and `a` starts an agent in it (in the editor), `f` fetches, `n` names a new lane from the lane's
   newest commit (or main's), `[` and `]` show the repository before or the next, `Esc` closes the
   details, `?` lists them; in the message form,
   `⌘ Enter` commits.
 - **What waits on you is one line under the switcher** on a repository's page: an agent that needs you,
-  a gate that failed, a lane ready to land, a pull request waiting on your review, each opening what it
+  a lane that failed verification, a lane ready to land, a pull request waiting on your review, each opening what it
   names. Home's cards say the same for every repository.
 - **On a wide screen the page keeps to a column** of about 1,080 pixels, so Fetch and Land next stay
   near what they act on; a question's buttons sit beside its words; and the landing order stays under
@@ -493,7 +493,7 @@ in the picture. There its clicks drive the editor:
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
   accepted one way, the other, or both; a file and line in a failed gate's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
-  land"); a click opens that lane's menu: Terminal, Changes, Start agent, Gate, Land, Rebase, Push, **New
+  land"); a click opens that lane's menu: Terminal, Changes, Start agent, Verify, Land, Rebase, Push, **New
   lane from here** (on top of this one), or the lane in a new window of its own;
 - the palette's **LaneKit: …** commands act on the lane in front of you, with the page's own
   checks, and a press that ends while LaneKit is out of sight says how it ended;
@@ -586,7 +586,7 @@ nothing),
 branch; from a fork, GitHub's copy of its head; never with `--base`, `--existing` or `--carry`),
 `--install` to build the lane's own copies of what would otherwise be shared, `--no-seed` to
 skip filling what it must own, and `--no-provision` to make the folder and stop. `gate` takes
-`--fast` (tier 1 whatever the change earns; it says `UNDER-GATED` rather than `READY`),
+`--fast` (tier 1 whatever the change earns; it says `INCOMPLETE` rather than `VERIFIED`),
 `--tier <n>` and `--json`. `land` and `sweep` take `--dry-run`.
 
 ## What the tests said: `$LAB_RESULTS`
@@ -612,7 +612,7 @@ $ ./piano-sheets gate
 
 
 ────────────────────────────────────────────────────────────────────
-  NOT READY  ·  midi-export  ·  tier 1 failed  ·  1s
+  FAILED  ·  midi-export  ·  tier 1 failed  ·  1s
 ────────────────────────────────────────────────────────────────────
 ```
 

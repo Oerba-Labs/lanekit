@@ -9,13 +9,13 @@ allowed-tools: mcp__plugin_lanekit_lanekit__lanes
 A lane is a second checkout of the repository in a folder beside it (`../<repo>-<lane>`), on a branch of its own,
 with its own port and its own copy of what a running app needs (its `.env`, its database). Several pieces of work,
 or several agents, run side by side without sharing a file, a process or a database row, and each lands on `main`
-only once its gate is green.
+only once it is verified (its gate is green).
 
 LaneKit's MCP tools do everything here; each refuses what LaneKit's page refuses, and says why.
 
 ## Before changing anything
 
-1. Call **`lanes`**. It lists every lane with what it needs (ready to land, needs a gate, commit first, waits for
+1. Call **`lanes`**. It lists every lane with what it needs (ready to land, needs verifying, commit first, waits for
    another lane, reviewing a pull request…), its uncommitted files and its collisions, and the main checkout.
 2. **Never change files in the main checkout.** If the work has a lane already, work in that lane's folder. Otherwise
    call **`new_lane`** with a short kebab-case name for the work, then work only in the folder it returns: use its
@@ -28,8 +28,8 @@ LaneKit's MCP tools do everything here; each refuses what LaneKit's page refuses
 
 - Run the app on the lane's own port, from the lane's folder; another lane's server is on another port.
 - Commit with **`commit`**, or `git commit` in the lane's folder.
-- **`gate`** the lane once it is committed: it rebases onto `main` as it is now and runs the tests the change earns.
-  Read its banner: `READY` is green; `UNDER-GATED` and a failure are not, whatever the exit code says.
+- **Verify** the lane with **`gate`** once it is committed: it rebases onto `main` as it is now and runs the tests the
+  change earns. Read its banner: `VERIFIED` is green; `INCOMPLETE` and `FAILED` are not, whatever the exit code says.
 - When `main` moves on, **`rebase`** the lane; if it stops on conflicts, use the `resolve-conflicts` skill.
 
 ## Handing it back
@@ -42,7 +42,7 @@ LaneKit's MCP tools do everything here; each refuses what LaneKit's page refuses
 
 ## When a tool refuses
 
-It says why: *commit first*, *gate it first*, *wait for X to land first*, *rebase it first*, *somebody pushed to it*.
+It says why: *commit first*, *verify it first*, *wait for X to land first*, *rebase it first*, *somebody pushed to it*.
 Do what it says. Never work around a refusal with plain git (a force-push, a merge by hand): the refusals are what
 keep one lane's work from overwriting another's.
 

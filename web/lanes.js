@@ -770,12 +770,12 @@ const statusOf = (lane) => {
     if (!queue) return ['quiet', 'Not planned', null]
     switch (queue.verdict) {
         case 'land now': return ['done', 'Ready to land', null]
-        case 'gate now': return ['info', 'Needs a gate', queue.why ? `Earns tier ${queue.tier}: ${queue.why}` : null]
+        case 'gate now': return ['info', 'Needs verifying', queue.why ? `Earns tier ${queue.tier}: ${queue.why}` : null]
         case 'hold the gate': {
             const first = queue.collisions.map((collision) => collision.lane).join(', ')
-            return ['warn', `Wait for ${first || 'another lane'}`, 'It should land first: landing this one now would void its gate']
+            return ['warn', `Wait for ${first || 'another lane'}`, 'It should land first: landing this one now would void its verification']
         }
-        case 'commit first': return ['warn', 'Uncommitted changes', 'The gate and a land both need them committed']
+        case 'commit first': return ['warn', 'Uncommitted changes', 'Verifying and landing both need them committed']
         case 'rebase first': return ['risk', 'Conflicts with main', 'It no longer merges cleanly: rebase it in the lane']
         case 'parked': return ['warn', 'Parked', queue.why]
         default: return ['quiet', queue.verdict, queue.why]
@@ -861,8 +861,8 @@ const mainBlockOf = (repo) => {
 const gateBlockOf = (lane) => {
     if (lane.operation) return `Finish its ${lane.operation} first`
     if (lane.pull?.state === 'MERGED') return `#${lane.pull.number} is merged on GitHub already`
-    if (lane.dirty) return 'Commit first: a gate result names a commit, and uncommitted changes are in none'
-    if (!(lane.ahead > 0)) return 'Nothing committed yet to gate'
+    if (lane.dirty) return 'Commit first: a verification names a commit, and uncommitted changes are in none'
+    if (!(lane.ahead > 0)) return 'Nothing committed yet to verify'
     return null
 }
 /** A land needs a lane gated green on its newest commit, first among those it collides with, and a main ready for it. */
@@ -877,7 +877,7 @@ const landBlockOf = (repo, lane) => {
     const queue = lane.queue
     switch (queue?.verdict) {
         case 'land now': return null
-        case 'gate now': return lane.gate?.current && lane.gate.result === 'failed' ? 'Its gate failed on this commit: fix it, commit, and gate it again' : 'Gate it first: a land needs a green gate on its newest commit'
+        case 'gate now': return lane.gate?.current && lane.gate.result === 'failed' ? 'Verification failed on this commit: fix it, commit, and verify it again' : 'Verify it first: a land needs its newest commit verified'
         case 'hold the gate': return `Wait for ${(queue.collisions ?? []).map((collision) => collision.lane).join(' and ') || 'another lane'} to land first: they change the same files`
         case 'rebase first': return `Rebase it first: it no longer merges cleanly with ${base}`
         case 'commit first': return 'Commit first: a land takes commits, and uncommitted changes are in none'
@@ -904,11 +904,11 @@ const gateOf = (lane) => {
     const when = gate.at ? ` · ${ago(gate.at)}` : ''
     const tests = testsSaidOf(gate)
     let node
-    if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Gate passed · tier ${gate.tier}${tests}${when}`, 'small')
-    else if (gate.result === 'passed' && gate.current) node = state('warn', `Under-gated: tier ${gate.tier} of ${gate.earned}${tests}${when}`, 'small')
-    else if (gate.result === 'passed') node = state('quiet', `Last gate passed, on an older commit${when}`, 'small')
-    else if (gate.current) node = state('risk', `Gate failed · tier ${gate.tier}${tests}${when}`, 'small')
-    else node = state('quiet', `Last gate failed, on an older commit${when}`, 'small')
+    if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Verified · tier ${gate.tier}${tests}${when}`, 'small')
+    else if (gate.result === 'passed' && gate.current) node = state('warn', `Verified with tier ${gate.tier} only; it earns tier ${gate.earned}${tests}${when}`, 'small')
+    else if (gate.result === 'passed') node = state('quiet', `Verified on an older commit${when}`, 'small')
+    else if (gate.current) node = state('risk', `Verification failed · tier ${gate.tier}${tests}${when}`, 'small')
+    else node = state('quiet', `Verification failed on an older commit${when}`, 'small')
     node.title = [exactly(gate.at), gate.current ? gate.tests?.unread : null].filter(Boolean).join('\n')
     return node
 }
@@ -1078,7 +1078,7 @@ const openLinks = (repo, lane) => {
 
 const showCommit = (repo, commit) => () => openIn('commit', { repo: repo.path, sha: commit.sha })
 
-const DOING = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making it', pull: 'Pulling', fetch: 'Fetching', review: 'Sending the review' }
+const DOING = { gate: 'Verifying', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making it', pull: 'Pulling', fetch: 'Fetching', review: 'Sending the review' }
 const runningIn = (repo, lane) => (current?.jobs ?? []).find((job) => job.state === 'running' && job.repo === repo.id && job.lane === lane.name)
 
 /** What a press is doing to a lane, live: the verb, the gate's step, and a clock. */
@@ -1448,7 +1448,7 @@ const reviewButton = (repo, number, { iconOnly = false } = {}) => {
     }
     return iconButton('branch', iconOnly ? `Review #${number} in a lane` : 'Review in a lane', {
         class: 'btn link', disabled: busyIn(repo.id),
-        title: `#${number} checked out in a lane of its own, review-${number}: run it, gate it, then Review… from its lane`,
+        title: `#${number} checked out in a lane of its own, review-${number}: run it, verify it, then Review… from its lane`,
         onclick: async () => {
             const answer = await press({ repo: repo.id, verb: 'new', name: `review-${number}`, pr: number })
             if (answer && atHome()) openFromHome(repo, `review-${number}`)
@@ -1842,7 +1842,7 @@ const inlineDetails = (repo, commit) => (compact() && selected?.sha && isSelecte
 // the command bar: what is running, what waits its turn, and how the last one went
 // ---------------------------------------------------------------------------
 
-const VERB_WORDS = { gate: 'Gating', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making a lane',
+const VERB_WORDS = { gate: 'Verifying', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making a lane',
     pull: 'Pulling', 'push-main': 'Pushing main', fetch: 'Fetching', review: 'Reviewing', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
 /** A job's command as a person would type it: lane …, gate, git …, without the node and the path in front. */
 const typed = (command) => String(command ?? '').replace(/^node (?:\S*\/)?dev\/lane\.mjs /, 'lane ').replace(/^node (?:\S*\/)?dev\/gate\.mjs\b/, 'gate')
@@ -2021,8 +2021,8 @@ const confirmOf = (repo, lane, key) => {
     }
     if (waiting.verb === 'gate') {
         return el('div', { class: 'confirm' },
-            el('p', { text: `Gate ${lane.name}? It rebases the branch onto ${base}, then runs the tier its changes earn${lane.queue?.tier ? ` (tier ${lane.queue.tier})` : ''}. It never merges.` }),
-            go('Gate it', { repo: repo.id, verb: 'gate', lane: lane.name }), cancel)
+            el('p', { text: `Verify ${lane.name}? It rebases the branch onto ${base}, then runs the tier its changes earn${lane.queue?.tier ? ` (tier ${lane.queue.tier})` : ''}, and records the result against its commit. It never merges.` }),
+            go('Verify it', { repo: repo.id, verb: 'gate', lane: lane.name }), cancel)
     }
     if (waiting.verb === 'land') {
         return el('div', { class: 'confirm' },
@@ -2044,7 +2044,7 @@ const confirmOf = (repo, lane, key) => {
         const pushed = lane.upstream ? ' It was pushed, so the next push asks before replacing origin\'s copy.' : ''
         const text = move.way === 'back'
             ? `Move ${lane.name} back onto "${waiting.subject}"? Its ${own} will start ${plural(move.count, 'commit')} further back on ${base}, without ${named(move.commits)} under ${them}. ` +
-              `It is a place to work from, not to land from: the gate moves it onto ${base}'s newest commit before it tests.${pushed} ` +
+              `It is a place to work from, not to land from: verifying moves it onto ${base}'s newest commit before it tests.${pushed} ` +
               `If ${one ? 'its commit needs' : 'its commits need'} what it leaves behind, the rebase stops on the files that conflict and waits; Abort puts it back as it is now.`
             : move.way === 'forward' && move.count
                 ? `Move ${lane.name} forward onto "${waiting.subject}"? Its ${own} will have ${named(move.commits)} under ${them} as well.${pushed} If ${one ? 'it conflicts' : 'they conflict'} it stops, names the files, and waits for you.`
@@ -2179,11 +2179,11 @@ const laneCard = (repo, lane, forked = true) => {
     }
     if (working && !lane.operation) {
         const gateBlock = gateBlockOf(lane)
-        buttons.push(iconButton('gate', 'Gate', {
+        buttons.push(iconButton('gate', 'Verify', {
             // One thing solid: where its pull request, or its copy on origin, has a next step, that is it.
             class: `btn${lane.queue?.verdict === 'gate now' && !gateBlock && !step?.next && !behindOrigin ? ' primary' : ''}`,
             disabled: held(gateBlock),
-            title: gateBlock ?? 'Rebase onto the integration branch and run the tier this lane earns',
+            title: gateBlock ?? 'Rebase onto the integration branch, run the tier this lane earns, and record the result',
             onclick: ask('gate')
         }))
         // Where main lands by pull request there is no land here: the pull request's next step stands in its place.
@@ -2726,17 +2726,17 @@ const logOf = (repo) => {
 // ---------------------------------------------------------------------------
 
 const VERDICT_WORDS = {
-    'land now': ['done', 'ready to land'], 'gate now': ['info', 'needs a gate'], 'commit first': ['warn', 'commit first'],
+    'land now': ['done', 'ready to land'], 'gate now': ['info', 'needs verifying'], 'commit first': ['warn', 'commit first'],
     'hold the gate': ['warn', 'waits for another lane'], 'rebase first': ['risk', 'rebase first'], parked: ['quiet', 'parked']
 }
 /**
  * The landing order as groups rather than one chain: an order only holds between lanes that collide, so the rest are
- * said by what each needs. Ready, Needs a gate, Commit first, Waiting (each with the lanes it waits for), Rebase first,
+ * said by what each needs. Ready, Needs verifying, Commit first, Waiting (each with the lanes it waits for), Rebase first,
  * Part-way (a rebase or a merge not finished), and Quiet last: a lane gone quiet that is not ready. Plain data in and
  * out, so lanekit's tests run it as it is written here (test/tidy.test.mjs).
  */
 const LANDING_GROUPS = [
-    ['land now', 'Ready'], ['gate now', 'Needs a gate'], ['commit first', 'Commit first'],
+    ['land now', 'Ready'], ['gate now', 'Needs verifying'], ['commit first', 'Commit first'],
     ['hold the gate', 'Waiting'], ['rebase first', 'Rebase first'], ['parked', 'Part-way']
 ]
 const landingGroupsOf = (lanes) => {
@@ -2993,7 +2993,7 @@ const drawStrip = () => {
             const words = wantsWords(repo.id, lane.name)
             if (words) items.push(['warn', `${words} in ${lane.name}`, `${repo.id}/${lane.name}:needs`, open(lane)])
         }
-        for (const lane of lanes) if (lane.gate?.current && lane.gate.result === 'failed') items.push(['risk', `${lane.name}'s gate failed`, `${repo.id}/${lane.name}:failed`, open(lane)])
+        for (const lane of lanes) if (lane.gate?.current && lane.gate.result === 'failed') items.push(['risk', `${lane.name} failed verification`, `${repo.id}/${lane.name}:failed`, open(lane)])
         for (const lane of lanes) if (lane.queue?.verdict === 'land now' && !lane.review) items.push(['done', `${lane.name} ready to land`, `${repo.id}/${lane.name}:ready`, open(lane)])
         const mine = repo.github?.slug ? (current.reviews ?? []).filter((review) => review.repo === repo.github.slug) : []
         for (const review of mine) items.push(['warn', `#${review.number} waits on your review`, `${repo.id}:review:${review.number}`, safeHref(review.url)])
@@ -3330,7 +3330,7 @@ const drawPage = () => {
 
 const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its newest commit\'s details'],
-    ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it, or pull what origin has of it that it lacks'],
+    ['g  v', 'verify it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it, or pull what origin has of it that it lacks'],
     ...(host.inEditor ? [['o', 'its terminal: yours moves to it, and the files you have open reopen from it'], ['a', 'start an agent in it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['z', 'fold it to its name, or unfold it'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
     ['[  ]', 'the repository before, or the next, Home among them'], ['?', 'these keys'],
@@ -3399,6 +3399,7 @@ document.addEventListener('keydown', (event) => {
         u: () => { if (lane.ahead > 0 && !lane.operation) uncommitLane(repo, lane) },
         z: () => toggleFold(here.key),
         g: () => unless(gateBlockOf(lane), () => confirm('gate')),
+        v: () => unless(gateBlockOf(lane), () => confirm('gate')),
         l: () => unless(byPullRequest(repo) ? `${repo.integrationBranch} takes its changes by pull request: Merge… lands it` : landBlockOf(repo, lane), () => check(repo, lane, 'land')),
         r: () => lane.behind > 0 && confirm('rebase'),
         p: () => up?.behind > 0 && !up.ahead ? press({ repo: repo.id, verb: 'pull', lane: lane.name })

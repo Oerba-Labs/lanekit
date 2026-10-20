@@ -112,7 +112,7 @@ test('the shim finds lanekit and makes a lane with a port of its own', () => {
     const port = Number(/^PORT=(\d+)$/m.exec(read(path.join(lane, '.env')))[1])
     assert.ok(port >= 8301 && port <= 8399, `port ${port} in the window`)
     assert.match(sh(dir, path.join(dir, 'piano-sheets'), 'lane', 'list'), /lanekit-trial/)
-    assert.match(sh(lane, path.join(lane, 'piano-sheets'), 'gate'), /READY/)
+    assert.match(sh(lane, path.join(lane, 'piano-sheets'), 'gate'), /VERIFIED/)
     sh(dir, path.join(dir, 'piano-sheets'), 'lane', 'sweep', 'lanekit-trial')
     assert.ok(!fs.existsSync(lane))
 })

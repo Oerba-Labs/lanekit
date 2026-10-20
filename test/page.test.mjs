@@ -39,19 +39,19 @@ const repo = (main = {}, extra = {}) => ({
 })
 const lane = (extra = {}) => ({ name: 'feature', kind: 'working', ahead: 1, behind: 0, dirty: 0, operation: null, pull: null, upstream: null, queue: { verdict: 'gate now', collisions: [] }, gate: null, ...extra })
 
-test('Gate is held until there is a commit of the lane\'s own to name, with nothing uncommitted beside it', () => {
+test('Verify is held until there is a commit of the lane\'s own to name, with nothing uncommitted beside it', () => {
     assert.equal(gateBlockOf(lane()), null)
     assert.match(gateBlockOf(lane({ ahead: 0, kind: 'fresh', dirty: 2 })), /^Commit first/)
-    assert.match(gateBlockOf(lane({ dirty: 1 })), /^Commit first: a gate result names a commit/)
-    assert.match(gateBlockOf(lane({ ahead: 0, kind: 'fresh' })), /Nothing committed yet to gate/)
+    assert.match(gateBlockOf(lane({ dirty: 1 })), /^Commit first: a verification names a commit/)
+    assert.match(gateBlockOf(lane({ ahead: 0, kind: 'fresh' })), /Nothing committed yet to verify/)
     assert.match(gateBlockOf(lane({ operation: 'rebase' })), /Finish its rebase first/)
     assert.match(gateBlockOf(lane({ pull: { state: 'MERGED', number: 4 } })), /#4 is merged on GitHub already/)
 })
 
-test('Land is held until the lane is gated green on its newest commit, first in its order, with main ready for it', () => {
-    assert.equal(landBlockOf(repo(), lane({ queue: { verdict: 'land now' } })), null, 'gated green, nothing in the way')
-    assert.match(landBlockOf(repo(), lane()), /^Gate it first: a land needs a green gate on its newest commit/)
-    assert.match(landBlockOf(repo(), lane({ gate: { result: 'failed', current: true } })), /Its gate failed on this commit/)
+test('Land is held until the lane is verified on its newest commit, first in its order, with main ready for it', () => {
+    assert.equal(landBlockOf(repo(), lane({ queue: { verdict: 'land now' } })), null, 'verified, nothing in the way')
+    assert.match(landBlockOf(repo(), lane()), /^Verify it first: a land needs its newest commit verified/)
+    assert.match(landBlockOf(repo(), lane({ gate: { result: 'failed', current: true } })), /Verification failed on this commit/)
     assert.match(landBlockOf(repo(), lane({ ahead: 0, kind: 'fresh' })), /Nothing committed yet to land/)
     assert.match(landBlockOf(repo(), lane({ dirty: 3, queue: { verdict: 'commit first' } })), /^Commit first: a land takes commits/)
     assert.match(landBlockOf(repo(), lane({ queue: { verdict: 'hold the gate', collisions: [{ lane: 'dark-mode' }] } })), /Wait for dark-mode to land first/)

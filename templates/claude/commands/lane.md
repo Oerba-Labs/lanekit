@@ -86,7 +86,7 @@ session is now working inside it. Then begin the work that was asked for.
 
 **Which copy of `./{{slug}}` you run decides which checkout is acted on.** Inside
 the lane, run the lane's. While iterating, `./{{slug}} gate --fast` runs tier 1
-whatever the diff earns; it prints `UNDER-GATED` rather than `READY` when the diff
+whatever the diff earns; it prints `INCOMPLETE` rather than `VERIFIED` when the diff
 earns more, because it cannot certify the branch and `lane land` will refuse it.
 
 When the work is done, `/land` gates it at the tier it earns and hands it back.

@@ -138,7 +138,7 @@ test('the gate moves a lane that was moved back onto main\'s newest before it te
     const gated = gate(laneDir('drift'))
     assert.equal(gated.code, 0, gated.out)
     assert.match(gated.out, /rebased onto main/)
-    assert.match(gated.out, /READY/)
+    assert.match(gated.out, /VERIFIED/)
     assert.equal(forkOf('drift'), git(repo, 'rev-parse', 'main'), 'it was tested on top of main as main is')
     assert.equal(read('drift').gate.current, true, 'and the result names the commit it is at now')
 })
