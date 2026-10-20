@@ -99,6 +99,20 @@ a:hover { text-decoration: underline; }
 .muted { color: var(--muted); }
 .grow { flex: 1 1 auto; }
 
+/* The six colours a lane may wear (lib/colours.mjs): the terminal's own in the editor, so a lane's line and its
+   terminals match; these in a browser. --lane is set on whatever carries data-hue, a lane or a tag of its name, over
+   the lane's grey. */
+:root { --hue-cyan: #0e7490; --hue-magenta: #a21caf; --hue-yellow: #a16207; --hue-green: #15803d; --hue-blue: #2563eb; --hue-red: #c2261d; }
+@media (prefers-color-scheme: dark) {
+  :root { --hue-cyan: #22d3ee; --hue-magenta: #e879f9; --hue-yellow: #facc15; --hue-green: #4ade80; --hue-blue: #60a5fa; --hue-red: #f87171; }
+}
+.lane[data-hue="cyan"], .tag[data-hue="cyan"] { --lane: var(--vscode-terminal-ansiCyan, var(--hue-cyan)); }
+.lane[data-hue="magenta"], .tag[data-hue="magenta"] { --lane: var(--vscode-terminal-ansiMagenta, var(--hue-magenta)); }
+.lane[data-hue="yellow"], .tag[data-hue="yellow"] { --lane: var(--vscode-terminal-ansiYellow, var(--hue-yellow)); }
+.lane[data-hue="green"], .tag[data-hue="green"] { --lane: var(--vscode-terminal-ansiGreen, var(--hue-green)); }
+.lane[data-hue="blue"], .tag[data-hue="blue"] { --lane: var(--vscode-terminal-ansiBlue, var(--hue-blue)); }
+.lane[data-hue="red"], .tag[data-hue="red"] { --lane: var(--vscode-terminal-ansiRed, var(--hue-red)); }
+
 /* ---- the bar ---------------------------------------------------------- */
 .bar {
   position: sticky; top: 0; z-index: 2;
@@ -223,33 +237,40 @@ html[data-compact] .subject { max-width: none; }
 .when { color: var(--muted); font-size: var(--s12); flex: none; font-variant-numeric: tabular-nums; }
 .older { padding: 8px 0 4px calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12); }
 
-/* A branch's name, as ISL tags a commit: small, grey, in the editor's own ink. */
+/* A branch's name, as ISL tags a commit: small, grey, in the editor's own ink; a lane's in the lane's colour. */
 .tag {
   flex: none; padding: 0 6px; border-radius: 4px;
   font-family: var(--mono); font-size: var(--s12); line-height: 1.6; color: var(--ink);
   background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
+.tag[data-hue] { color: var(--lane); background: color-mix(in srgb, var(--lane) 12%, transparent); }
+/* A merge on main, tagged with the lane it brought, in that lane's colour. */
+.tag.merged { font-weight: 600; }
+.tag.merged::before { content: "⤶ "; font-family: var(--sans); font-weight: 400; }
 
-.lane { position: relative; padding: 6px 0 20px var(--indent); border-radius: 6px; }
-/* The lane's own line, from its newest node (its uncommitted files, or its newest commit) down past its name, at its
-   base, to where it curves into main's. */
+.lane { --lane: var(--rail); position: relative; padding: 6px 0 20px var(--indent); border-radius: 6px; }
+/* The lane's own line, in its colour, from its name at the top down past its files and its commits to where it curves
+   into main's. */
 .lane::before {
-  content: ""; position: absolute; left: calc(var(--column) - 1px); top: 20px; bottom: 18px;
-  width: 2px; background: var(--rail);
+  content: ""; position: absolute; left: calc(var(--column) - 1px); top: 12px; bottom: 18px;
+  width: 2px; background: var(--lane);
 }
 .lane.adrift { padding-bottom: 10px; }
 .lane.adrift::before { bottom: 12px; }
 .lane > svg.fork { position: absolute; left: 0; bottom: 0; overflow: visible; pointer-events: none; }
-.lane > svg.fork path { stroke: var(--rail); }
-/* A lane whose agent waits on you: its line in amber, over where the editor is, and the words beside its name. */
-.lane.wants-you::before { background: var(--warn); }
-.lane.wants-you > svg.fork path { stroke: var(--warn); }
+.lane > svg.fork path { stroke: var(--lane); }
+/* A lane whose agent waits on you says so in amber beside its name (the badge below); its line keeps its colour. */
 .wants-badge { flex: none; padding: 0 8px; border-radius: 999px; font-size: var(--s11); font-weight: 600; line-height: 1.7;
   color: var(--warn); background: var(--warn-wash); }
 .wants-badge:empty { display: none; }
 .lane-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
-/* Its name at its base, under what was built on it. */
-.lane > .stack + .lane-head, .lane > .changes + .lane-head { margin-top: 4px; }
+/* Its name at the top of its line, where a branch is labelled, marked on the line. */
+.lane > .lane-head::before {
+  content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 4px); top: 9px;
+  width: 8px; height: 8px; border-radius: 2px; background: var(--lane);
+}
+.lane > .lane-head + .agents:empty + .facts:empty { margin: 0; }
+.lane > .changes, .lane > .stack { margin-top: 8px; }
 /* Its name, its state, and what can be done with it, side by side: the toolbar sits beside the state, never across the
    page from it (the owner, 2 Oct). */
 .lane-title { position: relative; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
@@ -268,7 +289,7 @@ html[data-compact] .subject { max-width: none; }
 }
 .stack-commit::before {
   content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 10px;
-  width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
+  width: 10px; height: 10px; border-radius: 50%; background: var(--lane);
 }
 .stack-more { padding: 2px 0; font-size: var(--s12); }
 
@@ -308,7 +329,8 @@ html[data-surface="sidebar"] .commit { gap: 6px; padding: 3px 0 3px calc(var(--s
 html[data-surface="sidebar"] .commit::before { left: calc(var(--spine) - 4px); top: 8px; width: 8px; height: 8px; }
 html[data-surface="sidebar"] .older, html[data-surface="sidebar"] .log > li.foot { padding-left: calc(var(--spine) + 16px); }
 html[data-surface="sidebar"] .lane { padding-top: 4px; padding-bottom: 16px; }
-html[data-surface="sidebar"] .lane::before { top: 16px; bottom: 14px; }
+html[data-surface="sidebar"] .lane::before { top: 10px; bottom: 14px; }
+html[data-surface="sidebar"] .lane > .lane-head::before { left: calc(var(--column) - var(--indent) - 3px); top: 8px; width: 6px; height: 6px; }
 html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
 html[data-surface="sidebar"] .lane-head { gap: 4px 6px; min-height: 24px; }
 html[data-surface="sidebar"] .lane-head .grow { display: none; }
@@ -609,7 +631,7 @@ html[data-compact] .details { display: none; }
 .changes { position: relative; }
 .changes::before {
   content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 4px;
-  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--warn); box-sizing: border-box;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--lane); box-sizing: border-box;
 }
 html[data-surface="sidebar"] .changes::before { left: calc(var(--column) - var(--indent) - 4px); width: 8px; height: 8px; }
 /* The main checkout's uncommitted files: a node of their own on main's line, just above the commit they were begun on. */
@@ -841,11 +863,11 @@ a.home-review-title:hover { color: var(--accent); text-decoration: underline; }
   visibility: visible !important; opacity: 1 !important; overflow: visible !important;
 }
 .leaving-shell::before, .leaving-shell::after { content: none !important; }
-.lane.working:not(.wants-you)::before, .log.working::before {
-  background: linear-gradient(to bottom, var(--rail) 0 30%, var(--accent) 50%, var(--rail) 70% 100%) 0 0 / 100% 160px repeat-y;
+.lane.working::before, .log.working::before {
+  background: linear-gradient(to bottom, var(--lane, var(--rail)) 0 30%, var(--accent) 50%, var(--lane, var(--rail)) 70% 100%) 0 0 / 100% 160px repeat-y;
   animation: flow 1.2s linear infinite;
 }
 @keyframes flow { to { background-position: 0 160px; } }
 @media (prefers-reduced-motion: reduce) {
-  .lane.working:not(.wants-you)::before, .log.working::before { animation: none; background: var(--accent); }
+  .lane.working::before, .log.working::before { animation: none; background: var(--accent); }
 }

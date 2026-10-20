@@ -28,6 +28,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { AGENT_NAMES, agentsDir, ancestry, installForUser, reportersOn } from '../lib/agents.mjs'
+import { HUES, huesOf } from '../lib/colours.mjs'
 import { createService } from '../lib/service.mjs'
 
 export const VIEW = 'lanekit.lanes'
@@ -63,9 +64,13 @@ export const STATE_WORDS = { ready: 'Ready', thinking: 'Thinking', running: 'Run
     reads no lanes) and what it is, as its terminal is named. */
 export const agentName = (agent) => `${agent.lane ?? agent.repo ?? agent.where ?? 'somewhere'} · ${AGENT_NAMES[agent.agent] ?? agent.agent}`
 
-/** A lane's colour, the same for every terminal LaneKit opens in it: from its name, so it stays put across reloads. */
-const COLOURS = ['terminal.ansiCyan', 'terminal.ansiMagenta', 'terminal.ansiYellow', 'terminal.ansiGreen', 'terminal.ansiBlue', 'terminal.ansiRed']
-export const colourOf = (name) => COLOURS[[...String(name)].reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) >>> 0, 7) % COLOURS.length]
+/** A lane's colour, the same for every terminal LaneKit opens in it and for its line on the page: from its name, so it
+    stays put across reloads, and apart from the other lanes' of its repository (`others`) where names fall together
+    (lib/colours.mjs). */
+const COLOURS = Object.fromEntries(HUES.map((hue) => [hue, `terminal.ansi${hue[0].toUpperCase()}${hue.slice(1)}`]))
+export const colourOf = (name, others = []) => COLOURS[HUES[huesOf([name, ...(Array.isArray(others) ? others : [])]).get(name)]]
+/** The other lanes of a repository, by name, as the page counts them: every lane it lists, whatever its state. */
+export const siblingsOf = (repo, name) => (repo?.lanes ?? []).map((lane) => lane.name).filter((other) => other !== name)
 
 /** The agents a lane can be started with: the command each runs as, and where its installer puts it, for one that is
     not on the PATH the editor itself was given. */
@@ -427,7 +432,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         const checkout = lane?.path ?? repo.path
         const terminal = vscode.window.createTerminal({
             name, cwd: checkout,
-            ...(lane && vscode.ThemeColor ? { color: new vscode.ThemeColor(colourOf(lane.name)) } : {}),
+            ...(lane && vscode.ThemeColor ? { color: new vscode.ThemeColor(colourOf(lane.name, siblingsOf(repo, lane.name))) } : {}),
             ...(vscode.ThemeIcon ? { iconPath: new vscode.ThemeIcon(agent ? 'sparkle' : lane ? 'git-branch' : 'terminal') } : {})
         })
         opened.set(terminal, { checkout, name, agent })
@@ -572,7 +577,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         if (session) {
             const again = vscode.window.createTerminal({
                 name: agentName(agent), ...(agent.cwd ? { cwd: agent.cwd } : {}),
-                ...(agent.lane && vscode.ThemeColor ? { color: new vscode.ThemeColor(colourOf(agent.lane)) } : {}),
+                ...(agent.lane && vscode.ThemeColor ? { color: new vscode.ThemeColor(colourOf(agent.lane, siblingsOf(service.known().repos.find((candidate) => candidate.id === agent.repo), agent.lane))) } : {}),
                 ...(vscode.ThemeIcon ? { iconPath: new vscode.ThemeIcon('sparkle') } : {})
             })
             again.sendText([tmuxPath(), '-S', agent.tmux.socket, 'attach-session', '-t', `=${session}`].map(word).join(' '))

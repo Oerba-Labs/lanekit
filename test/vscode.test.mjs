@@ -18,7 +18,10 @@ import path from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { agentsDir } from '../lib/agents.mjs'
-import { activate, colourOf, pageHtml, SCHEME, wordOf } from '../vscode/host.mjs'
+import { activate, colourOf, pageHtml, siblingsOf, SCHEME, wordOf } from '../vscode/host.mjs'
+
+/** A lane's colour as its terminals wear it: apart from the other lanes' of the repository, as the page draws it. */
+const laneColour = (name) => colourOf(name, siblingsOf(host.service.known().repos.find((candidate) => !candidate.error), name))
 import { build } from '../vscode/pack.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
@@ -735,7 +738,7 @@ test('a lane\'s terminal types nothing into one running something, or one it can
     const lanes = editor.seen.made.at(-1)
     assert.equal(lanes.creationOptions.cwd, working)
     assert.equal(lanes.name, 'working')
-    assert.equal(lanes.creationOptions.color.id, colourOf('working'), 'in the lane\'s colour')
+    assert.equal(lanes.creationOptions.color.id, laneColour('working'), 'in the lane\'s colour')
     assert.equal(lanes.creationOptions.iconPath.id, 'git-branch')
     assert.deepEqual(lanes.shown, { preserveFocus: false }, 'shown, with the focus')
     // Once one is there, it comes forward rather than another.
@@ -788,7 +791,7 @@ test('Start agent opens a terminal named for the lane and the agent, in the lane
     const claude = editor.seen.made.at(-1)
     assert.equal(claude.name, 'working · Claude')
     assert.equal(claude.creationOptions.cwd, working)
-    assert.equal(claude.creationOptions.color.id, colourOf('working'))
+    assert.equal(claude.creationOptions.color.id, laneColour('working'))
     assert.equal(claude.creationOptions.iconPath.id, 'sparkle')
     assert.deepEqual(claude.typed, ['claude -n working'], 'typed into its shell, the session named for the lane')
     assert.deepEqual(claude.shown, { preserveFocus: false }, 'in front, with the focus, to be typed to')
@@ -823,6 +826,11 @@ test('every lane keeps one colour, from the terminal palette', () => {
     assert.equal(colourOf('midi-export'), colourOf('midi-export'))
     assert.match(colourOf('dark-mode'), /^terminal\.ansi[A-Z][a-z]+$/)
     assert.ok(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(colourOf)).size > 1, 'lanes do not all share one')
+    // Two lanes of one repository whose names fall on one colour: the first by name keeps it, the other takes the next.
+    const names = Array.from({ length: 60 }, (_, i) => `lane-${i}`)
+    const twin = names.find((a) => names.some((b) => a !== b && colourOf(a) === colourOf(b)))
+    const other = names.find((b) => b !== twin && colourOf(b) === colourOf(twin))
+    assert.notEqual(colourOf(twin, [other]), colourOf(other, [twin]), 'apart, as the page draws them')
 })
 
 test('a tab is titled with the repository its page shows, and LaneKit while it shows every one', async () => {
@@ -1041,7 +1049,7 @@ test('in tmux, an agent starts in a session of its own, and a click finds the te
     assert.equal(editor.seen.terminals.length, before + 1)
     const again = editor.seen.made.at(-1)
     assert.equal(again.name, 'working · Claude')
-    assert.equal(again.creationOptions.color.id, colourOf('working'))
+    assert.equal(again.creationOptions.color.id, laneColour('working'))
     assert.deepEqual(again.typed, [`'${FAKE_TMUX}' '-S' '/tmp/tmux-501/default' 'attach-session' '-t' '=lk-demo-working-claude-2'`])
     assert.deepEqual(again.shown, { preserveFocus: false })
 

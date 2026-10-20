@@ -72,6 +72,30 @@ const state = (tone, word, extra = '') => el('span', { class: `state ${tone} ${e
 // Only an address that is plainly a web page becomes a link; anything else stays words.
 const safeHref = (url) => (typeof url === 'string' && /^https:\/\//.test(url) ? url : null)
 
+/**
+ * A lane's colour, one of six, the terminal palette's: from its name, apart from the other lanes' of its repository
+ * where names fall together. A copy of lib/colours.mjs, word for word, which test/page.test.mjs holds to it: the page
+ * is a script of its own, and the editor's terminals use the same rule, so a lane's line and its terminals agree.
+ */
+const HUES = ['cyan', 'magenta', 'yellow', 'green', 'blue', 'red']
+const hueOf = (name) => [...String(name)].reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) >>> 0, 7) % HUES.length
+const huesOf = (names) => {
+    const hues = new Map()
+    const taken = new Set()
+    for (const name of [...new Set(names)].sort()) {
+        const wanted = hueOf(name)
+        let hue = wanted
+        for (let step = 1; step < HUES.length && taken.has(hue); step++) hue = (wanted + step) % HUES.length
+        if (taken.has(hue)) hue = wanted
+        hues.set(name, hue)
+        taken.add(hue)
+    }
+    return hues
+}
+/** Each repository's lanes' colours, as of the last drawing: a landed lane's too, so a merge keeps the colour it wore. */
+const huesByRepo = new Map()
+const hueName = (repo, name) => HUES[huesByRepo.get(repo.id)?.get(name) ?? hueOf(name)]
+
 /** A path said from home, where the server said where home is (~/code/piano-sheets); the whole of it is for a title.
     Plain data in and out, so lanekit's tests run it as it is written here (test/page.test.mjs). */
 const fromHome = (file, home) => {
@@ -948,7 +972,7 @@ document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && 
 
 /** A lane's name; in the editor a click on it is its terminal, the thing most often done with a lane (the owner, 1 Oct). */
 const laneName = (repo, lane) => {
-    const name = el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) })
+    const name = el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name, title: portOf(lane) })
     if (!host.inEditor || !lane.exists) return name
     return opens(name, `${portOf(lane)}. Click for its terminal: your terminal moves to ${lane.name}, and the files you have open reopen from it`,
         () => openIn('goto', { repo: repo.path, lane: lane.name }))
@@ -1221,6 +1245,12 @@ const listenForDrops = (log) => {
     })
 }
 
+/** A merge on main, tagged with the lane it brought, in that lane's colour: the words git gives a merge name it. */
+const mergedTag = (repo, commit) => {
+    const name = /^Merge branch '([^']+)'/.exec(commit.subject ?? '')?.[1]
+    return name ? el('span', { class: 'tag merged', 'data-hue': hueName(repo, name), text: name, title: `Landed from ${name}` }) : null
+}
+
 /** What a commit is, for its title: the words, who, when, and the hash the log no longer prints. */
 const aboutCommit = (commit) => `${commit.subject}\n${commit.short} · ${commit.author} · ${exactly(commit.at)}`
 
@@ -1233,6 +1263,7 @@ const commitRow = (repo, commit, className, label) => {
         remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch`, 'data-anim': `${repo.id}:tag:${remote}` }) : null,
         isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
             el('span', { class: 'subject', text: commit.subject }),
+            mergedTag(repo, commit),
             el('span', { class: 'when', text: short(commit.at), title: exactly(commit.at) }),
             rowActions(repo, commit)
         ])
@@ -2077,10 +2108,11 @@ const forkCurve = () => {
     return svg
 }
 
-/** A lane as ISL draws a stack, built up from where it forked: its uncommitted files on top, its commits newest first
-    under them, and its name at its base, with its state and what can be done with it beside it (the owner, 2 Oct), on a
-    line of its own that curves into main's at the commit it forked from. `forked` is false for a lane drawn apart,
-    below main's log, whose fork is further back than the log goes. */
+/** A lane as a branch is drawn, from its name down, in a colour of its own: its name at the top of its line, with its
+    state and what can be done with it beside it (the owner, 2 Oct: beside, never across the page; 19 Oct: at the top,
+    as SourceTree and ISL label a branch, in its colour), then its uncommitted files, then its commits newest first,
+    on a line of its own that curves into main's at the commit it forked from. `forked` is false for a lane drawn
+    apart, below main's log, whose fork is further back than the log goes. */
 const laneCard = (repo, lane, forked = true) => {
     const key = `${repo.id}/${lane.name}`
     const step = prStepOf(repo, lane)
@@ -2337,12 +2369,10 @@ const laneCard = (repo, lane, forked = true) => {
     const underway = Boolean(lane.pending || runningIn(repo, lane))
     const card = el('li', {
         class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${underway ? ' working' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
-        'data-key': key, tabindex: '0', draggable: draggable ? 'true' : null,
+        'data-key': key, 'data-hue': hueName(repo, lane.name), tabindex: '0', draggable: draggable ? 'true' : null,
         title: draggable ? 'Drag it onto a commit of main to rebase it there' : null,
         'data-anim': key, 'data-anim-kids': true
     },
-        changes,
-        stackList,
         el('div', { class: 'lane-head' },
             // Its name, its state, and beside them, never across the page from them, what can be done with it.
             el('div', { class: 'lane-title' },
@@ -2372,6 +2402,8 @@ const laneCard = (repo, lane, forked = true) => {
                         onclick: () => press({ repo: repo.id, verb: 'resolve', lane: lane.name, paths: [file] })
                     }, icon('check'), el('span', { text: 'Resolved' }))))))
             : null,
+        changes,
+        stackList,
         forked ? forkCurve() : null)
     if (draggable) {
         card.addEventListener('dragstart', (event) => {
@@ -2394,7 +2426,7 @@ const landedRow = (repo, lane) => {
     // Landed, and something begun in it since: moved to a lane of its own, after which this one sweeps as usual.
     const carries = lane.kind === 'landed' && lane.dirty > 0 && lane.exists && !lane.operation
     return el('li', { 'data-key': key, tabindex: '0', 'data-anim': `${key}:finished`, 'data-anim-kids': true },
-        el('span', { class: 'lane-name', text: lane.name }),
+        el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name }),
         keyed(state(tone, word), `${key}:finished-state`, `${tone} ${word}`),
         detail ? el('span', { class: 'muted', text: detail }) : null,
         carries ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
@@ -2817,7 +2849,7 @@ const asideRow = (repo, lane) => {
     const key = `${repo.id}/${lane.name}`
     const busy = busyIn(repo.id) || Boolean(lane.pending)
     return el('li', { 'data-key': key, tabindex: '0', 'data-anim': `${key}:aside`, 'data-anim-kids': true },
-        el('span', { class: 'tag lane-name', text: lane.name, title: portOf(lane) }),
+        el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name, title: portOf(lane) }),
         el('span', { class: 'muted', text: [lane.ahead ? plural(lane.ahead, 'commit') : 'nothing committed', lane.dirty ? `${lane.dirty} uncommitted` : null,
             lane.aside ? `set aside ${ago(Date.parse(lane.aside))}` : null, lane.quiet ? `quiet for ${quietFor(lane.quietDays)}` : null].filter(Boolean).join(' · ') }),
         el('span', { class: 'grow' }),
@@ -3186,6 +3218,7 @@ const drawPage = () => {
     const empty = $('empty')
     if (empty) empty.remove()
     shown.forEach((repo, index) => {
+        huesByRepo.set(repo.id, huesOf((repo.error ? [] : repo.lanes).map((lane) => lane.name)))
         const kept = sectionFor(repo)
         kept.head.replaceChildren(...headOf(repo))
         kept.queue.replaceChildren(...queueOf(repo))
