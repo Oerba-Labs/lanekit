@@ -29,6 +29,9 @@ const env = {
     LANEKIT_PORTS: ''
 }
 delete env.LAB_RESULTS
+// And from this process's own: the services made below spawn their gates with it, and a gate of lanekit itself runs these
+// tests with LAB_RESULTS set to its own folder, where the fixtures would then land, counted as lanekit's tests.
+delete process.env.LAB_RESULTS
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 // eslint-disable-next-line no-control-regex
 const plain = (text) => text.replace(/\x1b\[[0-9;]*m/g, '')
