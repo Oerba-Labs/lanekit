@@ -674,7 +674,8 @@ test('a window narrower than 760px lays the page out as the side bar does: the n
             const row = card('feature').querySelector('.stack .selected').getBoundingClientRect()
             return { below: inline.getBoundingClientRect().top - row.bottom, pane: document.getElementById('details').hidden }
         }), [], { what: 'the details under the row' })
-        assert.ok(placed.below >= 0 && placed.below < 40, `right under its row: ${JSON.stringify(placed)}`)
+        // Within a few pixels: CI's Mac lays the box 2px into the row's own padding.
+        assert.ok(placed.below > -6 && placed.below < 40, `right under its row: ${JSON.stringify(placed)}`)
         assert.equal(placed.pane, true, 'the pane beside the log stays hidden')
         // Widened past the line, the same page goes back to the toolbar beside the name and the pane beside the log.
         await narrow.resize(1200, 900)
