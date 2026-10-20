@@ -317,7 +317,7 @@ The page in the picture above, for every repository in a folder:
   behind), **Push** (one with commits origin lacks), **Pull** (one whose copy on origin has commits
   somebody else pushed: a colleague, GitHub's *Update branch*, a suggestion from review), **Pull
   request** (one pushed without one), **Pull** for main (main behind origin), **Push** for main (main
-  ahead of origin) and **Fetch**. A button is drawn even while what it needs is not there yet, held,
+  ahead of origin) and **Fetch**, an icon the size of the terminal's beside it. A button is drawn even while what it needs is not there yet, held,
   with what it waits for as its title: **Gate** until the lane has a commit and nothing uncommitted,
   **Land** until it is gated green on its newest commit and first among those it collides with, and
   both of Land and Pull while main's checkout is on another branch, part-way through something, or

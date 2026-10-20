@@ -2473,11 +2473,12 @@ const headOf = (repo) => {
             keyed(pullButton(repo), `${repo.id}:pull`, true),
             keyed(pushMainButton(repo), `${repo.id}:push-main`, true),
             terminalButton(repo, null),
+            // An icon, as the terminal's beside it is, and the same size: its word is its name and heads its title.
             iconButton('fetch', 'Fetch', {
                 disabled: busyIn(repo.id),
-                title: 'git fetch --prune: what is pushed, and what others pushed',
+                title: 'Fetch: git fetch --prune, what is pushed, and what others pushed',
                 onclick: () => press({ repo: repo.id, verb: 'fetch' })
-            }))))
+            }, true))))
     if (repo.error) {
         parts.push(el('div', { class: 'facts' }, state('risk', repo.error, 'small')))
         return parts
