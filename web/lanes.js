@@ -531,8 +531,20 @@ let lastDrawn = ''
 let lastDrawnAt = 0
 /** Keep a part of what this page remembers across a reload of its tab: the editor keeps one value for the whole page. */
 const keep = (part) => host.remember({ ...(host.recall() ?? {}), ...part })
-// `${repo}/${lane}` showing every commit, `…:changes` every uncommitted file; never a lane's ⋯ menu left open by a page before.
-const expanded = new Set((host.recall()?.expanded ?? []).filter((key) => !key.endsWith(':more') && !key.endsWith(':files')))
+// `${repo}/${lane}` showing every commit, `…:changes` every uncommitted file; never a lane's ⋯ menu, nor a repository's
+// agents, left open by a page before.
+const expanded = new Set((host.recall()?.expanded ?? []).filter((key) => !key.endsWith(':more') && !key.endsWith(':agents') && !key.endsWith(':files')))
+// Which of its views each repository shows, by its id: its log (the default), or its landing order laid out whole.
+const views = new Map(Object.entries(host.recall()?.views ?? {}))
+const viewIn = (repoId) => (views.get(repoId) === 'landing' ? 'landing' : 'log')
+const showView = (repoId, view) => {
+    if (viewIn(repoId) === view) return
+    views.set(repoId, view)
+    keep({ views: Object.fromEntries(views) })
+    // A commit chosen in a log no longer drawn goes with it.
+    if (view === 'landing' && selected?.repo === repoId) selected = null
+    draw(true)
+}
 // `${repo}/${lane}` folded to its name row: its files, commits and facts kept out of the way until it is unfolded.
 const folded = new Set(host.recall()?.folded ?? [])
 const toggleFold = (key) => {
@@ -947,13 +959,13 @@ const AGENT_STATES = { ready: ['quiet', 'Ready'], thinking: ['info', 'Thinking']
 const agentsOf = (repoId, laneName) => (current?.agents ?? []).filter((agent) => agent.repo === repoId && agent.lane === laneName)
 
 /** One agent: its name, its state (the tool it runs or asks for beside it), since when; in the editor, a click for its terminal. */
-const agentChip = (repo, agent) => {
+const agentChip = (repo, agent, scope = '') => {
     const [tone, word] = AGENT_STATES[agent.state] ?? ['quiet', agent.state]
     const name = AGENT_NAMES[agent.agent] ?? agent.agent
     const busy = agent.state === 'thinking' || agent.state === 'running'
     const chip = el('span', {
         class: `agent-chip${busy ? ' busy' : ''}${agent.state === 'needs-you' ? ' needs-you' : ''}`,
-        'data-anim': `agent:${agent.key}`, 'data-sig': `${agent.state} ${agent.tool ?? ''}`
+        'data-anim': `${scope}agent:${agent.key}`, 'data-sig': `${agent.state} ${agent.tool ?? ''}`
     },
         icon('agent'),
         el('span', { class: 'agent-name', text: name }),
@@ -974,9 +986,10 @@ const wantsWords = (repoId, laneName) => {
 }
 const wantsBadge = (repoId, laneName) => el('span', { class: 'wants-badge', 'data-wants': `${repoId}/${laneName}`, text: wantsWords(repoId, laneName) })
 
-/** Every lane's ⋯ menu closed; whether one was open. A click anywhere else, or Escape, closes them. */
+/** Every lane's ⋯ menu, and every repository's agents, closed; whether one was open. A click anywhere else, or
+    Escape, closes them. */
 const closeMenus = () => {
-    const open = [...expanded].filter((key) => key.endsWith(':more'))
+    const open = [...expanded].filter((key) => key.endsWith(':more') || key.endsWith(':agents'))
     for (const key of open) expanded.delete(key)
     if (open.length) host.remember({ expanded: [...expanded] })
     return open.length > 0
@@ -993,10 +1006,76 @@ const laneName = (repo, lane) => {
         () => openIn('goto', { repo: repo.path, lane: lane.name }))
 }
 
-/** A lane's agents (or the main checkout's, with no lane), on a line of their own: there and empty when there are none,
-    so the next word from an agent is drawn into it. */
-const agentsRow = (repo, laneName) => el('div', { class: 'agents', 'data-agents': `${repo.id}/${laneName ?? ''}` },
-    agentsOf(repo.id, laneName).map((agent) => agentChip(repo, agent)))
+/** A lane's agents, on a line of their own: there and empty when there are none, so the next word from an agent is
+    drawn into it. `scope` keys its chips apart from the same agents' chips drawn elsewhere on the page (the landing
+    view's, beside the log's kept out of sight), so neither is taken for the other as it moves. */
+const agentsRow = (repo, laneName, scope = '') => el('div', { class: 'agents', 'data-agents': `${repo.id}/${laneName ?? ''}`, 'data-agents-scope': scope || null },
+    agentsOf(repo.id, laneName).map((agent) => agentChip(repo, agent, scope)))
+
+/**
+ * A repository's agents in the groups its agents menu lists them by: those that need you (or failed) first, then those
+ * at work, then those idle, each group's longest-waiting first, and a group with nobody in it left out. Plain data in
+ * and out, so lanekit's tests run it as it is written here (test/tidy.test.mjs).
+ */
+const AGENT_GROUPS = [['needs', 'Needs you', ['needs-you', 'failed']], ['working', 'At work', ['thinking', 'running']], ['idle', 'Idle', ['ready', 'done']]]
+const agentGroupsOf = (agents) => AGENT_GROUPS
+    .map(([id, label, states]) => ({ id, label, agents: agents.filter((agent) => states.includes(agent.state)).sort((a, b) => (a.since ?? 0) - (b.since ?? 0)) }))
+    .filter((group) => group.agents.length)
+
+/** One agent in its repository's menu: who, where it works, what it is doing, since when, and its session, which is
+    what tells two agents in the main checkout apart. A press is its terminal in the editor, else its lane. */
+const agentMenuRow = (repo, agent) => {
+    const [tone, word] = AGENT_STATES[agent.state] ?? ['quiet', agent.state]
+    const name = AGENT_NAMES[agent.agent] ?? agent.agent
+    const where = agent.lane ?? 'the main checkout'
+    const about = `${name} in ${where}: ${word.toLowerCase()}${agent.tool ? ` (${agent.tool})` : ''} since ${exactly(agent.since)}${agent.session ? `\nSession ${agent.session}` : ''}`
+    const go = host.inEditor ? () => openIn('agent-terminal', { repo: repo.path, key: agent.key })
+        : agent.lane ? () => { closeMenus(); draw(true); focusLane(repo.id, agent.lane) } : null
+    return el('button', {
+        type: 'button', class: `agent-row${agent.state === 'needs-you' ? ' needs-you' : ''}`, role: 'menuitem', disabled: !go,
+        title: `${about}${host.inEditor ? '\nClick for its terminal' : agent.lane ? `\nClick for ${agent.lane}` : ''}`,
+        'data-anim': `menu:${agent.key}`, 'data-sig': `${agent.state} ${agent.tool ?? ''}`, onclick: go ?? undefined
+    },
+    el('span', { class: 'agent-name', text: name }),
+    agent.lane ? el('span', { class: 'agent-where tag lane-name', 'data-hue': hueName(repo, agent.lane), text: agent.lane })
+        : el('span', { class: 'agent-where muted', text: 'main checkout' }),
+    state(tone, agent.tool && (agent.state === 'running' || agent.state === 'needs-you') ? `${word} · ${agent.tool}` : word, `small${agent.state === 'thinking' || agent.state === 'running' ? ' busy' : ''}`),
+    el('span', { class: 'when', text: short(agent.since) }),
+    el('span', { class: 'agent-session mono', text: agent.session ? agent.session.slice(0, 8) : '' }))
+}
+
+/**
+ * A repository's agents, in a menu at its head rather than a row of chips: one button saying how many there are and
+ * how many need you, which opens every one of them, wherever each works. Nothing while none is at work (the owner,
+ * 20 Oct: agents side by side said too little and took the room).
+ */
+const agentsMenu = (repo) => {
+    const theirs = (current?.agents ?? []).filter((agent) => agent.repo === repo.id)
+    const wrap = el('div', { class: 'more-wrap agents-menu', 'data-agents-menu': repo.id })
+    if (!theirs.length) return wrap
+    const key = `${repo.id}:agents`
+    const open = expanded.has(key)
+    const needs = theirs.filter((agent) => agent.state === 'needs-you').length
+    const busy = theirs.some((agent) => agent.state === 'thinking' || agent.state === 'running')
+    wrap.append(el('button', {
+        type: 'button', class: `btn agents-toggle${needs ? ' needs-you' : ''}${busy ? ' busy' : ''}`, 'data-key': key,
+        'aria-expanded': String(open), 'aria-haspopup': 'menu',
+        title: `Every agent at work in ${repo.name ?? repo.id}, wherever each works`,
+        onclick: () => { const was = expanded.has(key); closeMenus(); if (!was) expanded.add(key); draw(true) }
+    },
+    icon('agent'),
+    el('span', { class: 'label', text: plural(theirs.length, 'agent') }),
+    needs ? el('span', { class: 'agents-needs', text: `${needs} ${needs === 1 ? 'needs' : 'need'} you` }) : null,
+    el('span', { class: 'caret', 'aria-hidden': 'true', text: '▾' })))
+    if (open) {
+        wrap.append(el('div', { class: 'more-menu agents-panel', role: 'menu', 'aria-label': `Agents in ${repo.name ?? repo.id}` },
+            agentGroupsOf(theirs).map((group) => [
+                el('p', { class: 'agents-group', text: `${group.label} · ${group.agents.length}` }),
+                group.agents.map((agent) => agentMenuRow(repo, agent))
+            ])))
+    }
+    return wrap
+}
 
 /** The agents alone, drawn again where they are: they change every few seconds while one works, and a whole page
     drawn again under a pointer loses a click. */
@@ -1005,7 +1084,16 @@ const redrawAgents = () => {
     for (const row of document.querySelectorAll('.agents[data-agents]')) {
         const at = row.dataset.agents.indexOf('/')
         const repo = current?.repos.find((candidate) => candidate.id === row.dataset.agents.slice(0, at))
-        if (repo) row.replaceChildren(...agentsOf(repo.id, row.dataset.agents.slice(at + 1) || null).map((agent) => agentChip(repo, agent)))
+        if (repo) row.replaceChildren(...agentsOf(repo.id, row.dataset.agents.slice(at + 1) || null).map((agent) => agentChip(repo, agent, row.dataset.agentsScope ?? '')))
+    }
+    for (const menu of document.querySelectorAll('[data-agents-menu]')) {
+        const repo = current?.repos.find((candidate) => candidate.id === menu.dataset.agentsMenu)
+        if (!repo) continue
+        // The keyboard stays on its button as it is drawn again.
+        const focused = menu.contains(document.activeElement)
+        const again = agentsMenu(repo)
+        menu.replaceWith(again)
+        if (focused) again.querySelector('.agents-toggle')?.focus({ preventScroll: true })
     }
     for (const badge of document.querySelectorAll('.wants-badge[data-wants]')) {
         const at = badge.dataset.wants.indexOf('/')
@@ -2536,6 +2624,7 @@ const headOf = (repo) => {
         el('span', { class: 'repo-sub mono', text: fromHome(repo.path, current?.home), title: repo.path }),
         el('span', { class: 'grow' }),
         repo.error ? null : el('div', { class: 'actions' },
+            agentsMenu(repo),
             shownRepos().length > 1 ? iconButton('tab', 'A tab of its own', {
                 title: `${repo.name ?? repo.id} in a ${host.inEditor ? 'LaneKit' : 'browser'} tab of its own (a Cmd- or Ctrl-click on its name in the switcher does the same)`,
                 onclick: () => openOwnTab(repo.id)
@@ -2593,8 +2682,6 @@ const headOf = (repo) => {
     // Read further back than main's newest: said here too, with the way back, so it is not only at the foot of a long log.
     if (repo.spineDeeper) facts.push(el('span', { class: 'deeper' }, `${shownOf(repo, true) ?? `${repo.spine.length} of ${base}'s commits shown`} · `, newestButton(repo, 'newest-top')))
     parts.push(el('div', { class: 'facts' }, facts))
-    // Agents at work in the main checkout itself, on a line of their own as a lane's are.
-    parts.push(agentsRow(repo, null))
     return parts
 }
 
@@ -2840,6 +2927,105 @@ const queueOf = (repo) => {
             class: 'btn primary', disabled: busy, title: `Merge #${next.pull.number} on GitHub: it is approved, and first among any it collides with`,
             onclick: () => { pending.set(`${repo.id}/${next.name}`, { verb: 'merge', stage: 'confirm' }); draw(true); focusLane(repo.id, next.name) }
         }) : null)]
+}
+
+/** A repository's two views, as tabs at the head of its landing order: its log, and the landing order laid out whole. */
+const viewTabs = (repo) => {
+    if (repo.error) return []
+    const view = viewIn(repo.id)
+    const count = landingGroupsOf(repo.lanes).reduce((sum, group) => sum + group.lanes.length, 0)
+    const tab = (id, label, title, n = null) => el('button', {
+        type: 'button', role: 'tab', class: 'view-tab', 'data-key': `${repo.id}:view:${id}`, 'aria-selected': String(view === id), title,
+        onclick: () => showView(repo.id, id)
+    }, el('span', { text: label }), n === null ? null : el('span', { class: 'n', text: String(n), 'data-anim': `${repo.id}:view-count`, 'data-sig': n }))
+    return [el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show` },
+        tab('log', 'Log', `${repo.integrationBranch}'s line, with each lane on it`),
+        tab('landing', 'Landing', 'The landing order laid out whole: what each lane needs, its verification, what it changes and collides with, its pull request and its agents', count))]
+}
+
+/** The one thing to do next for a lane in the landing order, pressed from its row: done in the log, where the lane's
+    question is asked, so the log is shown and the lane brought into view. */
+const landingStep = (repo, lane) => {
+    const key = `${repo.id}/${lane.name}`
+    const busy = busyIn(repo.id) || Boolean(lane.pending)
+    const inLog = (then = null) => () => { showView(repo.id, 'log'); then?.(); focusLane(repo.id, lane.name) }
+    const ask = (verb) => inLog(() => { pending.set(key, { verb, stage: 'confirm' }); draw(true) })
+    const show = () => el('button', { type: 'button', class: 'btn link', text: 'Show', title: `${lane.name} in the log`, onclick: inLog() })
+    if (lane.pending || lane.operation || prStepOf(repo, lane)?.next) return show()
+    switch (lane.queue?.verdict) {
+        case 'land now': {
+            if (byPullRequest(repo) || lane.review) return show()
+            const block = landBlockOf(repo, lane)
+            return iconButton('land', 'Land…', { class: `btn${block ? '' : ' primary'}`, disabled: busy || Boolean(block), title: block ?? `Check that ${lane.name} can land, then ask, in the log`, onclick: inLog(() => check(repo, lane, 'land')) })
+        }
+        case 'gate now': {
+            const block = gateBlockOf(lane)
+            return iconButton('gate', 'Verify…', { class: `btn${block ? '' : ' primary'}`, disabled: busy || Boolean(block), title: block ?? 'Rebase onto the integration branch, run the tier this lane earns, and record the result: asked in the log', onclick: ask('gate') })
+        }
+        case 'commit first':
+            return iconButton('plus', 'Commit…', { class: 'btn', disabled: busy, title: `Commit what is uncommitted in ${lane.name}, in the details beside the log`, onclick: inLog(() => select({ repo: repo.id, lane: lane.name, form: 'commit' })) })
+        case 'rebase first':
+            return iconButton('rebase', 'Rebase…', { class: 'btn', disabled: busy || lane.dirty > 0, title: lane.dirty ? 'Commit first: a rebase replays commits, and uncommitted changes are in none' : `Replay it on ${repo.integrationBranch} as it is now: asked in the log`, onclick: ask('rebase') })
+        default: return show()
+    }
+}
+
+/** A lane's row in the landing view: what it needs and why, its verification, what it changes, what it collides with
+    and on which files, its pull request, its agents, and its next step. */
+const landingRow = (repo, lane, item = null) => {
+    const step = prStepOf(repo, lane)
+    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(lane)
+    const why = item?.after?.length ? `After ${item.after.join(' and ')}: they change the same files` : item?.days ? `Quiet for ${quietFor(item.days)}` : detail
+    const files = lane.queue?.files ?? []
+    const changes = [
+        lane.ahead ? el('span', { text: plural(lane.ahead, 'commit') }) : null,
+        files.length ? el('span', { text: plural(files.length, 'file'), title: files.slice(0, 20).join('\n') + (files.length > 20 ? `\nand ${files.length - 20} more` : '') }) : null,
+        lane.dirty ? state('warn', `${lane.dirty} uncommitted`, 'small') : null,
+        lane.behind ? el('span', { class: 'muted', text: `${lane.behind} behind ${repo.integrationBranch}` }) : null
+    ].filter(Boolean)
+    const collisions = lane.queue?.collisions ?? []
+    const cell = (label, ...children) => el('td', { 'data-label': label }, ...children)
+    const none = () => el('span', { class: 'muted', text: '—' })
+    const name = el('button', { type: 'button', class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name, title: `${portOf(lane)}\nShow it in the log`, onclick: () => { showView(repo.id, 'log'); focusLane(repo.id, lane.name) } })
+    return el('tr', { class: 'landing-lane', 'data-landing': `${repo.id}/${lane.name}`, 'data-anim': `${repo.id}:landing-lane:${lane.name}`, 'data-anim-kids': true },
+        el('th', { scope: 'row', 'data-label': 'Lane' }, name, wantsBadge(repo.id, lane.name)),
+        cell('Needs', state(tone, word, 'small'), why ? el('div', { class: 'landing-why', text: why }) : null),
+        cell('Verified', gateOf(lane) ?? el('span', { class: 'muted', text: 'Not yet' })),
+        cell('Changes', changes.length ? changes.map((part) => el('div', {}, part)) : none()),
+        cell('Collides with', collisions.length ? collisions.map((collision) => el('div', { class: 'landing-collision', title: `${lane.name} and ${collision.lane} both change:\n${collision.paths.join('\n')}` },
+            el('span', { class: 'queue-name', 'data-hue': hueName(repo, collision.lane), text: collision.lane }),
+            el('span', { class: 'landing-paths mono', text: `${collision.paths.slice(0, 2).join(', ')}${collision.paths.length > 2 ? ` +${collision.paths.length - 2}` : ''}` }))) : none()),
+        cell('Pull request', lane.pull ? el('div', {}, pullOf(lane)) : null, el('div', { class: 'muted' }, pushedOf(lane))),
+        cell('Agents', agentsRow(repo, lane.name, 'landing:')),
+        el('td', { class: 'landing-step' }, landingStep(repo, lane)))
+}
+
+/**
+ * The landing order laid out whole, in a view of its own (the owner, 20 Oct: the one line at the head of the log left
+ * too little room to read it by): a table of every lane, in the landing order's groups and order, each with what it
+ * needs, why, and the one thing to do next; the lanes with nothing in the order yet last. In a narrow column each row
+ * is a card.
+ */
+const landingOf = (repo) => {
+    if (repo.error) return []
+    const groups = landingGroupsOf(repo.lanes)
+    const live = liveLanes(repo)
+    const queued = new Set(groups.flatMap((group) => group.lanes.map((item) => item.name)))
+    const rest = live.filter((lane) => !queued.has(lane.name))
+    if (!groups.length && !rest.length) return [el('p', { class: 'muted landing-empty', text: 'No lanes yet: a new lane is made from a commit in the log.' })]
+    const laneOf = (name) => repo.lanes.find((lane) => lane.name === name)
+    const head = (verdict, label, count) => el('tr', { class: 'landing-group-head' },
+        el('th', { colspan: 8, scope: 'colgroup' },
+            el('span', { class: `queue-dot ${VERDICT_TONES[verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
+            el('span', { text: label }), el('span', { class: 'n', text: String(count) })))
+    return [el('table', { class: 'landing-table' },
+        el('thead', {}, el('tr', {}, ['Lane', 'Needs', 'Verified', 'Changes', 'Collides with', 'Pull request', 'Agents', ''].map((text) => el('th', { scope: 'col', text })))),
+        groups.map((group) => el('tbody', { 'data-anim': `${repo.id}:landing:${group.verdict}` },
+            head(group.verdict, group.label, group.lanes.length),
+            group.lanes.map((item) => laneOf(item.name) ? landingRow(repo, laneOf(item.name), item) : null))),
+        rest.length ? el('tbody', { 'data-anim': `${repo.id}:landing:rest` },
+            head('empty', 'Not in the order yet', rest.length),
+            rest.map((lane) => landingRow(repo, lane))) : null)]
 }
 
 // A collision drawn: a bracket in the log's right margin from one lane's card to the other's.
@@ -3210,10 +3396,11 @@ const sectionFor = (repo) => {
         root: el('section', { class: 'repo' }),
         head: el('div', part('head')),
         queue: el('div', { class: 'queue-row', ...part('queue') }),
+        landing: el('div', { class: 'landing', ...part('landing') }),
         log: (() => { const log = el('ol', { class: 'log', 'data-anim-scope': `${repo.id}:log`, 'data-anim-kids': true }); listenForDrops(log); return log })(),
         settled: el('div', part('settled'))
     }
-    kept.root.append(kept.head, kept.queue, kept.log, kept.settled)
+    kept.root.append(kept.head, kept.queue, kept.landing, kept.log, kept.settled)
     sections.set(repo.id, kept)
     return kept
 }
@@ -3290,7 +3477,14 @@ const drawPage = () => {
     shown.forEach((repo, index) => {
         const kept = sectionFor(repo)
         kept.head.replaceChildren(...headOf(repo))
-        kept.queue.replaceChildren(...queueOf(repo))
+        // The log, or the landing order laid out whole: the log is drawn either way, kept out of sight, so it comes
+        // back as it was and nothing in it fades in again.
+        const landing = viewIn(repo.id) === 'landing'
+        kept.queue.replaceChildren(...viewTabs(repo), ...(landing ? [] : queueOf(repo)))
+        kept.landing.hidden = !landing
+        kept.landing.replaceChildren(...(landing ? landingOf(repo) : []))
+        kept.log.hidden = landing
+        kept.settled.hidden = landing
         kept.log.replaceChildren(...logOf(viewOf(repo)))
         // Main pulled, fetched or pushed: a light runs down its line, as down a lane's while something runs in it.
         kept.log.classList.toggle('working', (current.jobs ?? []).some((job) => job.state === 'running' && job.repo === repo.id && !job.lane))
@@ -3343,7 +3537,8 @@ document.body.append(keysPanel)
 const toggleKeys = (show = keysPanel.hidden) => { if (show) motion.appear(keysPanel, 0, -6); else motion.disappear(keysPanel, 0, -6) }
 $('updated').before(el('button', { type: 'button', class: 'btn link keys-toggle', text: 'Keys', title: 'What the keyboard does here (?)', onclick: () => toggleKeys() }))
 
-const laneCards = () => [...document.querySelectorAll('li[data-key][tabindex]')]
+// Those in sight: a log behind the landing view is kept, hidden, and its lanes are not stepped through.
+const laneCards = () => [...document.querySelectorAll('li[data-key][tabindex]')].filter((node) => !node.closest('[hidden]'))
 const laneInFocus = () => {
     const node = document.activeElement?.closest?.('li[data-key]')
     if (!node) return null
@@ -3415,6 +3610,8 @@ document.addEventListener('keydown', (event) => {
 let wantFocus = null
 const focusLane = (repoId, laneName) => {
     if (shownId() && shownId() !== repoId && current?.repos.some((repo) => repo.id === repoId)) showRepo(repoId)
+    // A lane is brought into view in the log: from the landing view, the log is shown first.
+    if (viewIn(repoId) === 'landing') { wantFocus = { repo: repoId, lane: laneName }; showView(repoId, 'log'); return }
     const key = `${repoId}/${laneName}`
     const node = [...document.querySelectorAll('[data-key]')].find((candidate) => candidate.dataset.key === key)
     if (!node) { wantFocus = { repo: repoId, lane: laneName }; return }

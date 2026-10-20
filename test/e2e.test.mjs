@@ -44,7 +44,9 @@ const env = {
     ...process.env,
     GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
     GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
-    LANEKIT_PORTS: ''
+    LANEKIT_PORTS: '',
+    // The agents' reports, and the rest of lanekit's state, in the scratch folder: never the person's own.
+    XDG_STATE_HOME: path.join(scratch, 'state')
 }
 Object.assign(process.env, env)
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -802,4 +804,93 @@ test('a commit is a ring, and a lane something is at work in fills its newest co
     const busy = await page.run(dots)
     assert.equal(busy.commit, busy.ring, `its newest commit fills in its own colour: ${JSON.stringify(busy)}`)
     await page.run(() => refresh().then(() => true))
+})
+
+test('a repository\'s agents are one button at its head, saying how many and how many need you, which opens each with where it works and its session', { skip, timeout: 60_000 * SLOW }, async () => {
+    // Three agents as their hooks would say it: two in the main checkout, told apart only by their sessions, and one in a lane.
+    const reports = path.join(env.XDG_STATE_HOME, 'lanekit', 'agents')
+    fs.mkdirSync(reports, { recursive: true })
+    const report = (session, cwd, state, tool, minutes) => fs.writeFileSync(path.join(reports, `claude-${session}.json`), JSON.stringify({
+        key: `claude-${session}`, agent: 'claude', host: os.hostname(), session, cwd, state, tool, at: Date.now(), since: Date.now() - minutes * 60_000, pid: process.pid, pids: [process.pid]
+    }))
+    report('aaaa1111bbbb', repo, 'running', 'Bash', 3)
+    report('cccc2222dddd', repo, 'ready', null, 40)
+    report('eeee3333ffff', laneDir('feature'), 'needs-you', 'Edit', 1)
+    try {
+        const button = await page.until((() => {
+            const toggle = document.querySelector('.repo-head .agents-toggle')
+            return toggle && /3 agents/.test(toggle.textContent) ? { text: toggle.textContent.replace(/\s+/g, ' ').trim(), expanded: toggle.getAttribute('aria-expanded') } : null
+        }), [], { what: 'the agents button, with three' })
+        assert.match(button.text, /3 agents.*1 needs you/, 'how many, and how many need you')
+        assert.equal(button.expanded, 'false')
+        assert.equal(await page.run(() => document.querySelectorAll('section.repo [data-agents="demo/"] .agent-chip').length), 0, 'no row of chips for the main checkout under the head')
+        await page.click((() => document.querySelector('.agents-toggle')))
+        const panel = await page.until((() => {
+            const menu = document.querySelector('.agents-panel')
+            if (!menu) return null
+            return {
+                groups: [...menu.querySelectorAll('.agents-group')].map((group) => group.textContent),
+                rows: [...menu.querySelectorAll('.agent-row')].map((row) => ({ where: row.querySelector('.agent-where').textContent, session: row.querySelector('.agent-session').textContent, state: row.querySelector('.state').textContent }))
+            }
+        }), [], { what: 'the agents menu, open' })
+        assert.deepEqual(panel.groups, ['Needs you · 1', 'At work · 1', 'Idle · 1'], 'those that need you first, then at work, then idle')
+        assert.deepEqual(panel.rows, [
+            { where: 'feature', session: 'eeee3333', state: 'Needs you · Edit' },
+            { where: 'main checkout', session: 'aaaa1111', state: 'Running · Bash' },
+            { where: 'main checkout', session: 'cccc2222', state: 'Ready' }
+        ], 'each with where it works, and the session that tells two in the main checkout apart')
+        // A lane's agent, pressed: the menu closes and the lane is brought into view and marked.
+        await page.click((() => [...document.querySelectorAll('.agent-row')].find((row) => row.querySelector('.agent-where').textContent === 'feature')))
+        await page.until((() => !document.querySelector('.agents-panel') && card('feature')?.classList.contains('flash')), [], { what: 'the menu closed, and feature marked' })
+        // Escape closes it, as it does a lane's ⋯.
+        await page.click((() => document.querySelector('.agents-toggle')))
+        await page.until((() => document.querySelector('.agents-panel')), [], { what: 'the agents menu, open again' })
+        await page.run(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); return true })
+        await page.until((() => !document.querySelector('.agents-panel')), [], { what: 'the agents menu closed by Escape' })
+    } finally {
+        fs.rmSync(reports, { recursive: true, force: true })
+    }
+    await page.until((() => !document.querySelector('.agents-toggle')), [], { what: 'no agents button with no agents' })
+})
+
+test('the landing order has a view of its own: a table of every lane in its groups, with what each needs, its verification, changes, collisions, pull request and next step', { skip, timeout: 60_000 * SLOW }, async () => {
+    const tabs = await page.until((() => {
+        const views = [...document.querySelectorAll('.views .view-tab')]
+        return views.length ? views.map((tab) => ({ text: tab.textContent, selected: tab.getAttribute('aria-selected') })) : null
+    }), [], { what: 'the Log and Landing tabs' })
+    assert.equal(tabs.length, 2)
+    assert.deepEqual(tabs.map((tab) => tab.selected), ['true', 'false'], 'the log first')
+    assert.match(tabs[1].text, /^Landing\d+$/)
+    const inOrder = await page.run(() => [...document.querySelectorAll('.queue-row .queue-item .queue-name')].map((name) => name.textContent))
+    await page.click((() => [...document.querySelectorAll('.view-tab')].find((tab) => tab.textContent.startsWith('Landing'))))
+    const table = await page.until((() => {
+        const landing = document.querySelector('.landing:not([hidden]) .landing-table')
+        // The one-line landing order, once it has faded from the row.
+        if (!landing || document.querySelectorAll('.queue-row .queue-item').length) return null
+        return {
+            heads: [...landing.querySelectorAll('thead th')].map((th) => th.textContent),
+            groups: [...landing.querySelectorAll('.landing-group-head th')].map((th) => th.textContent),
+            lanes: [...landing.querySelectorAll('tr.landing-lane')].map((row) => ({
+                name: row.querySelector('.lane-name').textContent,
+                needs: row.querySelector('td[data-label="Needs"] .state').textContent,
+                step: row.querySelector('.landing-step').textContent.trim()
+            })),
+            log: getComputedStyle(document.querySelector('ol.log')).display,
+            strip: document.querySelectorAll('.queue-row .queue-item').length
+        }
+    }), [], { what: 'the landing view' })
+    assert.deepEqual(table.heads, ['Lane', 'Needs', 'Verified', 'Changes', 'Collides with', 'Pull request', 'Agents', ''])
+    assert.ok(table.groups.length > 0, 'its groups, each a heading')
+    for (const name of inOrder) assert.ok(table.lanes.some((lane) => lane.name === name), `${name}, in the landing order, has a row: ${JSON.stringify(table.lanes)}`)
+    assert.ok(table.lanes.every((lane) => lane.needs && lane.step), `each with what it needs and a next step: ${JSON.stringify(table.lanes)}`)
+    assert.equal(table.log, 'none', 'the log out of sight, kept')
+    assert.equal(table.strip, 0, 'the one-line landing order gives way to the table')
+    // Remembered by the page: drawn again, it stays.
+    await page.run(() => refresh().then(() => true))
+    assert.equal(await page.run(() => Boolean(document.querySelector('.landing:not([hidden]) .landing-table'))), true)
+    // A lane's name, pressed: the log is shown, and the lane brought into view and marked.
+    const name = table.lanes[0].name
+    await page.click(((name) => [...document.querySelectorAll('tr.landing-lane .lane-name')].find((node) => node.textContent === name)), name)
+    await page.until(((name) => document.querySelector('.landing').hidden && getComputedStyle(document.querySelector('ol.log')).display !== 'none' && card(name)?.classList.contains('flash')), [name], { what: `the log, with ${name} marked` })
+    assert.deepEqual(await page.run(() => [...document.querySelectorAll('.view-tab')].map((tab) => tab.getAttribute('aria-selected'))), ['true', 'false'])
 })
