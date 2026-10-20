@@ -26,6 +26,7 @@ const fromPage = (first, last, names) => {
 }
 const { mainBlockOf, gateBlockOf, landBlockOf, pullBlockOf } = fromPage('mainBlockOf', 'pullBlockOf', ['mainBlockOf', 'gateBlockOf', 'landBlockOf', 'pullBlockOf'])
 const { prStepOf } = fromPage('prStepOf', 'prStepOf', ['prStepOf'])
+const { fromHome } = fromPage('fromHome', 'fromHome', ['fromHome'])
 
 const repo = (main = {}, extra = {}) => ({
     integrationBranch: 'main',
@@ -177,4 +178,15 @@ test('a gate whose tests wrote JUnit says their counts beside it, and a failed o
     })
     assert.equal(failingOf({ ...tests, failing: [] }), null)
     assert.equal(failingOf(undefined), null)
+})
+
+test('a path is said from home, as the page says one, and left alone where home is not known or not above it', () => {
+    assert.equal(fromHome('/Users/ada/code/piano-sheets', '/Users/ada'), '~/code/piano-sheets')
+    assert.equal(fromHome('/Users/ada', '/Users/ada'), '~')
+    assert.equal(fromHome('/Users/ada/code', '/Users/ada/'), '~/code', 'a home said with a slash at its end')
+    assert.equal(fromHome('/Users/adam/code', '/Users/ada'), '/Users/adam/code', 'somebody else\'s folder, however it begins')
+    assert.equal(fromHome('/work/api', null), '/work/api')
+    assert.equal(fromHome('/work/api', ''), '/work/api')
+    assert.equal(fromHome('C:\\Users\\ada\\code\\api', 'C:\\Users\\ada'), '~\\code\\api', 'Windows, with its own slashes')
+    assert.equal(fromHome(undefined, '/Users/ada'), undefined)
 })

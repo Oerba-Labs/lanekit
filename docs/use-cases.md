@@ -3,7 +3,8 @@
 Every thing a person does with LaneKit, on the page or with `lane`, and the tests that show it works. A test is
 named by its file and its number in that file (`node --test --test-name-pattern "<words from its name>"` runs one).
 Use cases marked **new** came with the page's second round of changes (2 Oct), with review lanes and the Claude Code
-plugin (3 Oct), with the page's motion (4 Oct), or with the tests' counts from their JUnit (17 Oct). Their tests are
+plugin (3 Oct), with the page's motion (4 Oct), with the tests' counts from their JUnit (17 Oct), or with the page laid out by its
+width (19 Oct). Their tests are
 new too.
 
 The tests run against scratch repositories with a bare `origin` and a second clone that pushes to it; GitHub is
@@ -111,6 +112,10 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 58 | **new** Follow what changes as it happens, pressed here or done by an agent anywhere: what stays slides to its new place, a new commit fades in washed, what went fades from where it was (an inert copy, found as nothing), a lane landed slides into main's line as `main` slides up to its merge, words that change tick over, and nothing moves where the machine asks for less motion | the log, the landing order, the command bar | e2e 11, e2e 12, e2e 13 |
 | 59 | **new** See where something runs: a light down the line of a lane a press runs in (or is about to), and down main's while it is pulled, fetched or pushed; lit and still with less motion | the log | e2e 13 |
 | 60 | **new** A commit pressed here is drawn once: dashed until it is made, then settled in place, never drawn beside itself nor gone from the page in between | the lane's commits | page 8, service 14 |
+| 62 | **new** Read the page in a narrow window as in the side bar: a lane's next step (its icon, its word first in its title) and ⋯ float over its corner, nothing hidden keeps a line under its name, a commit's details open under its row, and the page goes back to its wide layout as the window widens | any window narrower than 760 pixels, and the side bar | e2e 14 |
+| 63 | **new** Keep a lane's toolbar inside the log's column while the details pane is open in a window of middling width: every button but the next step its icon alone, under the lane's name, never under the pane | the toolbar | e2e 15 |
+| 64 | **new** Read the page as a column of reading width on a wide screen, Land next beside the landing order, a question's buttons beside its words, the lane under the pointer washed, and the landing order kept under the bar as the log scrolls past it | the page | e2e 16 |
+| 65 | **new** Read paths from home (`~/code/api`) wherever the page says one, the whole of it as its tooltip | the bar, a repository's header, Home's cards, Without lanes | page 10 |
 
 ## Installing and updating
 
@@ -151,7 +156,9 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 - **Pulling a lane that has diverged from its copy on origin** is refused and left to a person (`git pull --rebase`,
   in the lane): which side's commits should win is theirs to say.
 - **The keyboard** (`j`, `k`, `g`, `l`, `p`, …) has no test of its own.
-- **The side bar's layout** is looked at in screenshots only, and **dragging a lane** onto a commit is tested at the
+- **The side bar's layout** is tested as a narrow window's, which shares it (e2e 14), not in the side bar itself; its own
+  sizes, its bar's line shown only while LaneKit does not answer, and Changes and Agent as icons are looked at in
+  screenshots only. **Dragging a lane** onto a commit is tested at the
   service and in `ontoOf`, not by a drag in the browser.
 - **The page's motion** is tested by what it starts (each animation's name, what it is on, whether it slides), not by
   how it looks part-way, which was looked at by hand in frames held still. A commit pressed on the page settling into

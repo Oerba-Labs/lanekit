@@ -287,8 +287,8 @@ The page in the picture above, for every repository in a folder:
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
   difference in the editor), and what can be done with it: its terminal (in the editor), **View
   changes**, **New lane here**, **Copy hash**, and on a lane's newest commit **Edit message** and
-  **Uncommit**. In the
-  side bar the details open under the row instead. A double click opens a commit's changes.
+  **Uncommit**. In the side bar, or a window narrower than about 760 pixels, the details open under
+  the row instead. A double click opens a commit's changes.
 - **A commit's commands sit beside it**, after its words and its age, as ISL sets them, when the
   pointer is on it: **Uncommit** on a lane's newest, its terminal on a lane's newest and main's (in
   the editor), and a new lane from it and its hash to the clipboard, as icons. Words longer than a line's worth are clipped; the whole of them
@@ -310,7 +310,9 @@ The page in the picture above, for every repository in a folder:
   slides: things only fade.
 - **Its buttons show when the pointer or the keyboard is on it**, the way Sapling's Interactive
   Smartlog does, so a page of lanes reads calmly until you reach for one, and sit beside its name
-  and state, never across the page from them. They are lane's own commands, run as a terminal would
+  and state, never across the page from them; the lane is washed meanwhile, so its rows read as one.
+  Where the column is too narrow for them beside the state (the details pane open in a window of
+  middling width), every button but the next step is its icon alone, under the name. They are lane's own commands, run as a terminal would
   run them, with their output underneath: **Gate**, **Land**, **Sweep**, **Rebase** (a lane that is
   behind), **Push** (one with commits origin lacks), **Pull** (one whose copy on origin has commits
   somebody else pushed: a colleague, GitHub's *Update branch*, a suggestion from review), **Pull
@@ -416,6 +418,10 @@ The page in the picture above, for every repository in a folder:
   newest commit (or main's), `[` and `]` show the repository before or the next, `Esc` closes the
   details, `?` lists them; in the message form,
   `⌘ Enter` commits.
+- **On a wide screen the page keeps to a column** of about 1,080 pixels, so Fetch and Land next stay
+  near what they act on; a question's buttons sit beside its words; and the landing order stays under
+  the bar as the log scrolls past it. Paths are said from home (`~/code/piano-sheets`), the whole path
+  in the tooltip.
 
 It listens on the loopback only. `--ssh-host <host>` adds a link that opens a lane in VS Code over
 Remote-SSH, and `--browser-editor <prefix>` one to a browser editor.
@@ -443,8 +449,10 @@ in the picture. There its clicks drive the editor:
   status bar's menu, or **LaneKit: Show a Repository in a Tab of Its Own…** opens one for that
   repository alone, or brings forward the one already open. A lane asked for from the status bar
   goes to the tab showing its repository, and each tab comes back on its repository after a reload;
-- in the side bar, where there is no room for a toolbar, the pointer on a lane shows the next
-  thing to do and a **⋯** that opens the rest;
+- in the side bar, or any window narrower than about 760 pixels, where there is no room for a
+  toolbar, the pointer on a lane shows the next thing to do, as its icon, and a **⋯** that opens the
+  rest; **Changes** and **Agent** are icons too, their words their tooltips; and the side bar's own top
+  line (Keys, and whether the page is up to date) is there only while LaneKit does not answer;
 - **the terminal icon** is the way to a lane's terminal (it was called Goto, after Interactive
   Smartlog's): your terminal follows and takes the focus: a shell waiting at its prompt in another
   checkout is sent `cd` to the same folder in the lane; one running something (a server, an agent)

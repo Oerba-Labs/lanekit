@@ -139,7 +139,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         ...(vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath),
         ...(vscode.workspace.getConfiguration('lanekit').get('folders') ?? []).filter((dir) => typeof dir === 'string' && dir)
     ]
-    const service = createService({ dirs: foldersNow(), reader: 'worker', packageRoot: root, agentsDir: agentsDir({ home, env }) })
+    const service = createService({ dirs: foldersNow(), reader: 'worker', packageRoot: root, agentsDir: agentsDir({ home, env }), home })
 
     // -----------------------------------------------------------------------
     // the pages: the side bar's, there by default, and a tab, for room
