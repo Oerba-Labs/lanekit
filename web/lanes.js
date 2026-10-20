@@ -1012,6 +1012,8 @@ const redrawAgents = () => {
         const words = wantsWords(badge.dataset.wants.slice(0, at), badge.dataset.wants.slice(at + 1))
         badge.textContent = words
         badge.closest('li.lane')?.classList.toggle('wants-you', Boolean(words))
+        const lane = badge.closest('li.lane')
+        if (lane) lane.classList.toggle('at-work', lane.classList.contains('working') || agentsOf(badge.dataset.wants.slice(0, at), badge.dataset.wants.slice(at + 1)).some((agent) => agent.state === 'thinking' || agent.state === 'running'))
     }
     for (const row of document.querySelectorAll('.home-agents[data-home-agents]')) {
         const repo = current?.repos.find((candidate) => candidate.id === row.dataset.homeAgents)
@@ -2396,8 +2398,10 @@ const laneCard = (repo, lane, forked = true) => {
     if (asking) asking.dataset.sig = `${pending.get(key)?.verb} ${pending.get(key)?.stage}`
     // Something running in it, or about to, by a press here or anywhere: a light runs down its line toward main.
     const underway = Boolean(lane.pending || runningIn(repo, lane))
+    // At work now: a press under way, or an agent thinking or running in it. Its dots fill; the rest are rings.
+    const atWork = underway || agentsOf(repo.id, lane.name).some((agent) => agent.state === 'thinking' || agent.state === 'running')
     const card = el('li', {
-        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${folded.has(key) ? ' folded' : ''}${underway ? ' working' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
+        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${folded.has(key) ? ' folded' : ''}${underway ? ' working' : ''}${atWork ? ' at-work' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
         'data-key': key, 'data-hue': hueName(repo, lane.name), tabindex: '0', draggable: draggable ? 'true' : null,
         title: draggable ? 'Drag it onto a commit of main to rebase it there' : null,
         'data-anim': key, 'data-anim-kids': true

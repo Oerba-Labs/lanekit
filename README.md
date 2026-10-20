@@ -276,7 +276,8 @@ The page in the picture above, for every repository in a folder:
   --existing` brings a dropped lane back from its branch; deleting the branch is a step of its own.
 - **Each lane** is drawn from its name down, in a colour of its own: its name as a tag at the top of
   its line, with its state and its buttons, then its uncommitted files, then its commits as dots on the
-  line, newest first, and the line curves into main's at the commit it started from; the mark on its
+  line, newest first, as rings, filled only where something is at work now (a press under way, an agent
+  thinking or running), and the line curves into main's at the commit it started from; the mark on its
   line folds it to its name, and unfolds it (`z` too). The colour is the
   one its terminals wear in the editor, from its name (two lanes whose names fall on one colour take
   two), and a merge on main reads *Landed* with the lane it brought as a tag in that lane's colour,

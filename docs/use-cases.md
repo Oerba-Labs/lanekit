@@ -119,6 +119,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 67 | **new** A quiet edge to the page: a dot says it is up to date, with words only while the server is lost; the command bar goes two minutes after the last press ends, unless its output is open; an icon alone is as tall as a worded button | the bar, the command bar | e2e 1 |
 | 68 | **new** See what waits on you in one line under the switcher: an agent that needs you, a gate that failed, a lane ready to land, a pull request waiting on your review, each opening what it names | the strip | e2e 17 |
 | 69 | **new** Fold a lane to its name from the mark on its line, or `z`, and unfold it the same way; the page remembers which are folded; what waits on you in it stays in sight | the lane | e2e 18 |
+| 70 | **new** Read a commit as a ring, and a filled dot only where something is at work now: a lane with a press under way or an agent thinking or running fills its newest commit and its name's mark; the uncommitted node is a dashed ring | the log | e2e 19 |
 | 65 | **new** Read paths from home (`~/code/api`) wherever the page says one, the whole of it as its tooltip | the bar, a repository's header, Home's cards, Without lanes | page 10 |
 
 ## Installing and updating

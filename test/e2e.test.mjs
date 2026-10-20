@@ -367,7 +367,7 @@ test('a lane is drawn from its name down, in a colour of its own: its name at th
             filesAboveCommits: box(lane.querySelector(':scope > .changes')).bottom <= box(commits[0]).top + 1,
             name: lane.querySelector('.lane-head .lane-name').textContent,
             hue: lane.dataset.hue,
-            line: getComputedStyle(lane, '::before').backgroundColor, dot: getComputedStyle(commits[0], '::before').backgroundColor,
+            line: getComputedStyle(lane, '::before').backgroundColor, dot: getComputedStyle(commits[0], '::before').borderColor,
             tag: getComputedStyle(lane.querySelector('.lane-head .lane-name')).color,
             chip: [...document.querySelectorAll('.queue-name')].find((one) => one.textContent === 'feature')?.dataset.hue,
             hues: [...document.querySelectorAll('li.lane[data-key]')].map((one) => one.dataset.hue)
@@ -712,6 +712,14 @@ test('with the details pane open in a window of middling width, a lane\'s toolba
         assert.ok(seen.right <= seen.pane, `the toolbar ends before the pane begins: ${JSON.stringify(seen)}`)
         assert.ok(seen.count >= 5, `the editor's whole toolbar: ${JSON.stringify(seen)}`)
         assert.deepEqual(seen.said, ['Gate (next)'], `only the next step keeps its word: ${JSON.stringify(seen)}`)
+        // The ⋯ menu's items keep their words, whatever the toolbar's own buttons show.
+        await middling.click((() => card('feature').querySelector('.hover-actions .more')))
+        const menu = await middling.until((() => {
+            const items = [...card('feature').querySelectorAll('.more-menu .btn')]
+            return items.length ? items.map((item) => ({ name: item.getAttribute('aria-label'), worded: item.querySelector('.label') ? getComputedStyle(item.querySelector('.label')).display !== 'none' : false })) : null
+        }), [], { what: 'the ⋯ menu open' })
+        assert.ok(menu.every((item) => item.worded), `every item with its word: ${JSON.stringify(menu)}`)
+        await middling.run(() => { closeMenus(); draw(true); return true })
     } finally {
         await middling.close()
     }
@@ -770,4 +778,28 @@ test('a lane folds to its name from the mark on its line, or z, and unfolds the 
     await page.run(() => { card('feature').focus(); card('feature').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true })); return true })
     await page.until((() => !card('feature').classList.contains('folded')), [], { what: 'feature unfolded' })
     assert.equal(await page.run(() => getComputedStyle(card('feature').querySelector(':scope > .stack')).display), 'block')
+})
+
+test('a commit is a ring, and a lane something is at work in fills its newest commit; the uncommitted node is a dashed ring', { skip, timeout: 60_000 * SLOW }, async () => {
+    const dots = () => {
+        const style = (node, pseudo = '::before') => getComputedStyle(node, pseudo)
+        const lane = card('feature')
+        const dirty = document.querySelector('li.lane > .changes')
+        return {
+            mainTip: style(document.querySelector('li.commit.tip')).borderStyle, mainFill: style(document.querySelector('li.commit.tip')).backgroundColor,
+            commit: style(lane.querySelector('.stack-commit')).backgroundColor, ring: style(lane.querySelector('.stack-commit')).borderColor,
+            files: dirty ? style(dirty).borderStyle : 'dashed',
+            page: getComputedStyle(document.body).backgroundColor
+        }
+    }
+    const rest = await page.run(dots)
+    assert.equal(rest.mainTip, 'solid')
+    assert.equal(rest.mainFill, rest.page, 'main\'s commit is a ring')
+    assert.equal(rest.commit, rest.page, 'a settled commit of a lane is a ring')
+    assert.equal(rest.files, 'dashed', 'the uncommitted node is dashed')
+    // Something at work in it, as the service says one is: its newest commit fills in the lane's colour.
+    await page.run(() => { current.jobs.unshift({ id: 'e2e-at-work', repo: 'demo', lane: 'feature', verb: 'gate', state: 'running', startedAt: Date.now(), command: 'gate' }); draw(true); return true })
+    const busy = await page.run(dots)
+    assert.equal(busy.commit, busy.ring, `its newest commit fills in its own colour: ${JSON.stringify(busy)}`)
+    await page.run(() => refresh().then(() => true))
 })
