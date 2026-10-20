@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review somebody's pull request in a lane of its own — checked out with its own port and environment, run, gated on top of main and read — then say what you make of it on GitHub, only with the person's yes. Use when asked to review a pull request (by number or link) in a repository that has lanes.
+description: Review somebody's pull request in a lane of its own — checked out with its own port and environment, run, verified on top of main and read — then say what you make of it on GitHub, only with the person's yes. Use when asked to review a pull request (by number or link) in a repository that has lanes.
 argument-hint: <pull request number>
 allowed-tools: mcp__plugin_lanekit_lanekit__lanes, Bash(git log:*), Bash(git diff:*), Bash(git show:*), Read, Grep, Glob
 ---
@@ -13,7 +13,7 @@ Review pull request **$ARGUMENTS**.
    file whole where the diff alone does not show what it does.
 3. **Run it** where behaviour matters: the lane has its own port and environment, so start the app there as the
    project says (its README, or what `lane new` printed as how to serve it) and try what the change claims.
-4. **Gate it** with `gate`: the tests the change earns, on top of `main` as it is now. The gate rebases the lane here
+4. **Verify it** with `gate`: the tests the change earns, on top of `main` as it is now. The gate rebases the lane here
    only; `pull` still brings what the author pushes after.
 5. **Write the review**: what the change does; what is wrong, each with its file and line and why; what is missing
    (tests, a case not handled); and the risk. Say which points block a merge and which are suggestions.

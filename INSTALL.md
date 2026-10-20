@@ -28,7 +28,7 @@ small files and no dependency:
 | `.opencode/commands/lane.md`, `land.md` | `/lane` and `/land` for OpenCode |
 
 **Done looks like this:** `./<slug> lane new lanekit-trial` makes a lane with a port of its own,
-`./<slug> gate` inside it prints `READY`, and the trial lane is cleared away again.
+`./<slug> gate` inside it prints `VERIFIED`, and the trial lane is cleared away again.
 
 ## Rules for the whole install
 
@@ -270,7 +270,7 @@ It prints the lane's folder and port. Then check:
 ```sh
 cat ../<checkout folder>-lanekit-trial/<env file>   # this lane's own PORT, and each perLane value
 cd ../<checkout folder>-lanekit-trial
-./<slug> gate                                        # prints READY
+./<slug> gate                                        # prints VERIFIED
 ```
 
 If you set a `runHint`, start the app in the lane with the port it printed, check it answers on
@@ -322,7 +322,7 @@ Report in this shape, briefly:
 - **Inside a lane, run the lane's own `./<slug>`**: which copy runs decides which checkout is
   acted on.
 - While iterating, `./<slug> gate --fast` runs tier 1 whatever the change earns and says
-  `UNDER-GATED` when it earns more. The full `./<slug> gate` is what certifies a commit.
+  `INCOMPLETE` when it earns more. The full `./<slug> gate` is what certifies a commit.
 - When the work is done, `/land` commits, gates and reports, then asks before merging. Land only
   when the person says so: `./<slug> lane land <name>`, from the main checkout.
 - A lane behind the integration branch: `./<slug> lane rebase <name>`. On a conflict it stops with the files

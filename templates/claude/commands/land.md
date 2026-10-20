@@ -40,7 +40,7 @@ Find this lane's line. The gate result names a sha, so the moment another lane
 lands, this one's green is void and the gate has to run again.
 
 - **`hold the gate`** — another lane should land first. Report which, and **stop**.
-  Gating anyway is the user's call, not yours.
+  Verifying anyway is the user's call, not yours.
 - **`land now`** — a green run already names this exact sha. Go to step 6.
 - **`gate now`** or **`rebase first`** — proceed; the gate rebases as its first act.
 - **`commit first`** — go back to step 2.
@@ -68,10 +68,10 @@ any generated files the config names, then runs the tier the diff earned.
 
 Fix it if the fix is obvious and small, then gate again.
 
-**Read the banner, not the exit code.** `UNDER-GATED` means a tier below what the
+**Read the banner, not the exit code.** `INCOMPLETE` means a tier below what the
 diff earns was run: green for what it covered, and *not* a green for the branch.
 **Never report a lane as ready when the gate was red, or when the only green was
-`UNDER-GATED`.**
+`INCOMPLETE`.**
 
 **If it passes**, report the branch, the sha it is green on, the tier that ran, and
 `git diff --stat <integration branch>...HEAD`.
@@ -88,7 +88,7 @@ is in the way: report it and **stop**. Do not merge without asking, even on a gr
 
 ## 7. Hand it over — do not merge unasked
 
-The gate stops at READY deliberately: putting a person back at the integration step
+The gate stops at VERIFIED deliberately: putting a person back at the integration step
 is half the point. So **ask** whether to merge. If the user says yes:
 
 1. **ExitWorktree** with `action: "keep"` — back to the main checkout. Keep, not

@@ -191,7 +191,7 @@ test('land checks first, refuses without a green gate, and lands after one', asy
     const gate = await press({ repo: 'demo', verb: 'gate', lane: 'working' })
     const gated = await finished(gate.body.id)
     assert.equal(gated.code, 0, gated.output)
-    assert.match(gated.output, /READY/)
+    assert.match(gated.output, /VERIFIED/)
     assert.equal((await laneIn('working')).queue.verdict, 'land now')
 
     const again = await finished((await press({ repo: 'demo', verb: 'land', lane: 'working', dryRun: true })).body.id)

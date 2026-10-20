@@ -65,12 +65,12 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 17 | Replay a lane onto main as it is now; stop on a conflict, resolve, carry on or abort | **Rebase**, **Resolved**, **Continue**, **Abort…**; `lane rebase`, `lane resolve` | flow 1–4, flow 18, rebase 6 |
 | 18 | Move a lane onto another commit of main, back or forward | drag the lane onto a commit; `lane rebase --onto` | flow 12, rebase 1–5, rebase 8 |
 
-## Gating and landing
+## Verifying and landing
 
 | | use case | how | tests |
 |---|---|---|---|
-| 19 | Gate a lane: on top of main, the tier it earns, its result kept with its commit | **Gate**; `gate` | web 8, flow 10, rebase 4, rebase 7, e2e 3 |
-| 20 | **new** See which steps a lane is ready for: Gate held until there is a commit and nothing uncommitted; Land until it is gated green, first in its order, and main's checkout is ready; each saying why | the lane's buttons, drawn held, their reason as their title | page 1, page 2, e2e 3 |
+| 19 | Verify a lane: on top of main, the tier it earns, its result kept with its commit | **Verify**; `gate` | web 8, flow 10, rebase 4, rebase 7, e2e 3 |
+| 20 | **new** See which steps a lane is ready for: Verify held until there is a commit and nothing uncommitted; Land until it is verified, first in its order, and main's checkout is ready; each saying why | the lane's buttons, drawn held, their reason as their title | page 1, page 2, e2e 3 |
 | 21 | Know which lane lands first, and which collide | the landing order | tidy 2, tidy 8 |
 | 22 | Land a ready lane, then sweep it | **Land…**, **Land next**, **Sweep…**; `lane land`, `lane sweep` | web 7–9 |
 | 23 | Push main, only where the repository takes it | **Push** beside the repository's name; `lane push --main` | flow 20–22 |
@@ -117,7 +117,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 63 | **new** Keep a lane's toolbar inside the log's column while the details pane is open in a window of middling width: every button but the next step its icon alone, under the lane's name, never under the pane | the toolbar | e2e 15 |
 | 64 | **new** Read the page as a column of reading width on a wide screen, Land next beside the landing order, a question's buttons beside its words, the lane under the pointer washed, and the landing order kept under the bar as the log scrolls past it | the page | e2e 16 |
 | 67 | **new** A quiet edge to the page: a dot says it is up to date, with words only while the server is lost; the command bar goes two minutes after the last press ends, unless its output is open; an icon alone is as tall as a worded button | the bar, the command bar | e2e 1 |
-| 68 | **new** See what waits on you in one line under the switcher: an agent that needs you, a gate that failed, a lane ready to land, a pull request waiting on your review, each opening what it names | the strip | e2e 17 |
+| 68 | **new** See what waits on you in one line under the switcher: an agent that needs you, a lane that failed verification, a lane ready to land, a pull request waiting on your review, each opening what it names | the strip | e2e 17 |
 | 69 | **new** Fold a lane to its name from the mark on its line, or `z`, and unfold it the same way; the page remembers which are folded; what waits on you in it stays in sight | the lane | e2e 18 |
 | 70 | **new** Read a commit as a ring, and a filled dot only where something is at work now: a lane with a press under way or an agent thinking or running fills its newest commit and its name's mark; the uncommitted node is a dashed ring | the log | e2e 19 |
 | 65 | **new** Read paths from home (`~/code/api`) wherever the page says one, the whole of it as its tooltip | the bar, a repository's header, Home's cards, Without lanes | page 10 |

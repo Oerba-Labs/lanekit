@@ -49,7 +49,7 @@ export const wordOf = (lane) => {
     if (lane.kind === 'fresh' && !lane.dirty) return 'nothing committed'
     switch (lane.queue?.verdict) {
         case 'land now': return 'ready to land'
-        case 'gate now': return 'needs a gate'
+        case 'gate now': return 'needs verifying'
         case 'hold the gate': return 'wait for another lane'
         case 'commit first': return 'uncommitted changes'
         case 'rebase first': return 'conflicts with main'
@@ -332,7 +332,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
                 if (!on || !before || before === lane.head.sha || running) continue
                 if (lane.dirty || lane.operation || lane.gate?.current) continue
                 service.press({ repo: repo.id, verb: 'gate', lane: lane.name }).then((pressed) => {
-                    if (pressed.status < 400) output.appendLine(`LaneKit: gating ${lane.name} by itself, after a commit (lanekit.gateOnCommit).`)
+                    if (pressed.status < 400) output.appendLine(`LaneKit: verifying ${lane.name} by itself, after a commit (lanekit.gateOnCommit).`)
                 }).catch(() => {})
             }
         }
@@ -1056,7 +1056,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             const working = lane.kind === 'working' || (lane.kind === 'fresh' && lane.dirty > 0)
             if (working || lane.dirty) item('$(diff) Changes', `everything ${lane.name} holds that ${repo.integrationBranch} does not`, () => open({ what: 'changes', repo: repo.path, lane: lane.name }))
             item('$(sparkle) Start agent…', `Claude Code or OpenCode, in a terminal named for ${lane.name}`, () => commands['lanekit.startAgent'](at))
-            if (working) item('$(check) Gate…', wordOf(lane), () => commands['lanekit.gate'](at))
+            if (working) item('$(check) Verify…', wordOf(lane), () => commands['lanekit.gate'](at))
             if (working) item('$(git-merge) Land…', `into ${repo.integrationBranch}, after a check`, () => commands['lanekit.land'](at))
             if (lane.behind > 0 && !lane.operation) item('$(sync) Rebase…', `${lane.behind} behind ${repo.integrationBranch}`, () => commands['lanekit.rebase'](at))
             if (lane.kind === 'working' && (!lane.upstream || lane.upstream.ahead > 0)) item('$(cloud-upload) Push', lane.upstream ? `${lane.upstream.ahead} not pushed` : 'not pushed yet', () => commands['lanekit.push'](at))
@@ -1157,13 +1157,13 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             if (await pressFromPalette({ repo: repo.id, verb: 'new', name })) output.show(true)
         },
         'lanekit.gate': async (argument) => {
-            const x = await laneFor(argument, 'Gate which lane?', isWorking)
+            const x = await laneFor(argument, 'Verify which lane?', isWorking)
             if (!x) return
-            const go = await vscode.window.showWarningMessage(`Gate ${x.lane.name}?`, {
+            const go = await vscode.window.showWarningMessage(`Verify ${x.lane.name}?`, {
                 modal: true,
                 detail: `It rebases ${x.lane.branch} onto ${x.repo.integrationBranch}, then runs the tier its changes earn${x.lane.queue?.tier ? ` (tier ${x.lane.queue.tier})` : ''}. It never merges.`
-            }, 'Gate it')
-            if (go === 'Gate it' && await pressFromPalette({ repo: x.repo.id, verb: 'gate', lane: x.lane.name })) output.show(true)
+            }, 'Verify it')
+            if (go === 'Verify it' && await pressFromPalette({ repo: x.repo.id, verb: 'gate', lane: x.lane.name })) output.show(true)
         },
         'lanekit.land': async (argument) => {
             const x = await laneFor(argument, 'Land which lane?', isWorking)

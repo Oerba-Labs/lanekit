@@ -103,7 +103,7 @@ const testsOf = (result) => {
 // what a repository's lanes are, in words an agent reads
 // ---------------------------------------------------------------------------
 
-const VERDICTS = { 'land now': 'ready to land', 'gate now': 'needs a gate', 'commit first': 'commit first', 'hold the gate': 'waits for another lane to land', 'rebase first': 'conflicts with main: rebase it', parked: 'part-way' }
+const VERDICTS = { 'land now': 'ready to land', 'gate now': 'needs verifying', 'commit first': 'commit first', 'hold the gate': 'waits for another lane to land', 'rebase first': 'conflicts with main: rebase it', parked: 'part-way' }
 const laneWords = (repo, lane) => {
     const base = repo.integrationBranch
     const out = []
@@ -118,7 +118,7 @@ const laneWords = (repo, lane) => {
     if (lane.behind) facts.push(`${lane.behind} behind ${base}`)
     if (lane.upstream) facts.push(lane.upstream.ahead || lane.upstream.behind ? `${lane.upstream.name}: ${lane.upstream.ahead} here not there, ${lane.upstream.behind} there not here${lane.upstream.foreign ? ` (${lane.upstream.foreign} of somebody else's)` : ''}` : `pushed to ${lane.upstream.name}`)
     else if (lane.kind === 'working' && !lane.review) facts.push('not pushed')
-    if (lane.gate) facts.push(`gate ${lane.gate.result} at tier ${lane.gate.tier}${lane.gate.current ? '' : ', on an older commit'}`)
+    if (lane.gate) facts.push(`${lane.gate.result === 'passed' ? 'verified' : 'verification failed'} at tier ${lane.gate.tier}${lane.gate.current ? '' : ', on an older commit'}`)
     if (lane.pull) facts.push(`#${lane.pull.number} ${lane.pull.draft && lane.pull.state === 'OPEN' ? 'draft' : String(lane.pull.state).toLowerCase()}${lane.pull.review ? `, ${lane.pull.review.toLowerCase().replaceAll('_', ' ')}` : ''}${lane.pull.checks && lane.pull.checks !== 'none' ? `, checks ${lane.pull.checks}` : ''}`)
     if (lane.sinceMerge) facts.push(`${lane.sinceMerge} commit${lane.sinceMerge === 1 ? '' : 's'} made since it was merged`)
     if (facts.length) out.push(`  ${facts.join('; ')}`)
@@ -158,7 +158,7 @@ const schema = (properties, required = []) => ({ type: 'object', properties: { .
 const TOOLS = [
     {
         name: 'lanes',
-        description: 'Every lane of the repository and what each needs: its state (ready to land, needs a gate, reviewing a pull request…), its commits, uncommitted files, gate, pull request, collisions, and the landing order; and the main checkout. Read this first, and again after anything changes.',
+        description: 'Every lane of the repository and what each needs: its state (ready to land, needs verifying, reviewing a pull request…), its commits, uncommitted files, gate, pull request, collisions, and the landing order; and the main checkout. Read this first, and again after anything changes.',
         inputSchema: schema({}), annotations: { title: 'Lanes', readOnlyHint: true, openWorldHint: false },
         run: async (held) => done(repoWords(await stateOf(held)))
     },
@@ -186,9 +186,9 @@ const TOOLS = [
     },
     {
         name: 'gate',
-        description: 'Gate a lane: rebase it onto main as it is now and run the tests its changes earn, recording the result against its commit. It never merges. Commit first: a gate names a commit. It may take minutes.',
-        inputSchema: schema({ lane: LANE }, ['lane']), annotations: { title: 'Gate', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-        run: async (held, args) => said(await pressed(held, { repo: path.basename(held.root), verb: 'gate', lane: args.lane }, { minutes: 60 }), `${args.lane} was gated`)
+        description: 'Verify a lane (the gate): rebase it onto main as it is now, run the tests its changes earn, and record the result against its commit. It never merges. Commit first: a verification names a commit. It may take minutes.',
+        inputSchema: schema({ lane: LANE }, ['lane']), annotations: { title: 'Verify', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        run: async (held, args) => said(await pressed(held, { repo: path.basename(held.root), verb: 'gate', lane: args.lane }, { minutes: 60 }), `${args.lane} is verified`)
     },
     {
         name: 'commit',
@@ -240,7 +240,7 @@ const TOOLS = [
     },
     {
         name: 'land',
-        description: 'Merge a lane into main (--no-ff) once its gate is green on its newest commit and it is first among those it collides with, then remove its folder and keep its branch. Checked with --dry-run first. Nothing is pushed. Ask the person before landing.',
+        description: 'Merge a lane into main (--no-ff) once its newest commit is verified and it is first among those it collides with, then remove its folder and keep its branch. Checked with --dry-run first. Nothing is pushed. Ask the person before landing.',
         inputSchema: schema({ lane: LANE }, ['lane']), annotations: { title: 'Land', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         run: async (held, args) => {
             const repo = path.basename(held.root)
@@ -279,7 +279,7 @@ const call = async (name, args = {}) => {
 // ---------------------------------------------------------------------------
 
 const INSTRUCTIONS = 'LaneKit gives each piece of work a lane: a folder of its own beside the repository, on its own branch and port. ' +
-    'Call lanes first. Do work in a lane\'s folder, never in the main checkout; commit, gate, and ask the person before land, drop, push or review. ' +
+    'Call lanes first. Do work in a lane\'s folder, never in the main checkout; commit, verify (the gate tool), and ask the person before land, drop, push or review. ' +
     'What a tool refuses, it says why: follow that rather than working around it.'
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)

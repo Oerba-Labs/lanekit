@@ -114,7 +114,7 @@ test('a lane through its tools: made, committed, refused a land before its gate,
 
     said = await tool('gate', { lane: 'idea' })
     assert.equal(said.isError, false, said.text)
-    assert.match(said.text, /READY/)
+    assert.match(said.text, /VERIFIED/)
     assert.match((await tool('lanes')).text, /- idea \(ready to land\)/)
     said = await tool('land', { lane: 'idea' })
     assert.equal(said.isError, false, said.text)

@@ -397,18 +397,18 @@ test('a lane\'s buttons sit beside its name and state, and are held until what t
 
     const held = await page.run((() => {
         const say = (button) => ({ disabled: button.disabled, title: button.title })
-        return { readyGate: say(laneButton('ready', 'Gate')), readyLand: say(laneButton('ready', 'Land')), featureGate: say(laneButton('feature', 'Gate')), featureLand: say(laneButton('feature', 'Land')) }
+        return { readyGate: say(laneButton('ready', 'Verify')), readyLand: say(laneButton('ready', 'Land')), featureGate: say(laneButton('feature', 'Verify')), featureLand: say(laneButton('feature', 'Land')) }
     }))
     assert.equal(held.readyGate.disabled, false, 'a commit, nothing uncommitted: it can be gated')
     assert.equal(held.readyLand.disabled, true)
-    assert.match(held.readyLand.title, /^Gate it first: a land needs a green gate on its newest commit/)
+    assert.match(held.readyLand.title, /^Verify it first: a land needs its newest commit verified/)
     assert.equal(held.featureGate.disabled, true)
     assert.match(held.featureGate.title, /^Commit first/)
     assert.match(held.featureLand.title, /^Commit first/)
 
     // Gated from the page: then, and only then, Land.
-    await page.click((() => laneButton('ready', 'Gate')))
-    await page.click((() => laneButton('ready', 'Gate it')))
+    await page.click((() => laneButton('ready', 'Verify')))
+    await page.click((() => laneButton('ready', 'Verify it')))
     await page.until((() => { const land = laneButton('ready', 'Land'); return land && !land.disabled && card('ready').querySelector('.lane-title > .state').textContent === 'Ready to land' }),
         [], { what: 'ready gated green, and Land pressable' })
     assert.equal(await page.run((() => laneButton('ready', 'Land').classList.contains('primary'))), true, 'the next thing to do, solid')
@@ -711,7 +711,7 @@ test('with the details pane open in a window of middling width, a lane\'s toolba
         }), [], { what: 'feature\'s toolbar under the pointer' })
         assert.ok(seen.right <= seen.pane, `the toolbar ends before the pane begins: ${JSON.stringify(seen)}`)
         assert.ok(seen.count >= 5, `the editor's whole toolbar: ${JSON.stringify(seen)}`)
-        assert.deepEqual(seen.said, ['Gate (next)'], `only the next step keeps its word: ${JSON.stringify(seen)}`)
+        assert.deepEqual(seen.said, ['Verify (next)'], `only the next step keeps its word: ${JSON.stringify(seen)}`)
         // The ⋯ menu's items keep their words, whatever the toolbar's own buttons show.
         await middling.click((() => card('feature').querySelector('.hover-actions .more')))
         const menu = await middling.until((() => {
