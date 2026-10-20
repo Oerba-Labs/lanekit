@@ -603,6 +603,8 @@ test('a lane an agent lands slides into main\'s line as it goes, its merge commi
     const tip = git(repo, 'rev-parse', 'HEAD')
     await page.until((sha) => !card('tiny') && document.querySelector('li.commit.tip')?.dataset.sha === sha, [tip], { what: 'tiny gone, and main at its merge' })
     assert.equal(await page.run(() => document.querySelector('li.commit.tip .tag.merged')?.textContent), 'tiny', 'main\'s merge is tagged with the lane it brought')
+    assert.equal(await page.run(() => document.querySelector('li.commit.tip .subject')?.textContent), 'Landed', 'and reads Landed, git\'s words in its title')
+    assert.match(await page.run(() => document.querySelector('li.commit.tip').title), /^Merge branch 'tiny'/)
     const seen = await page.run(() => window.__motion)
     const said = JSON.stringify(seen.map((one) => `${one.id} ${one.key ?? one.text.slice(0, 40)} ${one.transforms.join(' ')}`))
     assert.ok(seen.some((one) => one.id === 'motion-leave' && /Add a tiny thing/.test(one.text) && one.transforms.some((transform) => /translateX\(-/.test(transform))),
@@ -754,4 +756,18 @@ test('what waits on you is one line under the switcher: a lane ready to land, a 
         await page.click((() => [...document.querySelectorAll('#strip button')].find((item) => / ready to land$/.test(item.textContent))))
         await page.until((name) => card(name)?.classList.contains('flash'), [said.ready[0]], { what: `${said.ready[0]} marked` })
     }
+})
+
+test('a lane folds to its name from the mark on its line, or z, and unfolds the same way, remembered by the page', { skip, timeout: 60_000 * SLOW }, async () => {
+    const shown = () => ({ folded: card('feature').classList.contains('folded'), stack: getComputedStyle(card('feature').querySelector(':scope > .stack')).display, name: Boolean(card('feature').querySelector('.lane-name')), mark: card('feature').querySelector('.fold').getAttribute('aria-expanded') })
+    assert.deepEqual(await page.run(shown), { folded: false, stack: 'block', name: true, mark: 'true' })
+    await page.click((() => card('feature').querySelector('.fold')))
+    await page.until(`() => { const s = (${shown})(); return s.folded && s.stack === 'none' }`, [], { what: 'feature folded' })
+    assert.deepEqual(await page.run(shown), { folded: true, stack: 'none', name: true, mark: 'false' })
+    // Drawn again, it stays folded; z unfolds it.
+    await page.run(() => refresh().then(() => true))
+    assert.equal(await page.run(() => card('feature').classList.contains('folded')), true)
+    await page.run(() => { card('feature').focus(); card('feature').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true })); return true })
+    await page.until((() => !card('feature').classList.contains('folded')), [], { what: 'feature unfolded' })
+    assert.equal(await page.run(() => getComputedStyle(card('feature').querySelector(':scope > .stack')).display), 'block')
 })
