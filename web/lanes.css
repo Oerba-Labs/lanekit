@@ -535,6 +535,87 @@ li[data-key]:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--
 .agent-chip.needs-you .state { font-weight: 600; }
 .agent-chip.busy .state::before { animation: pulse 1.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .agent-chip.busy .state::before { animation: none; } }
+/* A repository's agents, in a menu at its head: one button saying how many and how many need you, opening every one,
+   grouped, each on a row of its own with where it works and its session. */
+.btn.agents-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.agents-toggle .agents-needs::before { content: "·"; margin-right: 6px; color: var(--muted); font-weight: 400; }
+.agents-toggle .caret { font-size: var(--s11); color: var(--muted); }
+.agents-toggle .agents-needs { color: var(--warn); font-weight: 600; }
+.agents-toggle.needs-you { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.agents-toggle.busy > .icon { color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .agents-toggle.busy > .icon { animation: none; } }
+.agents-panel { min-width: 440px; max-width: calc(100vw - 32px); max-height: 60vh; overflow: auto; padding: 4px 4px 6px; }
+.agents-group { margin: 6px 8px 2px; font-size: var(--s11); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.agent-row {
+  display: grid; grid-template-columns: 5.5em minmax(7em, max-content) 1fr auto 5em; align-items: center; gap: 4px 10px;
+  width: 100%; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit;
+  font-size: var(--s12); text-align: left; cursor: pointer;
+}
+.agent-row:hover:not(:disabled), .agent-row.pointer:not(:disabled) { background: var(--vscode-list-hoverBackground, var(--soft)); }
+.agent-row:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; }
+.agent-row:disabled { cursor: default; }
+.agent-row .agent-name { color: var(--ink); font-weight: 500; }
+.agent-row .agent-where { justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-row.needs-you .state { font-weight: 600; }
+.agent-row .state.busy::before { animation: pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .agent-row .state.busy::before { animation: none; } }
+.agent-row .when, .agent-row .agent-session { color: var(--muted); font-size: var(--s11); }
+.agent-row .when { text-align: right; }
+html[data-compact] .agents-panel { min-width: 0; width: min(320px, calc(100vw - 24px)); }
+/* The side bar wraps the repository's head, so its agents button sits at the left: the menu opens rightward from it. */
+html[data-surface="sidebar"] .agents-panel { left: 0; right: auto; }
+html[data-compact] .agent-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+html[data-compact] .agent-row .state { grid-column: 1 / 3; justify-self: start; }
+html[data-compact] .agent-row .agent-session { display: none; }
+
+/* A repository's two views, Log and Landing, as tabs at the head of its landing order. */
+.views { display: flex; gap: 4px; margin: 12px 0 0; border-bottom: 1px solid var(--line); }
+.view-tab {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 8px 6px; margin-bottom: -1px;
+  border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: var(--s13); cursor: pointer;
+}
+.view-tab:hover { color: var(--ink); }
+.view-tab:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; border-radius: 4px; }
+.view-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.view-tab .n { font-size: var(--s12); font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.views + .queue { margin-top: 0; border-top: 0; }
+.landing[hidden], .log[hidden] { display: none; }
+
+/* The landing order laid out whole: a table of every lane, in its groups; in a narrow column each row a card. */
+.landing { margin: 12px 0 0; }
+.landing-empty { margin: 16px 0; }
+.landing-table { width: 100%; border-collapse: collapse; font-size: var(--s12); }
+.landing-table thead th {
+  padding: 4px 10px 6px 0; text-align: left; font-size: var(--s11); font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.landing-table td, .landing-table tbody th { padding: 8px 10px 8px 0; vertical-align: top; text-align: left; font-weight: 400; border-bottom: 1px solid var(--line); }
+.landing-table .landing-group-head th { padding: 14px 0 6px; border-bottom: 1px solid var(--line); font-size: var(--s12); font-weight: 600; color: var(--ink); }
+.landing-group-head th > * { vertical-align: middle; }
+.landing-group-head .queue-dot { display: inline-block; margin-right: 6px; }
+.landing-group-head .n { margin-left: 6px; font-weight: 400; color: var(--muted); }
+.landing-lane:hover, .landing-lane.pointer { background: var(--wash); }
+.landing-lane .lane-name { border: 0; font: inherit; font-family: var(--mono); cursor: pointer; }
+.landing-lane .wants-badge { display: block; margin-top: 4px; width: fit-content; white-space: nowrap; }
+.landing-lane .wants-badge:empty { display: none; }
+.landing-why { margin-top: 2px; color: var(--muted); max-width: 32ch; }
+.landing-collision { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
+.landing-paths { color: var(--muted); font-size: var(--s11); word-break: break-all; }
+.landing-lane .agents { flex-direction: column; gap: 2px; margin: 0; }
+.landing-step { text-align: right !important; white-space: nowrap; }
+html[data-compact] .landing-table thead { display: none; }
+html[data-compact] .landing-table, html[data-compact] .landing-table tbody, html[data-compact] .landing-table tr { display: block; }
+html[data-compact] .landing-table .landing-group-head th { display: block; }
+html[data-compact] .landing-lane { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+html[data-compact] .landing-lane > * { display: block; padding: 0; border: 0; }
+html[data-compact] .landing-lane > td:not(.landing-step) { grid-column: 1 / -1; }
+html[data-compact] .landing-lane > th { grid-column: 1; }
+html[data-compact] .landing-lane > .landing-step { grid-column: 2; grid-row: 1; }
+html[data-compact] .landing-lane > td[data-label]:not([data-label="Needs"])::before { content: attr(data-label) ": "; color: var(--muted); }
+html[data-compact] .landing-lane > td[data-label] > div { display: inline; margin-right: 8px; }
+html[data-compact] .landing-lane > td[data-label="Needs"] > .landing-why { display: block; max-width: none; }
+html[data-compact] .landing-lane > td[data-label] > .agents:not(:empty) { display: inline-flex; flex-direction: row; flex-wrap: wrap; gap: 2px 12px; vertical-align: top; }
+html[data-compact] .landing-lane > td:has(> .muted:only-child), html[data-compact] .landing-lane > td:has(> .agents:empty:only-child) { display: none; }
 @media (prefers-reduced-motion: reduce) { .live .state::before { animation: none; } }
 /* Why a gate failed: the step, and its last lines. */
 .failure { margin: 6px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--risk-wash); font-size: var(--s12); }

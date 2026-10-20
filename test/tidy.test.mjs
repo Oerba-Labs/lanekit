@@ -282,3 +282,23 @@ test('home says each repository at a glance: its lanes, its landing order, its a
     const broken = glanceOf({ id: 'demo', error: 'lane.config.json is not JSON', lanes: [] }, agents, [])
     assert.deepEqual([broken.lanes, broken.groups, broken.running], [0, [], null])
 })
+
+test('a repository\'s agents menu lists those that need you first, then those at work, then those idle, each longest-waiting first', () => {
+    // agentGroupsOf, read from the page as it is written there and run here: plain data in and out.
+    const page = fs.readFileSync(path.join(KIT, 'web', 'lanes.js'), 'utf8')
+    const start = page.indexOf('const AGENT_GROUPS = [')
+    const end = '.filter((group) => group.agents.length)'
+    const fn = page.indexOf('const agentGroupsOf = ', start)
+    assert.ok(start !== -1 && fn !== -1, 'the page has the grouping')
+    const agentGroupsOf = new Function(`${page.slice(start, page.indexOf(end, fn) + end.length)}; return agentGroupsOf`)()
+    const agent = (key, state, since) => ({ key, state, since })
+    const groups = agentGroupsOf([
+        agent('done', 'done', 5), agent('asks', 'needs-you', 30), agent('runs', 'running', 10), agent('ready', 'ready', 1),
+        agent('asked-first', 'needs-you', 20), agent('broke', 'failed', 25), agent('thinks', 'thinking', 40)
+    ])
+    assert.deepEqual(groups.map((group) => group.label), ['Needs you', 'At work', 'Idle'])
+    assert.deepEqual(groups[0].agents.map((one) => one.key), ['asked-first', 'broke', 'asks'], 'a failed agent needs you too; the longest waiting first')
+    assert.deepEqual(groups[1].agents.map((one) => one.key), ['runs', 'thinks'])
+    assert.deepEqual(groups[2].agents.map((one) => one.key), ['ready', 'done'])
+    assert.deepEqual(agentGroupsOf([agent('runs', 'running', 1)]).map((group) => group.id), ['working'], 'a group with nobody in it is left out')
+})
