@@ -273,10 +273,15 @@ html[data-compact] .subject { max-width: none; }
 .wants-badge:empty { display: none; }
 .lane-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
 /* Its name at the top of its line, where a branch is labelled, marked on the line. */
-.lane > .lane-head::before {
-  content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 4px); top: 9px;
-  width: 8px; height: 8px; border-radius: 2px; background: var(--lane);
-}
+.lane > .lane-head > .fold { position: absolute; left: calc(var(--column) - var(--indent) - 7px); top: 6px; width: 14px; height: 14px; padding: 0; border: 0; background: none; cursor: pointer; }
+.lane > .lane-head > .fold::before { content: ""; position: absolute; left: 3px; top: 3px; width: 8px; height: 8px; border-radius: 2px; background: var(--lane); transition: transform 0.12s ease; }
+.lane > .lane-head > .fold:hover::before { transform: scale(1.4); }
+.lane > .lane-head > .fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+/* Folded to its name: a hollow mark, and its files, commits and facts out of the way; what waits on you (its agents, a
+   question asked in it) stays. */
+.lane.folded > .lane-head > .fold::before { background: var(--bg); border: 2px solid var(--lane); box-sizing: border-box; }
+.lane.folded > :is(.changes, .stack, .facts, .collide, .live, .why, .failure, .files.conflicts) { display: none; }
+.lane.folded { padding-bottom: 14px; }
 .lane > .lane-head + .agents:empty + .facts:empty { margin: 0; }
 .lane > .changes, .lane > .stack { margin-top: 8px; }
 /* Its name, its state, and what can be done with it, side by side: the toolbar sits beside the state, never across the
@@ -339,7 +344,8 @@ html[data-surface="sidebar"] .commit::before { left: calc(var(--spine) - 4px); t
 html[data-surface="sidebar"] .older, html[data-surface="sidebar"] .log > li.foot { padding-left: calc(var(--spine) + 16px); }
 html[data-surface="sidebar"] .lane { padding-top: 4px; padding-bottom: 16px; }
 html[data-surface="sidebar"] .lane::before { top: 10px; bottom: 14px; }
-html[data-surface="sidebar"] .lane > .lane-head::before { left: calc(var(--column) - var(--indent) - 3px); top: 8px; width: 6px; height: 6px; }
+html[data-surface="sidebar"] .lane > .lane-head > .fold { left: calc(var(--column) - var(--indent) - 6px); top: 5px; width: 12px; height: 12px; }
+html[data-surface="sidebar"] .lane > .lane-head > .fold::before { width: 6px; height: 6px; }
 html[data-surface="sidebar"] .lane.adrift { padding-bottom: 8px; }
 html[data-surface="sidebar"] .lane-head { gap: 4px 6px; min-height: 24px; }
 html[data-surface="sidebar"] .lane-head .grow { display: none; }

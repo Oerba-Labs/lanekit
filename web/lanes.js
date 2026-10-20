@@ -131,6 +131,7 @@ const browserHost = () => ({
         return response.json()
     },
     cancel: async (id) => (await fetch(`api/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST', headers: { 'x-lanes': '1' } })).ok,
+    stop: async (id) => (await fetch(`api/jobs/${encodeURIComponent(id)}/stop`, { method: 'POST', headers: { 'x-lanes': '1' } })).ok,
     commit: async (repoPath, sha) => {
         const response = await fetch(`api/commit?repo=${encodeURIComponent(repoPath)}&sha=${encodeURIComponent(sha)}`, { cache: 'no-store' })
         if (!response.ok) throw new Error(response.status === 404 ? 'That commit is not here.' : String(response.status))
@@ -185,6 +186,7 @@ const editorHost = (api) => {
         },
         open: (what, params) => ask('open', { what, ...params }),
         cancel: (id) => ask('cancel', { id }),
+        stop: (id) => ask('stop', { id }),
         commit: (repoPath, sha) => ask('commit', { repo: repoPath, sha }),
         history: (repo, way, lane) => ask('history', { repo, way, lane }),
         copy: (text) => ask('copy', { text }),
@@ -531,6 +533,13 @@ let lastDrawnAt = 0
 const keep = (part) => host.remember({ ...(host.recall() ?? {}), ...part })
 // `${repo}/${lane}` showing every commit, `…:changes` every uncommitted file; never a lane's ⋯ menu left open by a page before.
 const expanded = new Set((host.recall()?.expanded ?? []).filter((key) => !key.endsWith(':more') && !key.endsWith(':files')))
+// `${repo}/${lane}` folded to its name row: its files, commits and facts kept out of the way until it is unfolded.
+const folded = new Set(host.recall()?.folded ?? [])
+const toggleFold = (key) => {
+    if (folded.has(key)) folded.delete(key); else folded.add(key)
+    keep({ folded: [...folded] })
+    draw(true)
+}
 const toggle = (key) => {
     if (expanded.has(key)) expanded.delete(key); else expanded.add(key)
     keep({ expanded: [...expanded] })
@@ -1252,9 +1261,11 @@ const listenForDrops = (log) => {
     })
 }
 
-/** A merge on main, tagged with the lane it brought, in that lane's colour: the words git gives a merge name it. */
+/** The lane a merge on main brought, from the words git gives a merge; null for any other commit. */
+const mergedOf = (commit) => /^Merge branch '([^']+)'/.exec(commit.subject ?? '')?.[1] ?? null
+/** A merge on main, tagged with the lane it brought, in that lane's colour. */
 const mergedTag = (repo, commit) => {
-    const name = /^Merge branch '([^']+)'/.exec(commit.subject ?? '')?.[1]
+    const name = mergedOf(commit)
     return name ? el('span', { class: 'tag merged', 'data-hue': hueName(repo, name), text: name, title: `Landed from ${name}` }) : null
 }
 
@@ -1269,7 +1280,8 @@ const commitRow = (repo, commit, className, label) => {
         label ? el('span', { class: 'tag', text: label, 'data-anim': `${repo.id}:tag:${label}` }) : null,
         remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch`, 'data-anim': `${repo.id}:tag:${remote}` }) : null,
         isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
-            el('span', { class: 'subject', text: commit.subject }),
+            // A merge reads Landed, with the lane as its tag; git's own words are in the row's title and the details.
+            el('span', { class: 'subject', text: mergedOf(commit) ? 'Landed' : commit.subject }),
             mergedTag(repo, commit),
             el('span', { class: 'when', text: short(commit.at), title: exactly(commit.at) }),
             rowActions(repo, commit)
@@ -1838,6 +1850,11 @@ const cancelJob = async (id) => {
     refresh()
 }
 const CMDBAR_KEPT_MS = 120_000
+/** A press under way, stopped where it is: its process and what it ran are ended, and the job says so. */
+const stopJob = async (id) => {
+    try { if (!await host.stop(id)) notice('It had ended already.') } catch { notice('LaneKit did not answer; nothing was stopped.') }
+    refresh()
+}
 const drawCommandBar = () => moving(drawBar)
 const drawBar = () => {
     const bar = $('cmdbar')
@@ -1860,7 +1877,8 @@ const drawBar = () => {
             : el('span', { class: `mark ${ok ? 'ok' : 'bad'}`, text: ok ? '✓' : '✗', title: ok ? 'It finished' : `It failed (exit ${last.code})`, 'data-anim': 'cmd:mark', 'data-sig': mark })) : null,
         last ? el('code', { class: 'cmd', text: typed(last.command), title: last.command, 'data-anim': 'cmd:cmd', 'data-sig': last.id }) : null,
         running?.step ? el('span', { class: 'cmd-step', text: running.step, 'data-anim': 'cmd:step', 'data-sig': running.step }) : null,
-        running ? el('span', { class: 'live-clock', 'data-since': String(running.startedAt), text: secondsSince(running.startedAt) })
+        running ? [el('span', { class: 'live-clock', 'data-since': String(running.startedAt), text: secondsSince(running.startedAt) }),
+            el('button', { type: 'button', class: 'btn link cancel', text: '×', 'aria-label': `Stop ${running.verb}${running.lane ? ` ${running.lane}` : ''}`, title: 'Stop it where it is', onclick: () => stopJob(running.id) })]
             : last?.endedAt ? el('span', { class: 'when', text: short(last.endedAt), title: exactly(last.endedAt) }) : null,
         waiting.length ? el('span', { class: 'queued', 'data-anim': 'cmd:queued' },
             el('span', { class: 'muted', text: 'then' }),
@@ -2379,12 +2397,18 @@ const laneCard = (repo, lane, forked = true) => {
     // Something running in it, or about to, by a press here or anywhere: a light runs down its line toward main.
     const underway = Boolean(lane.pending || runningIn(repo, lane))
     const card = el('li', {
-        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${underway ? ' working' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
+        class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${folded.has(key) ? ' folded' : ''}${underway ? ' working' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
         'data-key': key, 'data-hue': hueName(repo, lane.name), tabindex: '0', draggable: draggable ? 'true' : null,
         title: draggable ? 'Drag it onto a commit of main to rebase it there' : null,
         'data-anim': key, 'data-anim-kids': true
     },
         el('div', { class: 'lane-head' },
+            // The mark on its line folds it to its name, and unfolds it.
+            el('button', {
+                type: 'button', class: 'fold', 'aria-expanded': String(!folded.has(key)), 'aria-label': `${folded.has(key) ? 'Unfold' : 'Fold'} ${lane.name}`,
+                title: folded.has(key) ? 'Show its files and commits again (z)' : 'Fold it to its name (z)',
+                onclick: (event) => { event.stopPropagation(); toggleFold(key) }
+            }),
             // Its name, its state, and beside them, never across the page from them, what can be done with it.
             el('div', { class: 'lane-title' },
                 laneName(repo, lane),
@@ -3304,7 +3328,7 @@ const KEYS = [
     ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its newest commit\'s details'],
     ['g', 'gate it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it, or pull what origin has of it that it lacks'],
     ...(host.inEditor ? [['o', 'its terminal: yours moves to it, and the files you have open reopen from it'], ['a', 'start an agent in it']] : []),
-    ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
+    ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['z', 'fold it to its name, or unfold it'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
     ['[  ]', 'the repository before, or the next, Home among them'], ['?', 'these keys'],
     ['Esc', 'close the details, this, or the output']
 ]
@@ -3369,6 +3393,7 @@ document.addEventListener('keydown', (event) => {
             : lane.stack?.[0] ? select({ repo: repo.id, sha: lane.stack[0].sha, lane: lane.name }) : null,
         c: () => { if (lane.dirty && !lane.operation && !isMerged(lane)) select({ repo: repo.id, lane: lane.name, form: 'commit' }) },
         u: () => { if (lane.ahead > 0 && !lane.operation) uncommitLane(repo, lane) },
+        z: () => toggleFold(here.key),
         g: () => unless(gateBlockOf(lane), () => confirm('gate')),
         l: () => unless(byPullRequest(repo) ? `${repo.integrationBranch} takes its changes by pull request: Merge… lands it` : landBlockOf(repo, lane), () => check(repo, lane, 'land')),
         r: () => lane.behind > 0 && confirm('rebase'),

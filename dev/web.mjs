@@ -85,6 +85,8 @@ const routeOf = (pathname) => {
     if (job) return { name: 'job', id: job[1] }
     const cancel = /\/api\/jobs\/([a-z0-9-]+)\/cancel$/.exec(pathname)
     if (cancel) return { name: 'cancel', id: cancel[1] }
+    const stop = /\/api\/jobs\/([a-z0-9-]+)\/stop$/.exec(pathname)
+    if (stop) return { name: 'stop', id: stop[1] }
     for (const [tail, file] of Object.entries(FILES)) {
         if (tail !== '/' && pathname.endsWith(tail)) return { name: 'file', file }
     }
@@ -119,6 +121,10 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
                 // A commit's words and files, for the details pane: of a repository this page reads, only.
                 const details = await service.commitDetails(String(url.searchParams.get('repo') ?? ''), String(url.searchParams.get('sha') ?? ''))
                 return details ? send(response, 200, details) : send(response, 404, { error: 'no such commit here' })
+            }
+            if (request.method === 'POST' && route.name === 'stop') {
+                if (request.headers['x-lanes'] !== '1') return send(response, 403, { error: 'this address takes presses from the lanes page only' })
+                return service.stop(route.id) ? send(response, 200, { stopped: true }) : send(response, 409, { error: 'it is not running' })
             }
             if (request.method === 'POST' && route.name === 'cancel') {
                 if (request.headers['x-lanes'] !== '1') return send(response, 403, { error: 'this address takes presses from the lanes page only' })
@@ -162,6 +168,8 @@ export const startServer = ({ scan, port = DEFAULT_PORT, sshHost = null, browser
 
     return new Promise((resolve, reject) => {
         server.once('error', reject)
+        // The server going down takes what it ran with it: a gate's tests do not outlive the page that started them.
+        for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { service.stopAll(); server.close(); setTimeout(() => process.exit(130), 300).unref() })
         server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port, service }))
     })
 }

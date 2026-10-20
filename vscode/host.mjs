@@ -904,6 +904,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             }
             case 'job': return service.job(String(params.id ?? ''), params.from)
             case 'cancel': return service.cancel(String(params?.id ?? ''))
+            case 'stop': return service.stop(String(params?.id ?? ''))
             case 'commit': {
                 // A commit's words and files, for the details pane: only a commit of a repository LaneKit reads.
                 const repo = service.known().repos.find((candidate) => candidate.path === params?.repo && !candidate.error)

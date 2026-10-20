@@ -276,9 +276,11 @@ The page in the picture above, for every repository in a folder:
   --existing` brings a dropped lane back from its branch; deleting the branch is a step of its own.
 - **Each lane** is drawn from its name down, in a colour of its own: its name as a tag at the top of
   its line, with its state and its buttons, then its uncommitted files, then its commits as dots on the
-  line, newest first, and the line curves into main's at the commit it started from. The colour is the
+  line, newest first, and the line curves into main's at the commit it started from; the mark on its
+  line folds it to its name, and unfolds it (`z` too). The colour is the
   one its terminals wear in the editor, from its name (two lanes whose names fall on one colour take
-  two), and a merge on main is tagged with the lane it brought, in that lane's colour. A
+  two), and a merge on main reads *Landed* with the lane it brought as a tag in that lane's colour,
+  git's own words in its tooltip. A
   commit is its words and its age (*22m*, *3d*); its hash is in its tooltip. Under the name, quietly:
   its last gate, whether it is pushed (or what origin has of it that it lacks), its pull request when
   `gh` is signed in, and what serves on its port while anything does. While a press runs in it, it says
@@ -297,7 +299,8 @@ The page in the picture above, for every repository in a folder:
   is in the tooltip and the details. Each command carries an icon of its own.
 - **The command bar along the bottom** says what is running, with its step and a clock, how the
   last command went (✓ or ✗, as you would type it), and what waits its turn: a press made while
-  its repository is busy joins a line, is checked again when its turn comes, and can be cancelled
+  its repository is busy joins a line, is checked again when its turn comes, and can be cancelled;
+  one under way is stopped where it is with its ×, with whatever it ran. A press can be cancelled
   with its ×. The output opens with a click, and by itself when something you pressed fails.
 - **What a press will do is drawn at once**, before it has: a commit appears in its lane, dashed,
   as its files leave the list; a rebased lane moves above its new commit; a new lane appears where
