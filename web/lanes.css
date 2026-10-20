@@ -128,6 +128,8 @@ a:hover { text-decoration: underline; }
 }
 .updated { color: var(--muted); font-size: var(--s12); flex: none; }
 .updated.lost { color: var(--warn); }
+/* Up to date: a dot alone; the words are its title. */
+.updated.ok::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--done); vertical-align: middle; }
 
 /* The switcher: a tab for every repository, and All, while the page has more than one. Each sits on the bar's
    own line, as an editor's tabs do, and scrolls sideways rather than widening the page. */
@@ -793,7 +795,8 @@ html[data-compact] .cmdbar .cmd-step, html[data-compact] .cmdbar .queued { displ
 /* A button with an icon: the icon in the button's own ink, beside its word, or alone with the word as its title. */
 .btn.with-icon { display: inline-flex; align-items: center; gap: 5px; }
 .btn.with-icon .icon { flex: none; }
-.btn.icon-only { padding-left: 5px; padding-right: 5px; }
+/* An icon alone, as tall as a word beside it would be. */
+.btn.icon-only { padding-left: 5px; padding-right: 5px; box-sizing: content-box; min-height: 1.45em; }
 .btn.link.with-icon { gap: 5px; }
 .badges .icon { width: 12px; height: 12px; }
 .cmdbar .btn.with-icon .icon { width: 13px; height: 13px; }

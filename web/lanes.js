@@ -587,9 +587,13 @@ const took = (state) => {
     current = state
     for (const job of state.jobs ?? []) doneHere(job)
     settleOptimistic()
+    // Up to date: a dot, with the words as its title; words only while the server is lost.
     const updated = $('updated')
     updated.classList.remove('lost')
-    updated.textContent = 'Up to date'
+    updated.classList.add('ok')
+    updated.textContent = ''
+    updated.title = 'Up to date'
+    updated.setAttribute('aria-label', 'Up to date')
     draw()
     drawAgents()
 }
@@ -602,6 +606,8 @@ const refresh = async () => {
         // ask again, never take the silence for an answer.
         const updated = $('updated')
         updated.classList.add('lost')
+        updated.classList.remove('ok')
+        updated.removeAttribute('aria-label')
         updated.textContent = host.inEditor ? 'LaneKit did not answer; asking again' : 'Cannot reach the lanes server; asking again'
     }
 }
@@ -1831,6 +1837,7 @@ const cancelJob = async (id) => {
     try { if (!await host.cancel(id)) notice('It had begun already, so it was not cancelled.') } catch { notice('LaneKit did not answer; nothing was cancelled.') }
     refresh()
 }
+const CMDBAR_KEPT_MS = 120_000
 const drawCommandBar = () => moving(drawBar)
 const drawBar = () => {
     const bar = $('cmdbar')
@@ -1838,7 +1845,9 @@ const drawBar = () => {
     const running = jobs.find((job) => job.state === 'running')
     const waiting = jobs.filter((job) => job.state === 'queued').reverse()
     const last = running ?? jobs.find((job) => job.state === 'done')
-    if (!last && !waiting.length) { bar.hidden = true; document.body.classList.remove('has-cmdbar'); return }
+    // Nothing to say once the last press is minutes behind, unless its output is open: the bar goes, and the page's foot is quiet.
+    const stale = !running && !waiting.length && last?.endedAt && Date.now() - last.endedAt > CMDBAR_KEPT_MS && !(shownJob === last.id && !$('job').hidden)
+    if ((!last && !waiting.length) || stale) { bar.hidden = true; document.body.classList.remove('has-cmdbar'); return }
     motion.appear(bar, 0, 12)
     document.body.classList.add('has-cmdbar')
     const ok = last && last.state === 'done' && last.code === 0

@@ -338,6 +338,8 @@ test('the page says nothing of where you are, nor Goto, nor that a repository ha
     assert.doesNotMatch(text, /You are here/)
     assert.doesNotMatch(text, /\bGoto\b/)
     assert.equal(await page.run((() => [...card('feature').querySelectorAll('.facts button')].filter((button) => /files? changed/.test(button.textContent)).length)), 0)
+    // Up to date is a dot, its words the title: the bar's edge says nothing while all is well.
+    assert.deepEqual(await page.run(() => { const dot = document.getElementById('updated'); return { words: dot.textContent, ok: dot.classList.contains('ok'), title: dot.title } }), { words: '', ok: true, title: 'Up to date' })
 
     const quiet = await open(browser, `${base}?repo=quiet`)
     try {
