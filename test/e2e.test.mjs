@@ -352,7 +352,7 @@ test('the page says nothing of where you are, nor Goto, nor that a repository ha
     }
 })
 
-test('a lane is drawn from where it forked up: its uncommitted files on top, its commits under them, its name at its base', { skip, timeout: 60_000 * SLOW }, async () => {
+test('a lane is drawn from its name down, in a colour of its own: its name at the top of its line, its uncommitted files under it, its commits under them', { skip, timeout: 60_000 * SLOW }, async () => {
     const layout = await page.run((() => {
         const lane = card('feature')
         const kids = [...lane.children]
@@ -360,16 +360,22 @@ test('a lane is drawn from where it forked up: its uncommitted files on top, its
         const box = (node) => node.getBoundingClientRect()
         const commits = [...lane.querySelectorAll(':scope > .stack > .stack-commit')]
         return {
-            order: [at('.changes'), at('.stack'), at('.lane-head')],
+            order: [at('.lane-head'), at('.changes'), at('.stack')],
+            nameAboveFiles: box(lane.querySelector(':scope > .lane-head')).bottom <= box(lane.querySelector(':scope > .changes')).top + 1,
             filesAboveCommits: box(lane.querySelector(':scope > .changes')).bottom <= box(commits[0]).top + 1,
-            nameBelowCommits: box(lane.querySelector(':scope > .lane-head')).top >= box(commits.at(-1)).bottom - 1,
-            name: lane.querySelector('.lane-head .lane-name').textContent
+            name: lane.querySelector('.lane-head .lane-name').textContent,
+            hue: lane.dataset.hue,
+            line: getComputedStyle(lane, '::before').backgroundColor, dot: getComputedStyle(commits[0], '::before').backgroundColor,
+            tag: getComputedStyle(lane.querySelector('.lane-head .lane-name')).color,
+            hues: [...document.querySelectorAll('li.lane[data-key]')].map((one) => one.dataset.hue)
         }
     }))
     assert.ok(layout.order[0] < layout.order[1] && layout.order[1] < layout.order[2], JSON.stringify(layout.order))
-    assert.ok(layout.filesAboveCommits)
-    assert.ok(layout.nameBelowCommits)
+    assert.ok(layout.nameAboveFiles && layout.filesAboveCommits, JSON.stringify(layout))
     assert.equal(layout.name, 'feature')
+    assert.match(layout.hue, /^(cyan|magenta|yellow|green|blue|red)$/)
+    assert.ok(layout.line === layout.dot && layout.line === layout.tag, `its line, its dots and its name in one colour: ${JSON.stringify(layout)}`)
+    assert.equal(new Set(layout.hues).size, layout.hues.length, `each lane a colour of its own: ${layout.hues.join(', ')}`)
 })
 
 test('a lane\'s buttons sit beside its name and state, and are held until what they need is there, saying what that is', { skip, timeout: 120_000 * SLOW }, async () => {
@@ -592,6 +598,7 @@ test('a lane an agent lands slides into main\'s line as it goes, its merge commi
     lane('land', 'tiny')
     const tip = git(repo, 'rev-parse', 'HEAD')
     await page.until((sha) => !card('tiny') && document.querySelector('li.commit.tip')?.dataset.sha === sha, [tip], { what: 'tiny gone, and main at its merge' })
+    assert.equal(await page.run(() => document.querySelector('li.commit.tip .tag.merged')?.textContent), 'tiny', 'main\'s merge is tagged with the lane it brought')
     const seen = await page.run(() => window.__motion)
     const said = JSON.stringify(seen.map((one) => `${one.id} ${one.key ?? one.text.slice(0, 40)} ${one.transforms.join(' ')}`))
     assert.ok(seen.some((one) => one.id === 'motion-leave' && /Add a tiny thing/.test(one.text) && one.transforms.some((transform) => /translateX\(-/.test(transform))),

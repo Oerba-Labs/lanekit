@@ -14,6 +14,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 
+import { HUES, hueOf, huesOf } from '../lib/colours.mjs'
+
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const page = fs.readFileSync(path.join(KIT, 'web', 'lanes.js'), 'utf8')
 /** The source from `const <first> = ` to the end of `const <last> = …`, run, and the functions it defines handed back. */
@@ -27,6 +29,7 @@ const fromPage = (first, last, names) => {
 const { mainBlockOf, gateBlockOf, landBlockOf, pullBlockOf } = fromPage('mainBlockOf', 'pullBlockOf', ['mainBlockOf', 'gateBlockOf', 'landBlockOf', 'pullBlockOf'])
 const { prStepOf } = fromPage('prStepOf', 'prStepOf', ['prStepOf'])
 const { fromHome } = fromPage('fromHome', 'fromHome', ['fromHome'])
+const colours = fromPage('HUES', 'huesOf', ['HUES', 'hueOf', 'huesOf'])
 
 const repo = (main = {}, extra = {}) => ({
     integrationBranch: 'main',
@@ -189,4 +192,18 @@ test('a path is said from home, as the page says one, and left alone where home 
     assert.equal(fromHome('/work/api', ''), '/work/api')
     assert.equal(fromHome('C:\\Users\\ada\\code\\api', 'C:\\Users\\ada'), '~\\code\\api', 'Windows, with its own slashes')
     assert.equal(fromHome(undefined, '/Users/ada'), undefined)
+})
+
+test('a lane\'s colour is the one its terminals wear, the page\'s copy of the rule being the editor\'s, and two lanes whose names fall together take different ones', () => {
+    assert.deepEqual(colours.HUES, HUES)
+    const names = Array.from({ length: 200 }, (_, i) => `lane-${i}`)
+    assert.deepEqual(names.map(colours.hueOf), names.map(hueOf), 'the same colour for every name')
+    assert.deepEqual([...colours.huesOf(names.slice(0, 9))], [...huesOf(names.slice(0, 9))], 'and the same way apart')
+    const twins = names.find((a) => names.some((b) => a !== b && hueOf(a) === hueOf(b)))
+    const twin = names.find((b) => b !== twins && hueOf(b) === hueOf(twins))
+    const apart = huesOf([twins, twin])
+    assert.notEqual(apart.get(twins), apart.get(twin), 'names on one colour take two')
+    assert.equal(new Set(huesOf(names.slice(0, 6)).values()).size, 6, 'six lanes, six colours')
+    assert.equal(huesOf(['a']).get('a'), hueOf('a'), 'alone, a lane keeps the colour its name falls on')
+    assert.deepEqual([...huesOf(['b', 'a'])], [...huesOf(['a', 'b'])], 'whatever the order they are named in')
 })

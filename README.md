@@ -274,9 +274,11 @@ The page in the picture above, for every repository in a folder:
   branch is kept, with the page saying whether origin has a copy or the branch here is the only one.
   A lane with uncommitted work is not dropped; commit or discard it first. `lane new <name>
   --existing` brings a dropped lane back from its branch; deleting the branch is a step of its own.
-- **Each lane** is drawn as a stack built on where it started: its uncommitted files on top, its
-  commits under them as dots on a line of its own, newest first, and at its base its name as a tag,
-  its state and its buttons, where its line curves into main's at the commit it started from. A
+- **Each lane** is drawn from its name down, in a colour of its own: its name as a tag at the top of
+  its line, with its state and its buttons, then its uncommitted files, then its commits as dots on the
+  line, newest first, and the line curves into main's at the commit it started from. The colour is the
+  one its terminals wear in the editor, from its name (two lanes whose names fall on one colour take
+  two), and a merge on main is tagged with the lane it brought, in that lane's colour. A
   commit is its words and its age (*22m*, *3d*); its hash is in its tooltip. Under the name, quietly:
   its last gate, whether it is pushed (or what origin has of it that it lacks), its pull request when
   `gh` is signed in, and what serves on its port while anything does. While a press runs in it, it says
@@ -330,7 +332,7 @@ The page in the picture above, for every repository in a folder:
   request**, **Set aside** and **Drop**, sits behind **⋯** at the toolbar's end.
 - **Its state is said once**, beside its name ("Needs a gate", "Ready to land"), with the gate's
   last result under it only where there is one. A lane whose agent waits on you says so there too
-  ("Claude needs you"), and its line turns amber, so a glance down the page finds it.
+  ("Claude needs you"), in amber, so a glance down the page finds it.
 - **A new lane starts from a commit.** Point at any commit, of main or of a lane, choose **New lane
   here**, and type its name in that row: the lane starts from that commit, on top of it.
 - **A lane can be dragged onto a commit of main** to rebase it there: while it is dragged, a ghost
