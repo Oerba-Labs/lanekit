@@ -376,19 +376,11 @@ html[data-surface="sidebar"] .job-head, html[data-surface="sidebar"] .job-out { 
 .files > div:not(.conflicts-head) { font-family: var(--mono); white-space: nowrap; }
 .files.conflicts { background: var(--warn-wash); }
 /* The queue: the order to land in, at the head of a repository. */
-.queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 12px 0 0; padding: 8px 0 6px; border-top: 1px solid var(--line); }
-/* The landing order stays under the bar as the log scrolls past it, so Land next is at hand; stuck, a line under it. */
+/* The tabs, and Land next at their end, stay under the bar as the log scrolls past them; stuck, a line under them. */
 html:not([data-compact]) .queue-row { position: sticky; top: var(--bar-h, 45px); z-index: 3; background: var(--bg); }
 html:not([data-compact]) .queue-row.stuck { box-shadow: 0 1px 0 var(--line); }
-.queue-title { font-size: var(--s11); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-/* The landing order in groups: what each needs, and an order only where lanes collide ("after …"). */
-.queue-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: var(--s13); min-width: 0; }
-.queue-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+/* A landing group's name, on Home's cards. */
 .queue-label { font-size: var(--s11); color: var(--muted); margin-right: 2px; }
-.queue-item { display: inline-flex; align-items: center; gap: 5px; padding: 1px 5px; border-radius: 4px; cursor: pointer; }
-.queue-item:hover, .queue-item.pointer { background: var(--vscode-list-hoverBackground, var(--soft)); }
-.queue-item:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; }
-.queue-after { font-size: var(--s11); color: var(--muted); }
 .queue-name { font-family: var(--mono); font-size: var(--s12); }
 .queue-name[data-hue] { color: var(--lane); }
 .queue-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
@@ -568,17 +560,20 @@ html[data-compact] .agent-row { grid-template-columns: auto minmax(0, 1fr) auto;
 html[data-compact] .agent-row .state { grid-column: 1 / 3; justify-self: start; }
 html[data-compact] .agent-row .agent-session { display: none; }
 
-/* A repository's two views, Log and Landing, as tabs at the head of its landing order. */
-.views { display: flex; gap: 4px; margin: 12px 0 0; border-bottom: 1px solid var(--line); }
+/* A repository's two views, Log and Landing, as tabs over its log: the Landing tab counting each landing group in its
+   colour, and Land next at the row's end. */
+.views-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 12px 0 0; padding: 0 0 4px; border-bottom: 1px solid var(--line); }
+.views { display: flex; gap: 4px; align-self: stretch; }
+.view-count { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
+.view-count .queue-dot { width: 6px; height: 6px; }
 .view-tab {
-  display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 8px 6px; margin-bottom: -1px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px 8px; margin-bottom: -5px;
   border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: var(--s13); cursor: pointer;
 }
 .view-tab:hover { color: var(--ink); }
 .view-tab:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; border-radius: 4px; }
 .view-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
 .view-tab .n { font-size: var(--s12); font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
-.views + .queue { margin-top: 0; border-top: 0; }
 .landing[hidden], .log[hidden] { display: none; }
 
 /* The landing order laid out whole: a table of every lane, in its groups; in a narrow column each row a card. */

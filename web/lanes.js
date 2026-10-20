@@ -2812,10 +2812,6 @@ const logOf = (repo) => {
 // the queue: the order to land in, what each needs, and who collides with whom
 // ---------------------------------------------------------------------------
 
-const VERDICT_WORDS = {
-    'land now': ['done', 'ready to land'], 'gate now': ['info', 'needs verifying'], 'commit first': ['warn', 'commit first'],
-    'hold the gate': ['warn', 'waits for another lane'], 'rebase first': ['risk', 'rebase first'], parked: ['quiet', 'parked']
-}
 /**
  * The landing order as groups rather than one chain: an order only holds between lanes that collide, so the rest are
  * said by what each needs. Ready, Needs verifying, Commit first, Waiting (each with the lanes it waits for), Rebase first,
@@ -2887,60 +2883,52 @@ const glanceOf = (repo, agents, jobs, reviews = []) => {
     }
 }
 
-/** The landing order at the head of a repository, in groups, with Land next beside them when one is ready. */
-const queueOf = (repo) => {
-    if (repo.error) return []
-    const groups = landingGroupsOf(repo.lanes)
-    if (!groups.length) return []
-    const ready = groups.find((group) => group.verdict === 'land now')
+/** Land next: the first ready lane, landed after a check, or where main lands by pull request, merged on GitHub. At the
+    end of the tabs row, under the bar as the log scrolls past it. */
+const landNextOf = (repo) => {
+    const ready = landingGroupsOf(repo.lanes).find((group) => group.verdict === 'land now')
     const next = ready ? repo.lanes.find((lane) => lane.name === ready.lanes[0].name) : null
+    if (!next) return []
     const busy = busyIn(repo.id)
-    return [el('div', { class: 'queue' },
-        el('span', { class: 'queue-title', text: 'Landing order' }),
-        // A lane whose verdict changes slides from its old group to its new one.
-        el('div', { class: 'queue-groups' }, groups.map((group) => el('span', { class: 'queue-group', 'data-anim': `${repo.id}:queue:${group.verdict}` },
-            el('span', { class: 'queue-label', text: group.label }),
-            group.lanes.map((item) => {
-                const lane = repo.lanes.find((candidate) => candidate.name === item.name)
-                const words = item.after.length ? `${item.name}, after ${item.after.join(' and ')}` : item.days ? `${item.name}, quiet for ${quietFor(item.days)}` : item.name
-                const chip = el('span', {
-                    class: 'queue-item', tabindex: '0', role: 'button', title: `${words}: ${VERDICT_WORDS[lane?.queue?.verdict]?.[1] ?? group.label.toLowerCase()}`,
-                    'data-anim': `${repo.id}:queue-lane:${item.name}`, 'data-sig': group.verdict
-                },
-                    el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }),
-                    el('span', { class: 'queue-name', 'data-hue': hueName(repo, item.name), text: item.name }),
-                    item.after.length ? el('span', { class: 'queue-after', text: `after ${item.after.join(', ')}` }) : null)
-                chip.addEventListener('click', () => focusLane(repo.id, item.name))
-                chip.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); focusLane(repo.id, item.name) } })
-                return chip
-            })))),
-        next && !byPullRequest(repo) ? (() => {
-            const block = landBlockOf(repo, next)
-            return iconButton('land', `Land ${next.name}…`, {
-                class: `btn${block ? '' : ' primary'}`, disabled: busy || Boolean(block),
-                title: block ?? `Check that ${next.name} can land, then ask: it is ready, and first among any it collides with`,
-                onclick: () => check(repo, next, 'land')
-            })
-        })() : null,
-        // Where main lands by pull request, the first ready lane whose pull request may be merged.
-        next && prStepOf(repo, next)?.next === 'merge' ? iconButton('land', `Merge ${next.name}…`, {
-            class: 'btn primary', disabled: busy, title: `Merge #${next.pull.number} on GitHub: it is approved, and first among any it collides with`,
-            onclick: () => { pending.set(`${repo.id}/${next.name}`, { verb: 'merge', stage: 'confirm' }); draw(true); focusLane(repo.id, next.name) }
-        }) : null)]
+    if (!byPullRequest(repo)) {
+        const block = landBlockOf(repo, next)
+        return [iconButton('land', `Land ${next.name}…`, {
+            class: `btn${block ? '' : ' primary'}`, disabled: busy || Boolean(block),
+            title: block ?? `Check that ${next.name} can land, then ask: it is ready, and first among any it collides with`,
+            onclick: () => { showView(repo.id, 'log'); check(repo, next, 'land'); focusLane(repo.id, next.name) }
+        })]
+    }
+    // Where main lands by pull request, the first ready lane whose pull request may be merged.
+    return prStepOf(repo, next)?.next === 'merge' ? [iconButton('land', `Merge ${next.name}…`, {
+        class: 'btn primary', disabled: busy, title: `Merge #${next.pull.number} on GitHub: it is approved, and first among any it collides with`,
+        onclick: () => { showView(repo.id, 'log'); pending.set(`${repo.id}/${next.name}`, { verb: 'merge', stage: 'confirm' }); draw(true); focusLane(repo.id, next.name) }
+    })] : []
 }
 
-/** A repository's two views, as tabs at the head of its landing order: its log, and the landing order laid out whole. */
+/**
+ * A repository's two views, as tabs over its log: its log, and the landing order laid out whole. The Landing tab counts
+ * each of the landing order's groups in its colour (1 ready, 2 to verify, …), and Land next stands at the row's end: the
+ * one line of the landing order that stood over the log said no more than that (the owner, 20 Oct).
+ */
 const viewTabs = (repo) => {
     if (repo.error) return []
     const view = viewIn(repo.id)
-    const count = landingGroupsOf(repo.lanes).reduce((sum, group) => sum + group.lanes.length, 0)
-    const tab = (id, label, title, n = null) => el('button', {
+    const groups = landingGroupsOf(repo.lanes)
+    const said = groups.map((group) => `${group.lanes.length} ${group.label.toLowerCase()}`).join(', ')
+    const tab = (id, label, title, ...extra) => el('button', {
         type: 'button', role: 'tab', class: 'view-tab', 'data-key': `${repo.id}:view:${id}`, 'aria-selected': String(view === id), title,
         onclick: () => showView(repo.id, id)
-    }, el('span', { text: label }), n === null ? null : el('span', { class: 'n', text: String(n), 'data-anim': `${repo.id}:view-count`, 'data-sig': n }))
-    return [el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show` },
-        tab('log', 'Log', `${repo.integrationBranch}'s line, with each lane on it`),
-        tab('landing', 'Landing', 'The landing order laid out whole: what each lane needs, its verification, what it changes and collides with, its pull request and its agents', count))]
+    }, el('span', { text: label }), extra)
+    return [el('div', { class: 'views-row' },
+        el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show` },
+            tab('log', 'Log', `${repo.integrationBranch}'s line, with each lane on it`),
+            tab('landing', 'Landing', `The landing order laid out whole${said ? ` (${said})` : ''}: what each lane needs, its verification, what it changes and collides with, its pull request and its agents`,
+                groups.map((group) => el('span', {
+                    class: 'view-count', 'data-verdict': group.verdict, title: `${group.lanes.length} ${group.label.toLowerCase()}: ${group.lanes.map((item) => item.name).join(', ')}`,
+                    'data-anim': `${repo.id}:view-count:${group.verdict}`, 'data-sig': group.lanes.length
+                }, el('span', { class: `queue-dot ${VERDICT_TONES[group.verdict] ?? 'quiet'}`, 'aria-hidden': 'true' }), el('span', { class: 'n', text: String(group.lanes.length) }))))),
+        el('span', { class: 'grow' }),
+        landNextOf(repo))]
 }
 
 /** The one thing to do next for a lane in the landing order, pressed from its row: done in the log, where the lane's
@@ -3480,7 +3468,7 @@ const drawPage = () => {
         // The log, or the landing order laid out whole: the log is drawn either way, kept out of sight, so it comes
         // back as it was and nothing in it fades in again.
         const landing = viewIn(repo.id) === 'landing'
-        kept.queue.replaceChildren(...viewTabs(repo), ...(landing ? [] : queueOf(repo)))
+        kept.queue.replaceChildren(...viewTabs(repo))
         kept.landing.hidden = !landing
         kept.landing.replaceChildren(...(landing ? landingOf(repo) : []))
         kept.log.hidden = landing
@@ -3626,7 +3614,7 @@ const header = document.querySelector('header.bar')
 const measureBar = () => document.documentElement.style.setProperty('--bar-h', `${header.offsetHeight}px`)
 if (typeof ResizeObserver === 'function') new ResizeObserver(measureBar).observe(header)
 measureBar()
-/** The landing order stuck under the bar as the log scrolls past it (lanes.css, .queue-row): marked, for the line under it. */
+/** The tabs and Land next stuck under the bar as the log scrolls past them (lanes.css, .queue-row): marked, for the line under them. */
 const stickQueues = () => {
     const under = header.offsetHeight + 0.5
     for (const row of document.querySelectorAll('.queue-row')) row.classList.toggle('stuck', row.childElementCount > 0 && row.getBoundingClientRect().top <= under)
