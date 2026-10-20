@@ -236,8 +236,10 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .commit::before {
   content: ""; position: absolute; left: calc(var(--spine) - 5px); top: 11px;
-  width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--rail); box-sizing: border-box;
 }
+/* A commit is a ring; main's newest a little darker. A filled dot says something is at work there now. */
+.commit.tip::before { border-color: var(--muted); }
 /* A commit's words, then its age, then (on hover) what can be done with it, side by side as ISL sets them: the words
    do not stretch across the row, and words longer than a line's worth are clipped, whole in the title and the details. */
 .subject { flex: 0 1 auto; max-width: 56ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -274,12 +276,12 @@ html[data-compact] .subject { max-width: none; }
 .lane-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
 /* Its name at the top of its line, where a branch is labelled, marked on the line. */
 .lane > .lane-head > .fold { position: absolute; left: calc(var(--column) - var(--indent) - 7px); top: 6px; width: 14px; height: 14px; padding: 0; border: 0; background: none; cursor: pointer; }
-.lane > .lane-head > .fold::before { content: ""; position: absolute; left: 3px; top: 3px; width: 8px; height: 8px; border-radius: 2px; background: var(--lane); transition: transform 0.12s ease; }
+.lane > .lane-head > .fold::before { content: ""; position: absolute; left: 3px; top: 3px; width: 8px; height: 8px; border-radius: 2px; background: var(--bg); border: 2px solid var(--lane); box-sizing: border-box; transition: transform 0.12s ease; }
 .lane > .lane-head > .fold:hover::before { transform: scale(1.4); }
 .lane > .lane-head > .fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
 /* Folded to its name: a hollow mark, and its files, commits and facts out of the way; what waits on you (its agents, a
    question asked in it) stays. */
-.lane.folded > .lane-head > .fold::before { background: var(--bg); border: 2px solid var(--lane); box-sizing: border-box; }
+.lane.folded > .lane-head > .fold::before { border-radius: 50%; }
 .lane.folded > :is(.changes, .stack, .facts, .collide, .live, .why, .failure, .files.conflicts) { display: none; }
 .lane.folded { padding-bottom: 14px; }
 .lane > .lane-head + .agents:empty + .facts:empty { margin: 0; }
@@ -302,8 +304,11 @@ html[data-compact] .subject { max-width: none; }
 }
 .stack-commit::before {
   content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 10px;
-  width: 10px; height: 10px; border-radius: 50%; background: var(--lane);
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--lane); box-sizing: border-box;
 }
+/* At work now (an agent thinking or running in it, a press under way): its newest commit and its name's mark filled.
+   An agent waiting on you is said by its amber badge, not here. */
+.lane.at-work .stack-commit:first-child::before, .lane.at-work > .lane-head > .fold::before { background: var(--lane); }
 .stack-more { padding: 2px 0; font-size: var(--s12); }
 
 /*
@@ -427,8 +432,9 @@ html:not([data-compact]) .lane-title > .hover-actions {
     left: 0; top: calc(100% + 2px); transform: none; padding: 4px;
     background: var(--vscode-menu-background, var(--bg)); border: 1px solid var(--vscode-menu-border, var(--line)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
   }
-  html:not([data-compact]) .lane-title > .hover-actions .btn:not(.primary):not(.more) .label { display: none; }
-  html:not([data-compact]) .lane-title > .hover-actions .btn:not(.primary):not(.more) { padding-left: 5px; padding-right: 5px; }
+  /* The toolbar's own buttons only: the ⋯ menu's items, inside it, keep their words (the owner, 20 Oct: icons alone there said nothing). */
+  html:not([data-compact]) .lane-title > .hover-actions > .btn:not(.primary):not(.more) .label { display: none; }
+  html:not([data-compact]) .lane-title > .hover-actions > .btn:not(.primary):not(.more) { padding-left: 5px; padding-right: 5px; }
 }
 .lane:hover .hover-actions, .lane.pointer .hover-actions, .lane:focus-within .hover-actions, .lane:focus .hover-actions, .lane.more-open .hover-actions { visibility: visible; opacity: 1; }
 /* A lane's ⋯ in a tab: what is done now and then (push, set aside, drop), in a small menu under it. */
@@ -647,7 +653,7 @@ html[data-compact] .details { display: none; }
 .changes { position: relative; }
 .changes::before {
   content: ""; position: absolute; left: calc(var(--column) - var(--indent) - 5px); top: 4px;
-  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--lane); box-sizing: border-box;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px dashed var(--lane); box-sizing: border-box;
 }
 html[data-surface="sidebar"] .changes::before { left: calc(var(--column) - var(--indent) - 4px); width: 8px; height: 8px; }
 /* The main checkout's uncommitted files: a node of their own on main's line, just above the commit they were begun on. */
