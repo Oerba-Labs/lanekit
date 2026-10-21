@@ -941,3 +941,33 @@ test('from one view to the other, the view shown fades in whole: nothing in the 
         assert.deepEqual(seen.filter((one) => one.id === 'motion-fade').map((one) => one.part), to === 'the log' ? ['log', 'settled'] : ['landing'], `${to} fades in whole, and only it: ${said}`)
     }
 })
+
+test('a verification shows its three parts as it runs, Rebase, the tests of its tier by its label, Record; and a tier is named by its label', { skip, timeout: 60_000 * SLOW }, async () => {
+    // A verification running in feature, as the service says one is, at each of its parts in turn.
+    const at = (verify) => {
+        current.jobs = current.jobs.filter((job) => job.id !== 'e2e-verify')
+        current.jobs.unshift({ id: 'e2e-verify', repo: 'demo', lane: 'feature', verb: 'gate', state: 'running', startedAt: Date.now(), command: 'gate', step: 'running the checks', verify })
+        draw(true)
+        return [...card('feature').querySelectorAll('.live .verify-step')].map((step) => `${step.className.replace('verify-step ', '')} ${step.textContent}${step.getAttribute('aria-current') ? ' (current)' : ''}`)
+    }
+    try {
+        assert.deepEqual(await page.run(at, { phase: 'rebase' }), ['now ◉Rebase (current)', 'next ○Tests', 'next ○Record'])
+        assert.deepEqual(await page.run(at, { phase: 'tests', tier: 1, label: 'check' }), ['done ✓Rebase', 'now ◉Tests: check (current)', 'next ○Record'])
+        assert.deepEqual(await page.run(at, { phase: 'record', tier: 1, label: 'check' }), ['done ✓Rebase', 'done ✓Tests: check', 'now ◉Record (current)'])
+        assert.equal(await page.run(() => card('feature').querySelector('.verify-step.now').title), 'running the checks', 'the gate\'s own words for what it is doing, in the title of the part under way')
+        assert.equal(await page.run(() => card('feature').querySelector('.live .live-step')), null, 'not a line of its output any more')
+    } finally {
+        await page.run(() => refresh().then(() => true))
+    }
+    // A verification done, by its tier's label: the tier's number in its title.
+    lane('new', 'labelled')
+    commit(laneDir('labelled'), 'labelled.txt', 'labelled\n', 'Label it')
+    execFileSync(process.execPath, [path.join(KIT, 'dev', 'gate.mjs')], { cwd: laneDir('labelled'), env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const said = await page.until((() => {
+        const node = card('labelled')?.querySelector('.facts .state.done')
+        return node ? { text: node.textContent, title: node.title } : null
+    }), [], { what: 'labelled, verified' })
+    assert.match(said.text, /^Verified · check/, 'the tier by its label')
+    assert.doesNotMatch(said.text, /tier \d/)
+    assert.match(said.title, /^Tier 1\n/, 'its number in the title')
+})

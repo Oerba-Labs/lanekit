@@ -138,6 +138,7 @@ test('each lane is read as what it is: working, empty with work in it, or landed
     assert.equal(body.repos.length, 1, 'one repository: the lanes beside it are not repositories')
     const [demo] = body.repos
     assert.equal(demo.integrationBranch, 'main')
+    assert.deepEqual(demo.tiers, { 1: 'check' }, 'each tier\'s label, by its number')
     const byName = Object.fromEntries(demo.lanes.map((candidate) => [candidate.name, candidate]))
     assert.equal(byName.working.kind, 'working')
     assert.equal(byName.working.ahead, 1)
@@ -196,6 +197,7 @@ test('land checks first, refuses without a green gate, and lands after one', asy
     const gated = await finished(gate.body.id)
     assert.equal(gated.code, 0, gated.output)
     assert.match(gated.output, /VERIFIED/)
+    assert.deepEqual(gated.verify, { phase: 'record', tier: 1, label: 'check' }, 'it went from its rebase to its tier\'s tests to recording the result')
     assert.equal((await laneIn('working')).queue.verdict, 'land now')
 
     const again = await finished((await press({ repo: 'demo', verb: 'land', lane: 'working', dryRun: true })).body.id)
