@@ -1003,6 +1003,8 @@ const wantsBadge = (repoId, laneName) => el('span', { class: 'wants-badge', 'dat
     Escape, closes them. */
 const closeMenus = () => {
     const open = [...expanded].filter((key) => key.endsWith(':more') || key.endsWith(':agents'))
+    // The switcher's menu, shut, gives the keyboard back to its button.
+    if (open.includes(SWITCHER_MENU) && document.activeElement?.closest?.('.switcher-menu')) setTimeout(() => document.querySelector('.switcher-toggle')?.focus({ preventScroll: true }), 0)
     for (const key of open) expanded.delete(key)
     if (open.length) host.remember({ expanded: [...expanded] })
     return open.length > 0
@@ -3184,6 +3186,7 @@ const openOwnTab = (id) => {
     window.open(`?repo=${encodeURIComponent(id)}`, '_blank', 'noopener')
 }
 
+const SWITCHER_MENU = 'switcher:more'
 const drawSwitcher = () => {
     const nav = $('switcher')
     const repos = current?.repos ?? []
@@ -3191,10 +3194,10 @@ const drawSwitcher = () => {
     if (nav.hidden) { nav.replaceChildren(); return }
     const showing = shownId()
     const busy = (id) => (current.jobs ?? []).some((job) => job.repo === id && (job.state === 'running' || job.state === 'queued'))
-    const tab = (id, label, count, title, { running = false, broken = false } = {}) => el('a', {
+    const tab = (id, label, count, title, { running = false, broken = false, item = false } = {}) => el('a', {
         href: id ? `?repo=${encodeURIComponent(id)}` : location.pathname,
         // Its key keeps the keyboard on it across a redraw, as a lane's does.
-        'data-key': `switcher:${id ?? ''}`, 'data-row': `switcher:${id ?? ''}`,
+        'data-key': `switcher:${id ?? ''}`, 'data-row': `switcher:${id ?? ''}`, role: item ? 'menuitem' : null,
         title, 'aria-current': id === showing ? 'page' : null,
         'aria-label': `${label}${count === null ? '' : `, ${plural(count, 'lane')}`}${running ? ', something running' : ''}${broken ? ', unreadable' : ''}`,
         onclick: (event) => {
@@ -3203,20 +3206,73 @@ const drawSwitcher = () => {
             if (elsewhere && !host.inEditor) return
             event.preventDefault()
             if (elsewhere) { if (id) openOwnTab(id); return }
-            if (id !== showing) showRepo(id)
+            if (item) closeMenus()
+            if (id !== showing) showRepo(id); else if (item) draw(true)
         },
         onauxclick: (event) => { if (host.inEditor && event.button === 1) { event.preventDefault(); if (id) openOwnTab(id) } }
     },
     el('span', { class: broken ? 'broken' : null, text: label }),
     count === null ? null : el('span', { class: 'n', text: String(count), 'data-anim': `switcher:${id ?? ''}:count`, 'data-sig': count }),
     running ? el('span', { class: 'busy', title: 'Something is running in it', 'data-anim': `switcher:${id ?? ''}:busy` }) : null)
-    nav.replaceChildren(
+    const tabs = (item = false) => [
         // Home counts nothing: each repository's tab says its own (the owner, 21 Oct).
-        tab(null, 'Home', null, 'Every repository at a glance, each opened from its card ([ and ] step through them)'),
+        tab(null, 'Home', null, 'Every repository at a glance, each opened from its card ([ and ] step through them)', { item }),
         ...repos.map((repo) => tab(repo.id, repo.name ?? repo.id, liveLanes(repo).length,
             `${fromHome(repo.path, current.home)}${repo.error ? ` — ${repo.error}` : ''}\n${host.inEditor ? 'Cmd- or Ctrl-click, or a middle click' : 'Cmd- or Ctrl-click'}: a tab of its own`,
-            { running: repo.id !== showing && busy(repo.id), broken: !!repo.error })))
+            { running: repo.id !== showing && busy(repo.id), broken: !!repo.error, item }))]
+    // The tabs, while they fit on a line. In the side bar or a narrow window, once they would not (wrapped onto lines
+    // of their own, or scrolled sideways out of sight), one button saying the repository shown opens them as a menu,
+    // as ISL's does (the owner, 21 Oct).
+    nav.classList.remove('as-menu')
+    nav.dataset.across = ''
+    nav.replaceChildren(...tabs())
+    if (!compact()) return
+    nav.classList.add('measuring')
+    const over = nav.scrollWidth > nav.clientWidth + 1
+    nav.classList.remove('measuring')
+    if (!over) return
+    const open = expanded.has(SWITCHER_MENU)
+    const shown = repos.find((repo) => repo.id === showing)
+    const elsewhere = repos.some((repo) => repo.id !== showing && busy(repo.id))
+    const toggle = el('button', {
+        type: 'button', class: 'btn switcher-toggle', 'data-key': 'switcher:toggle', 'aria-haspopup': 'menu', 'aria-expanded': String(open),
+        title: 'Every repository here, and Home ([ and ] step through them)',
+        onclick: () => {
+            if (expanded.has(SWITCHER_MENU)) { closeMenus(); draw(true); return }
+            expanded.add(SWITCHER_MENU)
+            draw(true)
+            // Opened, the keyboard is on the repository shown, for the arrows to go on from.
+            const opened = document.querySelector('.switcher-menu')
+            const on = opened?.querySelector('[aria-current="page"]') ?? opened?.querySelector('[role="menuitem"]')
+            on?.focus({ preventScroll: true })
+        }
+    },
+    el('span', { class: shown?.error ? 'broken' : null, text: shown ? shown.name ?? shown.id : 'Home' }),
+    shown ? el('span', { class: 'n', text: plural(liveLanes(shown).length, 'lane'), 'data-anim': 'switcher:toggle:count', 'data-sig': liveLanes(shown).length }) : null,
+    // Something running in another repository: a dot, so it is not missed with the menu shut.
+    elsewhere ? el('span', { class: 'busy', title: 'Something is running in another repository', 'data-anim': 'switcher:toggle:busy' }) : null,
+    el('span', { class: 'caret', 'aria-hidden': 'true', text: '▾' }))
+    const menu = open ? el('div', { class: 'more-menu switcher-menu', role: 'menu', 'aria-label': 'Repositories', 'data-anim': 'switcher:menu' }, tabs(true)) : null
+    // In the menu, the arrows go up and down it, Home and End to its ends; Escape (closeMenus) shuts it.
+    menu?.addEventListener('keydown', (event) => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')]
+        const at = items.indexOf(document.activeElement)
+        const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1, j: at + 1, k: at - 1 }[event.key]
+        if (to === undefined) return
+        event.preventDefault()
+        event.stopPropagation()
+        items[Math.min(items.length - 1, Math.max(0, to))]?.focus()
+    })
+    nav.classList.add('as-menu')
+    delete nav.dataset.across
+    nav.replaceChildren(el('div', { class: 'more-wrap' }, toggle, menu))
 }
+// The switcher measured again as the window, or the side bar, is made wider or narrower.
+let switcherFrame = 0
+window.addEventListener('resize', () => {
+    cancelAnimationFrame(switcherFrame)
+    switcherFrame = requestAnimationFrame(() => { if (current) { drawSwitcher(); rove() } })
+})
 
 /**
  * What waits on you in the repository shown, in one line under the switcher: an agent that needs you, a gate that

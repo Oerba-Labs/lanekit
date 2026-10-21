@@ -1072,3 +1072,40 @@ test('each list is one stop for Tab, j and k move row to row in it, lanes and co
     await page.key('ArrowDown')
     assert.equal((await page.run(where)).list, 'log:demo', '↓ from the switcher, into the log')
 })
+
+test('in a narrow column, the switcher is one button opening every repository as a menu once its tabs would not fit, and tabs again once they do', { skip, timeout: 60_000 * SLOW }, async () => {
+    // Too narrow for Home, Demo and Quiet side by side.
+    const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 800 })
+    try {
+        const switcher = () => ({
+            toggle: document.querySelector('#switcher .switcher-toggle')?.textContent ?? null,
+            expanded: document.querySelector('#switcher .switcher-toggle')?.getAttribute('aria-expanded') ?? null,
+            tabs: [...document.querySelectorAll('#switcher > a')].length,
+            items: [...document.querySelectorAll('#switcher .switcher-menu [role="menuitem"]')].map((item) => ({ name: item.querySelector('span').textContent, current: item.getAttribute('aria-current') })),
+            focus: document.activeElement?.closest?.('#switcher') ? (document.activeElement.querySelector('span')?.textContent ?? document.activeElement.textContent) : null
+        })
+        const shut = await thin.until(() => { const said = (() => ({ toggle: document.querySelector('#switcher .switcher-toggle')?.textContent ?? null, tabs: document.querySelectorAll('#switcher > a').length }))(); return said.toggle ? said : null }, [], { what: 'the switcher as one button' })
+        assert.match(shut.toggle, /^Demo\d+ lanes?▾$/, `the repository shown, its lanes, and a caret: ${shut.toggle}`)
+        assert.equal(shut.tabs, 0, 'no row of tabs')
+        await thin.click(() => document.querySelector('#switcher .switcher-toggle'))
+        const opened = await thin.until(`(() => { const said = (${switcher})(); return said.items.length ? said : null })`, [], { what: 'the menu open' })
+        assert.equal(opened.expanded, 'true')
+        assert.deepEqual(opened.items, [{ name: 'Home', current: null }, { name: 'Demo', current: 'page' }, { name: 'Quiet', current: null }], 'Home first, then every repository, the one shown marked')
+        assert.equal(opened.focus, 'Demo', 'the keyboard on the repository shown')
+        await thin.key('ArrowDown')
+        assert.equal((await thin.run(switcher)).focus, 'Quiet', '↓ goes down the menu')
+        await thin.key('Enter')
+        const moved = await thin.until(() => { const toggle = document.querySelector('#switcher .switcher-toggle'); return toggle && /^Quiet/.test(toggle.textContent) && !document.querySelector('.switcher-menu') ? true : null }, [], { what: 'Quiet shown, and the menu shut' })
+        assert.ok(moved)
+        // Escape shuts it, and the keyboard is back on its button.
+        await thin.click(() => document.querySelector('#switcher .switcher-toggle'))
+        await thin.until(() => document.querySelector('.switcher-menu'), [], { what: 'the menu open again' })
+        await thin.key('Escape')
+        await thin.until(() => !document.querySelector('.switcher-menu') && document.activeElement?.matches('.switcher-toggle'), [], { what: 'the menu shut by Escape, its button in focus' })
+        // Wide enough, the tabs again.
+        await thin.resize(1000, 800)
+        await thin.until(() => document.querySelectorAll('#switcher > a').length === 3 && !document.querySelector('.switcher-toggle'), [], { what: 'the tabs again, wide' })
+    } finally {
+        await thin.close()
+    }
+})
