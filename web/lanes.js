@@ -523,6 +523,8 @@ const keyed = (node, key, sig) => {
 }
 // The parts of the page that are kept between drawings, where what went from them fades.
 for (const [id, scope] of [['repos', 'page'], ['cmdbar', 'commands'], ['switcher', 'switcher'], ['strip', 'strip']]) $(id).dataset.animScope = scope
+$('switcher').dataset.rows = 'switcher'
+$('switcher').dataset.across = ''
 
 // ---------------------------------------------------------------------------
 // what the page remembers between answers
@@ -1123,6 +1125,7 @@ const redrawAgents = () => {
     }
     drawStrip()
     sayTitle()
+    rove()
     markPointer()
 }
 
@@ -1777,6 +1780,7 @@ const selectable = (row, repo, commit, laneName = null) => {
     row.classList.add('selectable')
     if (isSelected(repo, commit)) row.classList.add('selected')
     row.tabIndex = 0
+    row.dataset.row = `${laneName ? `${repo.id}/${laneName}` : repo.id}@${commit.sha}`
     row.setAttribute('aria-selected', String(isSelected(repo, commit)))
     row.addEventListener('click', (event) => { if (!event.target.closest('a, button, input, form, textarea')) toggleSelect(repo, commit, laneName) })
     if (host.inEditor) row.addEventListener('dblclick', (event) => { if (!event.target.closest('a, button, input, form, textarea')) showCommit(repo, commit)() })
@@ -2546,7 +2550,7 @@ const laneCard = (repo, lane, forked = true) => {
     const atWork = underway || agentsOf(repo.id, lane.name).some((agent) => agent.state === 'thinking' || agent.state === 'running')
     const card = el('li', {
         class: `lane tone-${tone}${toolsOpen ? ' tools-open' : ''}${moreOpen ? ' more-open' : ''}${forked ? '' : ' adrift'}${lane.pending ? ' pending' : ''}${folded.has(key) ? ' folded' : ''}${underway ? ' working' : ''}${atWork ? ' at-work' : ''}${wantsOf(repo.id, lane.name).length ? ' wants-you' : ''}${stack.length || changes ? '' : ' bare'}`,
-        'data-key': key, 'data-hue': hueName(repo, lane.name), tabindex: '0', draggable: draggable ? 'true' : null,
+        'data-key': key, 'data-row': key, 'data-hue': hueName(repo, lane.name), tabindex: '0', draggable: draggable ? 'true' : null,
         title: draggable ? 'Drag it onto a commit of main to rebase it there' : null,
         'data-anim': key, 'data-anim-kids': true
     },
@@ -2608,7 +2612,7 @@ const landedRow = (repo, lane) => {
     const sweepable = lane.kind === 'landed' && !lane.dirty
     // Landed, and something begun in it since: moved to a lane of its own, after which this one sweeps as usual.
     const carries = lane.kind === 'landed' && lane.dirty > 0 && lane.exists && !lane.operation
-    return el('li', { 'data-key': key, tabindex: '0', 'data-anim': `${key}:finished`, 'data-anim-kids': true },
+    return el('li', { 'data-key': key, 'data-row': key, tabindex: '0', 'data-anim': `${key}:finished`, 'data-anim-kids': true },
         el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name }),
         keyed(state(tone, word), `${key}:finished-state`, `${tone} ${word}`),
         detail ? el('span', { class: 'muted', text: detail }) : null,
@@ -2972,11 +2976,11 @@ const viewTabs = (repo) => {
     const groups = landingGroupsOf(repo.lanes)
     const said = groups.map((group) => `${group.lanes.length} ${group.label.toLowerCase()}`).join(', ')
     const tab = (id, label, title, ...extra) => el('button', {
-        type: 'button', role: 'tab', class: 'view-tab', 'data-key': `${repo.id}:view:${id}`, 'aria-selected': String(view === id), title,
+        type: 'button', role: 'tab', class: 'view-tab', 'data-key': `${repo.id}:view:${id}`, 'data-row': `${repo.id}:view:${id}`, 'aria-selected': String(view === id), title,
         onclick: () => showView(repo.id, id)
     }, el('span', { class: 'view-label', 'data-text': label, text: label }), extra)
     return [el('div', { class: 'views-row' },
-        el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show` },
+        el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show`, 'data-rows': `views:${repo.id}`, 'data-across': '' },
             tab('log', 'Log', `${repo.integrationBranch}'s line, with each lane on it`),
             tab('landing', 'Landing', `The landing order laid out whole${said ? ` (${said})` : ''}: what each lane needs, its verification, what it changes and collides with, its pull request and its agents`,
                 groups.map((group) => el('span', {
@@ -3031,7 +3035,10 @@ const landingRow = (repo, lane, item = null) => {
     const cell = (label, ...children) => el('td', { 'data-label': label }, ...children)
     const none = () => el('span', { class: 'muted', text: '—' })
     const name = el('button', { type: 'button', class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name, title: `${portOf(lane)}\nShow it in the log`, onclick: () => { showView(repo.id, 'log'); focusLane(repo.id, lane.name) } })
-    return el('tr', { class: 'landing-lane', 'data-landing': `${repo.id}/${lane.name}`, 'data-anim': `${repo.id}:landing-lane:${lane.name}`, 'data-anim-kids': true },
+    const row = el('tr', {
+        class: 'landing-lane', 'data-landing': `${repo.id}/${lane.name}`, 'data-row': `landing:${repo.id}/${lane.name}`, tabindex: '0',
+        'data-anim': `${repo.id}:landing-lane:${lane.name}`, 'data-anim-kids': true
+    },
         el('th', { scope: 'row', 'data-label': 'Lane' }, name, wantsBadge(repo.id, lane.name)),
         cell('Needs', state(tone, word, 'small'), why ? el('div', { class: 'landing-why', text: why }) : null),
         cell('Verified', gateOf(repo, lane) ?? el('span', { class: 'muted', text: 'Not yet' })),
@@ -3042,6 +3049,9 @@ const landingRow = (repo, lane, item = null) => {
         cell('Pull request', lane.pull ? el('div', {}, pullOf(lane)) : null, el('div', { class: 'muted' }, pushedOf(lane))),
         cell('Agents', agentsRow(repo, lane.name, 'landing:')),
         el('td', { class: 'landing-step' }, landingStep(repo, lane)))
+    // Enter on the row, as on its name: the lane, shown in the log.
+    row.addEventListener('keydown', (event) => { if (event.target === row && event.key === 'Enter') { event.preventDefault(); name.click() } })
+    return row
 }
 
 /**
@@ -3118,7 +3128,7 @@ window.addEventListener('resize', () => drawCollisions())
 const asideRow = (repo, lane) => {
     const key = `${repo.id}/${lane.name}`
     const busy = busyIn(repo.id) || Boolean(lane.pending)
-    return el('li', { 'data-key': key, tabindex: '0', 'data-anim': `${key}:aside`, 'data-anim-kids': true },
+    return el('li', { 'data-key': key, 'data-row': key, tabindex: '0', 'data-anim': `${key}:aside`, 'data-anim-kids': true },
         el('span', { class: 'tag lane-name', 'data-hue': hueName(repo, lane.name), text: lane.name, title: portOf(lane) }),
         el('span', { class: 'muted', text: [lane.ahead ? plural(lane.ahead, 'commit') : 'nothing committed', lane.dirty ? `${lane.dirty} uncommitted` : null,
             lane.aside ? `set aside ${ago(Date.parse(lane.aside))}` : null, lane.quiet ? `quiet for ${quietFor(lane.quietDays)}` : null].filter(Boolean).join(' · ') }),
@@ -3184,7 +3194,7 @@ const drawSwitcher = () => {
     const tab = (id, label, count, title, { running = false, broken = false } = {}) => el('a', {
         href: id ? `?repo=${encodeURIComponent(id)}` : location.pathname,
         // Its key keeps the keyboard on it across a redraw, as a lane's does.
-        'data-key': `switcher:${id ?? ''}`,
+        'data-key': `switcher:${id ?? ''}`, 'data-row': `switcher:${id ?? ''}`,
         title, 'aria-current': id === showing ? 'page' : null,
         'aria-label': `${label}${count === null ? '' : `, ${plural(count, 'lane')}`}${running ? ', something running' : ''}${broken ? ', unreadable' : ''}`,
         onclick: (event) => {
@@ -3394,7 +3404,7 @@ const homeCard = (repo) => {
     const running = glance.running
     const card = el('li', {
         class: `home-card${glance.needsYou ? ' wants-you' : ''}${repo.error ? ' broken' : ''}`,
-        'data-key': `home:${repo.id}`, 'data-home': repo.id, tabindex: '0', 'aria-label': `${name}: ${counts.filter(Boolean).join(', ')}. Enter opens it`,
+        'data-key': `home:${repo.id}`, 'data-row': `home:${repo.id}`, 'data-home': repo.id, tabindex: '0', 'aria-label': `${name}: ${counts.filter(Boolean).join(', ')}. Enter opens it`,
         'data-anim': `home:${repo.id}`, 'data-anim-kids': true
     },
     el('div', { class: 'home-head' },
@@ -3449,9 +3459,9 @@ const sectionFor = (repo) => {
         root: el('section', { class: 'repo' }),
         head: el('div', part('head')),
         queue: el('div', { class: 'queue-row', ...part('queue') }),
-        landing: el('div', { class: 'landing', ...part('landing') }),
-        log: (() => { const log = el('ol', { class: 'log', 'data-anim-scope': `${repo.id}:log`, 'data-anim-kids': true }); listenForDrops(log); return log })(),
-        settled: el('div', part('settled'))
+        landing: el('div', { class: 'landing', 'data-rows': `landing:${repo.id}`, ...part('landing') }),
+        log: (() => { const log = el('ol', { class: 'log', 'data-rows': `log:${repo.id}`, 'data-anim-scope': `${repo.id}:log`, 'data-anim-kids': true }); listenForDrops(log); return log })(),
+        settled: el('div', { 'data-rows': `settled:${repo.id}`, ...part('settled') })
     }
     kept.root.append(kept.head, kept.queue, kept.landing, kept.log, kept.settled)
     sections.set(repo.id, kept)
@@ -3493,6 +3503,7 @@ const draw = (force = false) => {
 }
 const drawPage = () => {
     const focusedKey = document.activeElement?.closest?.('[data-key]') === document.activeElement ? document.activeElement.dataset.key : null
+    const focusedAt = focusAt()
     // A field being typed in is drawn again with what was typed (drafts) and keeps the keyboard where it was.
     const typing = document.activeElement?.dataset?.draft
     const caret = typing ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null
@@ -3556,13 +3567,15 @@ const drawPage = () => {
         naming = null
         const waiting = reviewsHome()
         if (waiting) pane.append(waiting)
-        pane.append(el('ul', { class: 'home', 'aria-label': 'Repositories' }, current.repos.map(homeCard)))
+        pane.append(el('ul', { class: 'home', 'aria-label': 'Repositories', 'data-rows': 'home' }, current.repos.map(homeCard)))
     }
     if (bare) pane.append(bare)
     drawDetails()
     drawCommandBar()
     if (wantFocus) focusLane(wantFocus.repo, wantFocus.lane)
     if (focusedKey) [...document.querySelectorAll('[data-key]')].find((node) => node.dataset.key === focusedKey)?.focus({ preventScroll: true })
+    if (!typing) focusAgain(focusedAt)
+    rove()
     if (typing) {
         const again = [...document.querySelectorAll('[data-draft]')].find((node) => node.dataset.draft === typing)
         if (again) { again.focus({ preventScroll: true }); try { again.setSelectionRange(...caret) } catch { /* a field with no caret */ } }
@@ -3573,11 +3586,102 @@ const drawPage = () => {
 }
 
 // ---------------------------------------------------------------------------
+// the keyboard's way through the page: each list one stop, and the focus kept where it is
+// ---------------------------------------------------------------------------
+
+/*
+ * A list of rows (a log's lanes and commits, its landed lanes, the landing table, Home's cards, the switcher's tabs;
+ * data-rows) is one stop for Tab, as ISL's and VS Code's are: Tab comes into it at the row last in focus there (else the
+ * one chosen, else the first) and goes on out of it, and j and k or the arrows move row to row inside it. Tab from a
+ * row reaches that row's own buttons, and only that row's (the owner, 21 Oct: main's twenty-five commits were
+ * seventy-five stops). What a form asks for (a field, a question's buttons) is always reached.
+ */
+const ROW = '[data-row]'
+const CONTROLS = 'a[href], button, input, select, textarea, [tabindex]:not([data-row])'
+const lastRow = new Map()          // a list's data-rows -> the data-row last in focus in it
+const rowsOf = (list) => [...list.querySelectorAll(ROW)].filter((row) => !row.closest('[hidden], .leaving') && row.getClientRects().length > 0)
+/** One list's rows and buttons given their places in Tab's way: its row in focus, and that row's buttons, alone. */
+const roveIn = (list) => {
+    const rows = rowsOf(list)
+    if (!rows.length) return
+    const was = lastRow.get(list.dataset.rows)
+    const at = rows.find((row) => row.dataset.row === was) ?? rows.find((row) => row.matches('[aria-current="page"], [aria-selected="true"]')) ?? rows[0]
+    for (const row of list.querySelectorAll(ROW)) row.tabIndex = row === at ? 0 : -1
+    // A button of another row out of Tab's way, its own tabindex kept (data-roved) for when its row is in focus again.
+    for (const control of list.querySelectorAll(CONTROLS)) {
+        if (control.closest('form, .confirm, .message-form')) continue
+        const owner = control.closest(ROW)
+        const roved = control.dataset.roved
+        if (owner && owner !== at) {
+            if (roved === undefined) control.dataset.roved = control.getAttribute('tabindex') ?? ''
+            control.setAttribute('tabindex', '-1')
+        } else if (roved !== undefined) {
+            if (roved) control.setAttribute('tabindex', roved); else control.removeAttribute('tabindex')
+            delete control.dataset.roved
+        }
+    }
+}
+const rove = () => { for (const list of document.querySelectorAll('[data-rows]')) roveIn(list) }
+// A row or one of its buttons in focus, however it came there (Tab, a click, j and k, a press that brought it into view):
+// the row its list comes back to.
+document.addEventListener('focusin', (event) => {
+    const row = event.target.closest?.(ROW)
+    const list = row?.closest('[data-rows]')
+    if (!list || lastRow.get(list.dataset.rows) === row.dataset.row) return
+    lastRow.set(list.dataset.rows, row.dataset.row)
+    roveIn(list)
+})
+/** The next row, or the one before, in the list in focus: `across` for ← and →, in a row of tabs (data-across) or
+    Home's cards; ↓ and ↑ from a row of tabs, or from outside every list, to the log's row last in focus, or Home's. */
+const stepRow = (forward, across = false) => {
+    const inList = document.activeElement?.closest?.('[data-rows]')
+    const list = inList && (across || !inList.hasAttribute('data-across')) ? inList : null
+    const rows = list ? rowsOf(list) : []
+    const at = rows.indexOf(document.activeElement?.closest(ROW))
+    const next = list ? rows[Math.min(rows.length - 1, Math.max(0, at + (forward ? 1 : -1)))]
+        : [...document.querySelectorAll('[data-rows^="log:"], [data-rows="home"]')].flatMap(rowsOf).find((row) => row.tabIndex === 0)
+    if (!next) return false
+    next.focus()
+    next.scrollIntoView({ block: 'nearest' })
+    return true
+}
+
+/** Where the focus is, to put it back after a drawing makes everything anew: what holds it (a row, a lane, a part of
+    the page, by its key), and the button or link in that, by its words and which of those words it is. */
+const ANCHOR = '[data-row], [data-key], [data-anim]'
+const anchorId = (node) => node.dataset.row ?? node.dataset.key ?? node.dataset.anim
+// The nearest row, else lane, else part of the page keyed by its drawing: not a key motion gives a child by its place
+// (a>b:0), which a node drawn anew has only after it is drawn.
+const anchorOf = (node) => node?.closest?.('[data-row]') ?? node?.closest?.('[data-key]') ??
+    (() => { for (let up = node?.closest?.('[data-anim]'); up; up = up.parentElement?.closest('[data-anim]')) if (!up.dataset.anim.includes('>')) return up; return null })()
+const wordsOf = (node) => (node.getAttribute('aria-label') || node.textContent || '').replace(/\s+/g, ' ').trim()
+const focusAt = () => {
+    const active = document.activeElement
+    const anchor = anchorOf(active)
+    if (!anchor || active === document.body) return null
+    if (active === anchor) return { anchor: anchorId(anchor) }
+    const words = wordsOf(active)
+    const same = [...anchor.querySelectorAll(CONTROLS)].filter((node) => wordsOf(node) === words)
+    return { anchor: anchorId(anchor), words, nth: same.indexOf(active) }
+}
+const focusAgain = (at) => {
+    if (!at || (document.activeElement && document.activeElement !== document.body)) return
+    const anchor = [...document.querySelectorAll(ANCHOR)].find((node) => anchorId(node) === at.anchor && !node.closest('.leaving'))
+    if (!anchor) return
+    const node = at.words === undefined ? anchor : [...anchor.querySelectorAll(CONTROLS)].filter((one) => wordsOf(one) === at.words)[Math.max(0, at.nth)]
+    // What shows only while its row has the focus in it (a commit's buttons) shows once the row has it.
+    if (node !== anchor && anchor.matches(ROW)) anchor.focus({ preventScroll: true })
+    node?.focus({ preventScroll: true })
+}
+
+// ---------------------------------------------------------------------------
 // the keyboard: move between lanes, and press the one in focus's buttons
 // ---------------------------------------------------------------------------
 
 const KEYS = [
-    ['j  ↓', 'the next lane'], ['k  ↑', 'the lane before'], ['Enter', host.inEditor ? 'its changes' : 'its newest commit\'s details'],
+    ['Tab', 'into a list (the log, Home, the switcher, the landing table) at the row last in focus there, then that row\'s buttons, then on'],
+    ['j  ↓', 'the next row: a lane or a commit'], ['k  ↑', 'the row before'], ['←  →', 'the switcher\'s tabs, Log and Landing, Home\'s cards'],
+    ['Enter', host.inEditor ? 'a lane\'s changes; a commit\'s details' : 'a lane\'s newest commit\'s details; a commit\'s'], ['Space', 'fold a lane; choose a commit'],
     ['g  v', 'verify it'], ['l', 'land it, after a check'], ['r', 'rebase it onto main'], ['p', 'push it, or pull what origin has of it that it lacks'],
     ...(host.inEditor ? [['o', 'its terminal: yours moves to it, and the files you have open reopen from it'], ['a', 'start an agent in it']] : []),
     ['c', 'commit what is uncommitted'], ['u', 'uncommit its newest commit'], ['z', 'fold it to its name, or unfold it'], ['f', 'fetch'], ['n', 'a new lane, on the one in focus or main'],
@@ -3591,8 +3695,6 @@ document.body.append(keysPanel)
 const toggleKeys = (show = keysPanel.hidden) => { if (show) motion.appear(keysPanel, 0, -6); else motion.disappear(keysPanel, 0, -6) }
 $('updated').before(el('button', { type: 'button', class: 'btn link keys-toggle', text: 'Keys', title: 'What the keyboard does here (?)', onclick: () => toggleKeys() }))
 
-// Those in sight: a log behind the landing view is kept, hidden, and its lanes are not stepped through.
-const laneCards = () => [...document.querySelectorAll('li[data-key][tabindex]')].filter((node) => !node.closest('[hidden]'))
 const laneInFocus = () => {
     const node = document.activeElement?.closest?.('li[data-key]')
     if (!node) return null
@@ -3603,8 +3705,8 @@ const laneInFocus = () => {
 }
 document.addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-    // A tab of the switcher is a link the mouse leaves the keyboard on: the page's keys still work from it.
-    if (event.target.closest?.('input, textarea, select, button, a, summary, [contenteditable]') && !event.target.closest?.('.switcher')) return
+    // A tab of the switcher, or of Log and Landing, is one the mouse leaves the keyboard on: the page's keys still work from it.
+    if (event.target.closest?.('input, textarea, select, button, a, summary, [contenteditable]') && !event.target.closest?.('[data-across]')) return
     const key = event.key
     const done = () => event.preventDefault()
     if (key === '?') { toggleKeys(); return done() }
@@ -3616,14 +3718,9 @@ document.addEventListener('keydown', (event) => {
         showRepo(order[(at + (key === ']' ? 1 : order.length - 1)) % order.length])
         return done()
     }
-    const cards = laneCards()
-    if (['j', 'k', 'ArrowDown', 'ArrowUp'].includes(key) && cards.length) {
-        const at = cards.indexOf(document.activeElement)
-        const next = key === 'j' || key === 'ArrowDown' ? Math.min(cards.length - 1, at + 1) : Math.max(0, at - 1)
-        cards[next].focus()
-        cards[next].scrollIntoView({ block: 'nearest' })
-        return done()
-    }
+    // Row to row in the list in focus: lanes and commits alike in a log; the switcher's tabs and Home's cards side by side.
+    if (['j', 'k', 'ArrowDown', 'ArrowUp'].includes(key) && stepRow(key === 'j' || key === 'ArrowDown')) return done()
+    if (['ArrowLeft', 'ArrowRight'].includes(key) && document.activeElement?.closest?.('[data-across], [data-rows="home"]') && stepRow(key === 'ArrowRight', true)) return done()
     const here = laneInFocus()
     // At home a key acts on the card in focus, and only on one: there is no one repository on the page.
     const card = atHome() ? current.repos.find((candidate) => candidate.id === document.activeElement?.dataset?.home && !candidate.error) : null
@@ -3647,6 +3744,8 @@ document.addEventListener('keydown', (event) => {
         c: () => { if (lane.dirty && !lane.operation && !isMerged(lane)) select({ repo: repo.id, lane: lane.name, form: 'commit' }) },
         u: () => { if (lane.ahead > 0 && !lane.operation) uncommitLane(repo, lane) },
         z: () => toggleFold(here.key),
+        // Space on the lane itself (a commit of it takes Space to choose itself).
+        ' ': () => document.activeElement?.dataset.key === here.key && toggleFold(here.key),
         g: () => unless(gateBlockOf(lane), () => confirm('gate')),
         v: () => unless(gateBlockOf(lane), () => confirm('gate')),
         l: () => unless(byPullRequest(repo) ? `${repo.integrationBranch} takes its changes by pull request: Merge… lands it` : landBlockOf(repo, lane), () => check(repo, lane, 'land')),
