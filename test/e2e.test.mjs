@@ -235,6 +235,8 @@ const RECORD = () => {
                 leaving: this.matches?.('.leaving') ?? false, inert: this.inert === true,
                 findable: Boolean(this.matches?.('.leaving') && this.querySelector('[data-key], [data-anim], [tabindex], [id]')),
                 text: this.textContent.replace(/\s+/g, ' ').trim().slice(0, 240),
+                // Which of a repository's kept parts it is, when it is one: its log, its landing table, what settled.
+                part: this.parentElement?.matches?.('section.repo') ? (this.matches('ol.log') ? 'log' : this.dataset.anim?.split(':').pop() ?? null) : null,
                 transforms: frames.map((frame) => frame.transform).filter((transform) => transform && transform !== 'none'),
                 moves: frames.some((frame) => (frame.transform && frame.transform !== 'none') || frame.scale)
             })
@@ -904,4 +906,27 @@ test('the landing order has a view of its own: a table of every lane in its grou
     await page.click(((name) => [...document.querySelectorAll('tr.landing-lane .lane-name')].find((node) => node.textContent === name)), name)
     await page.until(((name) => document.querySelector('.landing').hidden && getComputedStyle(document.querySelector('ol.log')).display !== 'none' && card(name)?.classList.contains('flash')), [name], { what: `the log, with ${name} marked` })
     assert.deepEqual(await page.run(() => [...document.querySelectorAll('.view-tab')].map((tab) => tab.getAttribute('aria-selected'))), ['true', 'false'])
+})
+
+test('from one view to the other, the view shown fades in whole: nothing in the log slides in from the page\'s corner, and nothing of the landing table fades over it', { skip, timeout: 60_000 * SLOW }, async () => {
+    const tab = (label) => [...document.querySelectorAll('.view-tab')].find((node) => node.textContent.startsWith(label))
+    const across = async (label, shown) => {
+        await page.until(atRest, [], { what: 'the page at rest' })
+        await page.run(RECORD)
+        await page.click(tab, label)
+        await page.until(((shown) => !document.querySelector(shown).hidden), [shown], { what: `${shown} shown` })
+        await page.until(atRest, [], { what: 'the page at rest again' })
+        return page.run(() => window.__motion.map((one) => ({ id: one.id, key: one.key, leaving: one.leaving, moves: one.moves, part: one.part })))
+    }
+    const counts = () => [...document.querySelectorAll('.view-count')].map((node) => Math.round(node.getBoundingClientRect().left))
+    const before = await page.run(counts)
+    const toLanding = await across('Landing', '.landing')
+    assert.deepEqual(await page.run(counts), before, 'the Landing tab\'s counts stay where they were as it is chosen')
+    const toLog = await across('Log', 'ol.log')
+    for (const [seen, to] of [[toLanding, 'the landing table'], [toLog, 'the log']]) {
+        const said = JSON.stringify(seen)
+        assert.ok(!seen.some((one) => one.moves), `nothing slides on the way to ${to}: ${said}`)
+        assert.ok(!seen.some((one) => one.leaving), `nothing of the other view fades over ${to}: ${said}`)
+        assert.deepEqual(seen.filter((one) => one.id === 'motion-fade').map((one) => one.part), to === 'the log' ? ['log', 'settled'] : ['landing'], `${to} fades in whole, and only it: ${said}`)
+    }
 })

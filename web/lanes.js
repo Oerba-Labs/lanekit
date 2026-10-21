@@ -420,7 +420,9 @@ const motion = (() => {
             if (old.node === node) return
             const [dx, dy] = [old.box.left - box.left, old.box.top - box.top]
             const [x, y] = [dx - held[0], dy - held[1]]
-            const slid = !calm && (Math.abs(x) >= 1 || Math.abs(y) >= 1) && (onScreen(box) || onScreen(old.box))
+            // What was not drawn (in a view out of sight) has no place to slide from: its box was the page's corner.
+            const drawn = old.box.width + old.box.height > 0
+            const slid = !calm && drawn && (Math.abs(x) >= 1 || Math.abs(y) >= 1) && (onScreen(box) || onScreen(old.box))
             if (slid) {
                 slide(node, x, y)
                 shifted.set(node, [dx, dy])
@@ -543,7 +545,12 @@ const showView = (repoId, view) => {
     keep({ views: Object.fromEntries(views) })
     // A commit chosen in a log no longer drawn goes with it.
     if (view === 'landing' && selected?.repo === repoId) selected = null
+    // The other view, drawn whole and faded in as one, rather than as what changed from the view before: the log, kept
+    // out of sight, was read at the page's corner and slid in from there, and the landing table faded out over it.
+    motion.hush()
     draw(true)
+    const kept = sections.get(repoId)
+    if (kept) for (const part of view === 'landing' ? [kept.landing] : [kept.log, kept.settled]) motion.fadeIn(part)
 }
 // `${repo}/${lane}` folded to its name row: its files, commits and facts kept out of the way until it is unfolded.
 const folded = new Set(host.recall()?.folded ?? [])
@@ -2918,7 +2925,7 @@ const viewTabs = (repo) => {
     const tab = (id, label, title, ...extra) => el('button', {
         type: 'button', role: 'tab', class: 'view-tab', 'data-key': `${repo.id}:view:${id}`, 'aria-selected': String(view === id), title,
         onclick: () => showView(repo.id, id)
-    }, el('span', { text: label }), extra)
+    }, el('span', { class: 'view-label', 'data-text': label, text: label }), extra)
     return [el('div', { class: 'views-row' },
         el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show` },
             tab('log', 'Log', `${repo.integrationBranch}'s line, with each lane on it`),

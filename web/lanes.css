@@ -573,6 +573,9 @@ html[data-compact] .agent-row .agent-session { display: none; }
 .view-tab:hover { color: var(--ink); }
 .view-tab:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; border-radius: 4px; }
 .view-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+/* A tab's name as wide as it is chosen, bold or not, so the counts beside it stay put from one view to the other. */
+.view-label { display: inline-flex; flex-direction: column; }
+.view-label::after { content: attr(data-text); font-weight: 600; height: 0; overflow: hidden; visibility: hidden; }
 .view-tab .n { font-size: var(--s12); font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 .landing[hidden], .log[hidden] { display: none; }
 
