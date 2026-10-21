@@ -553,7 +553,8 @@ const land = (config, name, options) => {
     }
 
     log(`merging ${branch} into ${config.integrationBranch} at ${mainRepo}`)
-    const merge = spawnSync('git', ['merge', '--no-ff', '--no-edit', branch],
+    // --log: the merge's message lists the commits it brings, so git log and GitHub say what landed, not only from where.
+    const merge = spawnSync('git', ['merge', '--no-ff', '--no-edit', '--log', branch],
         { cwd: mainRepo, encoding: 'utf8' })
     if (merge.status !== 0) {
         spawnSync('git', ['merge', '--abort'], { cwd: mainRepo })

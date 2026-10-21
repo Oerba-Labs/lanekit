@@ -1366,8 +1366,23 @@ const mergedTag = (repo, commit) => {
     return name ? el('span', { class: 'tag merged', 'data-hue': hueName(repo, name), text: name, title: `Landed from ${name}` }) : null
 }
 
+/** What a merge brought, one commit a line, newest first: for a title. */
+const broughtWords = (brought) => [...brought.commits.map((one) => `${one.short} ${one.subject}`),
+    brought.count > brought.commits.length ? `and ${plural(brought.count - brought.commits.length, 'older commit')}` : null].filter(Boolean).join('\n')
+
 /** What a commit is, for its title: the words, who, when, and the hash the log no longer prints. */
 const aboutCommit = (commit) => `${commit.subject}\n${commit.short} · ${commit.author} · ${exactly(commit.at)}`
+
+/** A commit's words on its row; a merge's, Landed and what it brought. */
+const landedWords = (commit) => {
+    if (!mergedOf(commit)) return [el('span', { class: 'subject', text: commit.subject })]
+    const brought = commit.brought?.count ? commit.brought : null
+    if (!brought) return [el('span', { class: 'subject', text: 'Landed' })]
+    const all = broughtWords(brought)
+    return [el('span', { class: 'landed-word', text: 'Landed' }),
+        el('span', { class: 'subject', text: brought.commits[0].subject, title: all }),
+        brought.count > 1 ? el('span', { class: 'brought-more', text: `+${brought.count - 1}`, title: all }) : null]
+}
 
 const commitRow = (repo, commit, className, label) => {
     const upstream = repo.main?.upstream
@@ -1377,8 +1392,9 @@ const commitRow = (repo, commit, className, label) => {
         label ? el('span', { class: 'tag', text: label, 'data-anim': `${repo.id}:tag:${label}` }) : null,
         remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch`, 'data-anim': `${repo.id}:tag:${remote}` }) : null,
         isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
-            // A merge reads Landed, with the lane as its tag; git's own words are in the row's title and the details.
-            el('span', { class: 'subject', text: mergedOf(commit) ? 'Landed' : commit.subject }),
+            // A merge reads Landed, with the newest commit it brought and how many more, and the lane as its tag; git's
+            // own words are in the row's title and the details.
+            ...landedWords(commit),
             mergedTag(repo, commit),
             el('span', { class: 'when', text: short(commit.at), title: exactly(commit.at) }),
             rowActions(repo, commit)
@@ -1774,6 +1790,12 @@ const fileRow = (file, open) => {
     `Show what changed in ${file.path}`, open)
 }
 
+/** What a merge brought, in the details pane: how many, then each commit's hash and words, newest first. */
+const broughtList = (brought) => el('div', { class: 'details-brought' },
+    el('p', { class: 'muted small', text: `Brought ${plural(brought.count, 'commit')}` }),
+    el('ul', {}, brought.commits.map((one) => el('li', {}, el('span', { class: 'mono', text: one.short }), el('span', { text: one.subject })))),
+    brought.count > brought.commits.length ? el('p', { class: 'muted small', text: `and ${plural(brought.count - brought.commits.length, 'older commit')}` }) : null)
+
 /** A commit, as the details pane shows it: its words, who and when, what can be done with it, and its files. */
 const commitPane = (repo, commit, laneName) => {
     const lane = laneName ? repo.lanes.find((candidate) => candidate.name === laneName) : null
@@ -1788,9 +1810,11 @@ const commitPane = (repo, commit, laneName) => {
             el('span', { class: 'mono', text: commit.short }),
             el('span', { text: commit.author || details?.author || '' }),
             el('span', { text: ago(commit.at), title: exactly(commit.at) })),
-        details?.error ? el('p', { class: 'muted', text: details.error })
-            : !details ? el('p', { class: 'muted', text: 'Reading…' })
-                : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
+        // A merge says what it brought, each commit its own line, in place of the list git wrote of it (--log) or none.
+        commit.brought?.count ? broughtList(commit.brought)
+            : details?.error ? el('p', { class: 'muted', text: details.error })
+                : !details ? el('p', { class: 'muted', text: 'Reading…' })
+                    : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
         // One row where it fits: words only on what changes the commit, first; then the icons, which wrap together.
         el('div', { class: 'details-actions' },
             newest ? iconButton('pencil', 'Edit message', { onclick: () => select({ repo: repo.id, lane: lane.name, form: 'reword' }), title: 'A new title and description, nothing else' }) : null,
