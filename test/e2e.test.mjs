@@ -1109,3 +1109,46 @@ test('in a narrow column, the switcher is one button opening every repository as
         await thin.close()
     }
 })
+
+test('nothing on the page is wider than the column, down to the narrowest side bar: Home, a log and its landing table at 170px and up', { skip, timeout: 120_000 * SLOW }, async () => {
+    // A long lane name, with work uncommitted in it, beside main's tags: what was wider than a narrow column before.
+    lane('new', 'a-rather-long-lane-name')
+    write(laneDir('a-rather-long-lane-name'), 'long.txt', 'long\n')
+    const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 900 })
+    // What sticks out past the window's right edge, and by how much.
+    const wider = () => {
+        const width = document.documentElement.clientWidth
+        const out = [...document.querySelectorAll('body *')]
+            .filter((node) => node.getBoundingClientRect().right > width + 0.5 && node.checkVisibility())
+            .map((node) => `${node.localName}.${String(node.className).trim().split(/\s+/).join('.')} "${node.textContent.trim().slice(0, 30)}" by ${Math.round(node.getBoundingClientRect().right - width)}px`)
+        return { scroll: document.documentElement.scrollWidth, width, out: out.slice(0, 6) }
+    }
+    try {
+        for (const width of [170, 200, 240, 320]) {
+            await thin.resize(width, 900)
+            for (const view of ['Home', 'Log', 'Landing']) {
+                if (view === 'Home') await thin.run(() => { location.search = '' })
+                if (view === 'Log') await thin.run(() => { location.search = '?repo=demo' })
+                if (view === 'Home') await thin.until(() => document.querySelectorAll('.home-card').length >= 2, [], { what: 'Home\'s cards' })
+                else await thin.until(() => document.querySelector('.lane[data-key$="/a-rather-long-lane-name"]'), [], { what: 'the long lane in the log' })
+                if (view === 'Landing') {
+                    await thin.click(() => [...document.querySelectorAll('.view-tab')].find((tab) => /^Landing/.test(tab.textContent)))
+                    await thin.until(() => document.querySelector('.landing-table:not([hidden]) .landing-lane'), [], { what: 'the landing table' })
+                }
+                const said = await thin.run(wider)
+                assert.ok(said.scroll <= said.width, `${view} at ${width}px is ${said.scroll}px wide: ${said.out.join(', ')}`)
+                if (view !== 'Log') continue
+                // A commit's age stays on its words' line, wherever the two go.
+                const apart = await thin.run(() => [...document.querySelectorAll('li.commit')].filter((row) => {
+                    const words = row.querySelector('.subject')?.getBoundingClientRect(), when = row.querySelector('.when')?.getBoundingClientRect()
+                    return words && when && when.width && Math.abs(words.bottom - when.bottom) > 4
+                }).map((row) => row.querySelector('.subject').textContent))
+                assert.deepEqual(apart, [], `at ${width}px, a commit's age on a line of its own`)
+            }
+        }
+    } finally {
+        await thin.close()
+        fs.rmSync(path.join(laneDir('a-rather-long-lane-name'), 'long.txt'))
+        lane('drop', 'a-rather-long-lane-name')
+    }
+})

@@ -1421,14 +1421,14 @@ const commitRow = (repo, commit, className, label) => {
     const row = el('li', { class: `commit ${className}`, 'data-sha': commit.sha, 'data-anim': `${repo.id}@${commit.sha}` },
         label ? el('span', { class: 'tag', text: label, 'data-anim': `${repo.id}:tag:${label}` }) : null,
         remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch`, 'data-anim': `${repo.id}:tag:${remote}` }) : null,
-        isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
-            // A merge reads Landed, with the newest commit it brought and how many more, and the lane as its tag; git's
-            // own words are in the row's title and the details.
+        // A merge reads Landed, with the newest commit it brought and how many more, and the lane as its tag; git's own
+        // words are in the row's title and the details. Its words, age and buttons are one piece, which in a narrow
+        // column goes under the tags as a whole where they leave it too little room.
+        isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : el('span', { class: 'words' },
             ...landedWords(commit),
             mergedTag(repo, commit),
             el('span', { class: 'when', text: short(commit.at), title: exactly(commit.at) }),
-            rowActions(repo, commit)
-        ])
+            rowActions(repo, commit)))
     return isNaming(repo, commit) ? row : selectable(row, repo, commit)
 }
 

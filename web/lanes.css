@@ -255,8 +255,9 @@ a.btn { display: inline-block; text-decoration: none; }
 /* A commit's words, then its age, then (on hover) what can be done with it, side by side as ISL sets them: the words
    do not stretch across the row, and words longer than a line's worth are clipped, whole in the title and the details. */
 .subject { flex: 0 1 auto; max-width: 56ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-html[data-compact] .subject { max-width: none; }
 .when { color: var(--muted); font-size: var(--s12); flex: none; font-variant-numeric: tabular-nums; }
+.words { display: contents; }
+html[data-compact] .subject { max-width: none; }
 .older { padding: 8px 0 4px calc(var(--spine) + 20px); color: var(--muted); font-size: var(--s12); }
 
 /* A branch's name, as ISL tags a commit: small, grey, in the editor's own ink; a lane's in the lane's colour. */
@@ -375,6 +376,28 @@ html[data-surface="sidebar"] .lane-head .grow { display: none; }
 html[data-compact] .lane-head .actions { flex-basis: 100%; }
 html[data-surface="sidebar"] .lane-title { gap: 4px 6px; }
 html[data-compact] .lane-title { flex: 1 1 100%; }
+/* In a narrow column nothing is wider than the column: the header's buttons go under its name; a state's words and a
+   button's wrap; a lane's name too long for the column wraps where it must, and any other tag is clipped; the
+   switcher's button and the view tabs wrap; and where a commit's tags leave its words less than 10em, its words, age
+   and buttons go under the tags as one, where a merge's lane gives way to them (whole in its title). Each only where
+   it would not fit otherwise. */
+html[data-compact] .repo-head { flex-wrap: wrap; }
+html[data-compact] .commit { flex-wrap: wrap; row-gap: 0; }
+html[data-compact] .words { display: flex; align-items: baseline; gap: inherit; flex: 1 1 10em; min-width: 0; max-width: max-content; }
+html[data-compact] .words > .tag { flex-shrink: 1; }
+html[data-compact] .state, html[data-compact] .btn.link { white-space: normal; text-align: left; }
+html[data-compact] .tag { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-compact] .tag.lane-name, html[data-compact] .home-lane { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+html[data-compact] .more-wrap { max-width: 100%; }
+html[data-compact] .btn.switcher-toggle { flex-wrap: wrap; }
+html[data-compact] .views { flex-wrap: wrap; }
+/* And narrower than any side bar is wide by default, a landing row's button goes under its name. */
+@media (max-width: 239px) {
+  html[data-compact] .landing-table .landing-lane { grid-template-columns: minmax(0, 1fr); }
+  html[data-compact] .landing-table .landing-lane > .landing-step { grid-column: 1; grid-row: 2; text-align: left !important; }
+  html[data-compact] .view-tab { padding-left: 4px; padding-right: 4px; }
+}
+}
 html[data-surface="sidebar"] .stack-commit { gap: 6px; padding: 3px 0; font-size: var(--s12); }
 html[data-surface="sidebar"] .stack-commit::before { left: calc(var(--column) - var(--indent) - 4px); top: 8px; width: 8px; height: 8px; }
 html[data-surface="sidebar"] .landed li { gap: 4px 8px; }
@@ -928,7 +951,7 @@ html[data-compact] .cmdbar .cmd-step, html[data-compact] .cmdbar .queued { displ
    amber, as a lane's line is. The whole card opens its repository; its lanes' names open it at that lane. */
 .home {
   list-style: none; margin: 4px 0 40px; padding: 0;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 16px;
 }
 .home-card {
   display: flex; flex-direction: column; gap: 8px; min-width: 0;
