@@ -18,6 +18,7 @@ import { after, before, test } from 'node:test'
 
 import { adopt } from '../bin/adopt.mjs'
 import { writeAgentCommands } from '../bin/claude-commands.mjs'
+import { loadConfig } from '../lib/config.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const env = {
@@ -112,9 +113,50 @@ test('the shim finds lanekit and makes a lane with a port of its own', () => {
     const port = Number(/^PORT=(\d+)$/m.exec(read(path.join(lane, '.env')))[1])
     assert.ok(port >= 8301 && port <= 8399, `port ${port} in the window`)
     assert.match(sh(dir, path.join(dir, 'piano-sheets'), 'lane', 'list'), /lanekit-trial/)
-    assert.match(sh(lane, path.join(lane, 'piano-sheets'), 'gate'), /VERIFIED/)
+    assert.match(sh(lane, path.join(lane, 'piano-sheets'), 'verify'), /VERIFIED/)
+    assert.match(sh(lane, path.join(lane, 'piano-sheets'), 'gate'), /VERIFIED/, 'and gate, its old name, still answers')
     sh(dir, path.join(dir, 'piano-sheets'), 'lane', 'sweep', 'lanekit-trial')
     assert.ok(!fs.existsSync(lane))
+})
+
+test('a second run brings a shim from an older lanekit up to date, and says so', () => {
+    const dir = path.join(scratch, 'piano-sheets')
+    const shim = path.join(dir, 'piano-sheets')
+    const fresh = read(shim)
+    const older = fresh.replace('lane|verify|gate)', 'lane|gate)')
+    assert.notEqual(older, fresh, 'the older shim, without verify')
+    fs.writeFileSync(shim, older)
+    assert.deepEqual(adopt({ dir, check: true }).wrote, ['piano-sheets'], '--check says it would rewrite it')
+    assert.equal(read(shim), older, 'and does not')
+    const said = adopt({ dir })
+    assert.deepEqual(said.wrote, ['piano-sheets'])
+    assert.ok(!said.kept.includes('piano-sheets'))
+    assert.equal(read(shim), fresh)
+    assert.ok(fs.statSync(shim).mode & 0o100, 'and it still runs')
+})
+
+test('what verifying runs is read from "verify", or from "gate", its old name, and never from both', () => {
+    const dir = path.join(scratch, 'keys')
+    fs.mkdirSync(dir)
+    const { gate, ...base } = JSON.parse(read(path.join(scratch, 'piano-sheets', 'lane.config.json')))
+    assert.ok(gate.tiers[1], 'adopt writes it as "gate", which an older lanekit reads too')
+    assert.equal(base.verify, undefined)
+    const tiers = { 1: { label: 'the tests', steps: [{ what: 'nothing', command: 'true', args: [] }] } }
+    const load = (keys) => {
+        fs.writeFileSync(path.join(dir, 'lane.config.json'), JSON.stringify({ ...base, ...keys }))
+        // Read here, not by the shim, so the machine's own LANEKIT_PORTS is set aside as env sets it aside for the shim.
+        const ports = process.env.LANEKIT_PORTS
+        delete process.env.LANEKIT_PORTS
+        try {
+            return loadConfig(dir)
+        } finally {
+            if (ports !== undefined) process.env.LANEKIT_PORTS = ports
+        }
+    }
+    assert.equal(load({ verify: { tiers } }).gate.tiers[1].label, 'the tests')
+    assert.equal(load({ verify: { tiers } }).verify, undefined, 'read under the one name')
+    assert.equal(load({ gate: { tiers } }).gate.tiers[1].label, 'the tests')
+    assert.throws(() => load({ verify: { tiers }, gate: { tiers } }), /has both "verify" and "gate", the old name for it: keep one/)
 })
 
 test('a repository on master, with its .env tracked, gets a port file git ignores', () => {

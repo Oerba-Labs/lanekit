@@ -344,7 +344,7 @@ test('a gate gives its steps a folder of the lane\'s as LAB_RESULTS, says what i
     const first = gate(lane)
     assert.equal(first.code, 1, 'the step\'s exit is the verdict')
     assert.match(first.out, new RegExp(`LAB_RESULTS is ${path.join(lane, '.lanekit', 'results').replaceAll('.', '\\.')}\\n`))
-    assert.match(first.out, /\[gate +\d+s\] tests: 2 passed, 1 failed, 1 errored, 2 skipped\n {2}failed {3}tests\.test_scores::test_long_score_splits\n {2}errored {2}tests\.test_db::test_migrations\n/)
+    assert.match(first.out, /\[verify +\d+s\] tests: 2 passed, 1 failed, 1 errored, 2 skipped\n {2}failed {3}tests\.test_scores::test_long_score_splits\n {2}errored {2}tests\.test_db::test_migrations\n/)
     assert.match(first.out, /FAILED/)
     const record = newestRun(repo)
     assert.equal(record.result, 'failed')
@@ -395,7 +395,7 @@ test('malformed JUnit is said once and never fails a gate whose steps passed', (
     assert.equal(run.code, 0, run.out)
     assert.match(run.out, /VERIFIED/)
     const said = run.out.split('\n').filter((line) => /broken\.xml/.test(line))
-    assert.deepEqual(said.map((line) => line.replace(/^\[gate +\d+s\] /, '')), ['1 XML file the tests wrote could not be read, so it is not counted: broken.xml (a tag is not well formed, at line 1)'])
+    assert.deepEqual(said.map((line) => line.replace(/^\[verify +\d+s\] /, '')), ['1 XML file the tests wrote could not be read, so it is not counted: broken.xml (a tag is not well formed, at line 1)'])
 })
 
 test('where git does not ignore .lanekit/, the results go in the lane\'s own git directory, and the tree stays clean', () => {

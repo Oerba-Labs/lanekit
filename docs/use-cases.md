@@ -39,7 +39,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 1 | Start a lane from main as it is now | `lane new <name>`; **New lane here** on main's newest commit | web 10, adopt 5, e2e 1 |
 | 2 | Start a lane from any commit, of main or on top of another lane | **New lane here** on that commit; `--base` | flow 13, vscode 25 |
 | 3 | Bring a dropped lane back from its branch | `lane new <name> --existing` | tidy 5 |
-| 4 | Give a repository that has none lanes, after a look at what that writes | **Give it lanes…**; `lane adopt --commit` | adopt 1–12, service 11 |
+| 4 | Give a repository that has none lanes, after a look at what that writes | **Give it lanes…**; `lane adopt --commit` | adopt 1–14, service 11 |
 | 5 | **new** Move work begun in the main checkout into a lane of its own, every file or the ticked ones, and leave main clean | **Move to a new lane…** under main's files; `lane new <name> --carry [-- <file>…]` | carry 1–4, carry 12, e2e 5 |
 
 ## Working in a lane
@@ -69,12 +69,13 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 
 | | use case | how | tests |
 |---|---|---|---|
-| 19 | Verify a lane: on top of main, the tier it earns, its result kept with its commit | **Verify**; `gate` | web 8, flow 10, rebase 4, rebase 7, e2e 3 |
+| 19 | Verify a lane: on top of main, the tier it earns, its result kept with its commit | **Verify**; `verify` | web 8, flow 10, rebase 4, rebase 7, e2e 3 |
 | 20 | **new** See which steps a lane is ready for: Verify held until there is a commit and nothing uncommitted; Land until it is verified, first in its order, and main's checkout is ready; each saying why | the lane's buttons, drawn held, their reason as their title | page 1, page 2, e2e 3 |
 | 21 | Know which lane lands first, and which collide | the landing order | tidy 2, tidy 8 |
 | 22 | Land a ready lane, then sweep it | **Land…**, **Land next**, **Sweep…**; `lane land`, `lane sweep` | web 7–9 |
 | 23 | Push main, only where the repository takes it | **Push** beside the repository's name; `lane push --main` | flow 20–22 |
 | 61 | **new** Know what the tests said: how many passed, failed, errored and were skipped, and the first five that did not pass, wherever a gate's result is shown; a file that cannot be read said once, and never deciding the gate; nothing new for a project that writes no JUnit | `./check` writes JUnit XML into `$LAB_RESULTS`; the gate, the page, the editor's notice, the `gate` tool | results 1–17, page 9 |
+| 77 | **new** Call it verifying everywhere it is said: `./<project> verify`, the agents' `verify` tool, a `verify` key in `lane.config.json`, `[verify Ns]` in its output, the skills and `/land`; `gate`, its old name, still answering as the shim, the tool and the key do (never both keys at once; `init` and `adopt` write `gate`, which an older lanekit reads too), and a shim from an older lanekit brought up to date by `lane adopt` | `./<project> verify`; the `verify` tool; `"verify"` in `lane.config.json` | adopt 5–7, mcp 1, mcp 2, results 8, results 12 |
 
 ## Pull requests
 

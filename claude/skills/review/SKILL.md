@@ -13,7 +13,7 @@ Review pull request **$ARGUMENTS**.
    file whole where the diff alone does not show what it does.
 3. **Run it** where behaviour matters: the lane has its own port and environment, so start the app there as the
    project says (its README, or what `lane new` printed as how to serve it) and try what the change claims.
-4. **Verify it** with `gate`: the tests the change earns, on top of `main` as it is now. The gate rebases the lane here
+4. **Verify it** with `verify`: the tests the change earns, on top of `main` as it is now. Verifying rebases the lane here
    only; `pull` still brings what the author pushes after.
 5. **Write the review**: what the change does; what is wrong, each with its file and line and why; what is missing
    (tests, a case not handled); and the risk. Say which points block a merge and which are suggestions.

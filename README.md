@@ -44,7 +44,7 @@ Every lane starts from `main`, and comes back to it with a merge commit of its o
 |---|---|---|
 | **1. Start** | `./piano-sheets lane new midi-export` | a folder beside the repository, a branch, the next free port, and the lane's own `.env` |
 | **2. Work** | `cd ../piano-sheets-midi-export` | edit, run, commit; nothing here touches `main` or any other lane |
-| **3. Verify** | `./piano-sheets gate`, in the lane | rebases onto `main`, runs the tests the change earns, and records the result against the commit. It never merges |
+| **3. Verify** | `./piano-sheets verify`, in the lane | rebases onto `main`, runs the tests the change earns, and records the result against the commit. It never merges |
 | **4. Land** | `./piano-sheets lane land midi-export`, in `main` | merges with `--no-ff` once the lane is verified, stops the lane's server, removes its folder, keeps its branch |
 
 `./piano-sheets` is the project's shim: a small script, named after the project, that finds
@@ -90,19 +90,19 @@ $ ./piano-sheets lane queue
 ```
 
 The queue asks git to merge every pair of lanes in memory, so it can say which would collide
-before either lands, and in which order to land them so no gate has to run twice.
+before either lands, and in which order to land them so nothing has to be verified twice.
 </details>
 
 <details>
-<summary><b>3.</b> <code>gate</code> checks the lane as it would merge</summary>
+<summary><b>3.</b> <code>verify</code> checks the lane as it would merge</summary>
 
 ```
-$ ./piano-sheets gate
-[gate   0s] already on top of main
-[gate   0s] 0 generated artifacts checked
-[gate   0s] 1 file changed — server or tooling only
-[gate   0s] tier 1: the check script
-[gate   0s] running ./check…
+$ ./piano-sheets verify
+[verify   0s] already on top of main
+[verify   0s] 0 generated artifacts checked
+[verify   0s] 1 file changed — server or tooling only
+[verify   0s] tier 1: the check script
+[verify   0s] running ./check…
   check: nothing is checked yet. Put this project's tests in ./check.
 
 ────────────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ $ ./piano-sheets lane land midi-export
 ────────────────────────────────────────────────────────────────
 ```
 
-`land` refuses a lane whose last green gate is not about the commit it would merge, one that
+`land` refuses a lane whose last green verification is not about the commit it would merge, one that
 should land after another, and a `main` with uncommitted changes.
 </details>
 
@@ -185,12 +185,12 @@ README, and makes the first commit. Its port window sits above any other project
 |---|---|
 | `lane.config.json` | what a lane of this project owns and borrows: [the config](#the-config) |
 | `./<project>` | the shim, the one command everything goes through |
-| `./check` | what the gate runs: put the project's tests in it |
+| `./check` | what verifying runs: put the project's tests in it |
 | `.claude/commands/`, `.opencode/commands/` | `/lane` and `/land` for Claude Code and OpenCode |
 
 ## Working with an agent
 
-`/lane <what the work is>` starts a lane and moves the agent into it; `/land` gates the lane,
+`/lane <what the work is>` starts a lane and moves the agent into it; `/land` verifies the lane,
 reports honestly, and asks before merging. They are committed with the repository, so they
 exist in every checkout, every lane and every agent's sandbox. Two agents given one lane each
 cannot overwrite each other's files, restart each other's servers or migrate each other's
@@ -220,9 +220,9 @@ It brings every project the same words, whether or not the repository has its ow
   No skill allows landing, dropping, pushing or sending a review by itself, so Claude Code asks
   you first, unless you have allowed those tools yourself.
 - **Tools** (an MCP server, `lanekit`). They let the agent work lanes the way the page does:
-  `lanes`, `new_lane` (with `carry`, and `pr` to review one), `commit`, `gate`, `pull`, `rebase`,
+  `lanes`, `new_lane` (with `carry`, and `pr` to review one), `commit`, `verify` (`gate`, its old name, still answers), `pull`, `rebase`,
   `resolve`, `push`, `pull_request`, `review`, `land` and `drop`. The page's own rules apply, so
-  a land before the gate is green is refused, in the same words. `lanes` only reads.
+  a land before it is verified is refused, in the same words. `lanes` only reads.
   `land` and `drop` say that they remove something. The tools that reach GitHub say so too.
 - **Hooks.** The agent's state goes to the page and the editor (Thinking, Running, Needs you)
   with nothing set up by hand. Where lanekit's own hooks are in `~/.claude/settings.json` already,
@@ -283,10 +283,10 @@ The page in the picture above, for every repository in a folder:
   two), and a merge on main reads *Landed* with the lane it brought as a tag in that lane's colour,
   git's own words in its tooltip. A
   commit is its words and its age (*22m*, *3d*); its hash is in its tooltip. Under the name, quietly:
-  its last gate, whether it is pushed (or what origin has of it that it lacks), its pull request when
+  its last verification, whether it is pushed (or what origin has of it that it lacks), its pull request when
   `gh` is signed in, and what serves on its port while anything does. While a press runs in it, it says
-  so live: *Verifying · running the tests… · 12 s*. Where its tests wrote JUnit, the gate says their counts
-  (*Verification failed · tier 1 · 2 passed, 1 failed, 1 skipped*). A failed gate shows the tests that did not
+  so live: *Verifying · running the tests… · 12 s*. Where its tests wrote JUnit, the verification says their counts
+  (*Verification failed · tier 1 · 2 passed, 1 failed, 1 skipped*). A failed verification shows the tests that did not
   pass, then the failing step and its last lines, kept with the run, so it is still there tomorrow.
 - **A commit chosen opens its details beside the log**, as Interactive Smartlog's right-hand side
   does: its whole message, its lane, hash, author and age, the files it changed (each opens its
@@ -310,7 +310,7 @@ The page in the picture above, for every repository in a folder:
   stays slides to its new place; a new commit fades in, washed in the accent so a glance finds it; a
   file committed, a lane dropped or a question answered fades from where it was; a lane that lands
   slides into main's line as its merge commit arrives and `main`'s tag slides up to it; a state, a
-  gate or a count that changes ticks over; lanes that swap places pass each other dimmed. A lane
+  verification or a count that changes ticks over; lanes that swap places pass each other dimmed. A lane
   with something running in it, and main while it is pulled or fetched, has a light running down
   its line. Nothing waits for the motion, and with *reduce motion* set on the machine nothing
   slides: things only fade.
@@ -334,7 +334,7 @@ The page in the picture above, for every repository in a folder:
   **Abort**. The one thing to do next is solid (**Verify** when it needs verifying, **Land** when it is
   ready, **Rebase** when it conflicts with main); what is done now and then, **Push**, **Pull
   request**, **Set aside** and **Drop**, sits behind **⋯** at the toolbar's end.
-- **Its state is said once**, beside its name ("Needs verifying", "Ready to land"), with the gate's
+- **Its state is said once**, beside its name ("Needs verifying", "Ready to land"), with the verification's
   last result under it only where there is one. A lane whose agent waits on you says so there too
   ("Claude needs you"), in amber, so a glance down the page finds it.
 - **A new lane starts from a commit.** Point at any commit, of main or of a lane, choose **New lane
@@ -344,7 +344,7 @@ The page in the picture above, for every repository in a folder:
   in the middle of something, stays where it is. **Back onto an older commit** is allowed, and the
   question says so: the lane keeps its own commits and leaves main's newer ones out from under it,
   a place to work from (to see whether a newer commit of main broke it, or to keep going while main
-  is broken) but never to land from, since the gate moves a lane onto main's newest before it tests.
+  is broken) but never to land from, since verifying moves a lane onto main's newest before it tests.
   If its commits need what it leaves behind, the rebase stops on the files that conflict, and
   **Abort** puts it back exactly; a pushed lane moved back asks before its next push replaces
   origin's copy.
@@ -358,7 +358,7 @@ The page in the picture above, for every repository in a folder:
   commit it was begun on, rather than said in a word above: each file ticked, **Select all**,
   **Deselect all**, **Discard…**, and under them **Move to a new lane…**, which makes a lane from that
   commit with the ticked files and takes them out of the main checkout (`lane new <name> --carry`).
-  There is no Commit there: nothing reaches main without a gate. Until it is clean, Land and Pull
+  There is no Commit there: nothing reaches main without a verification. Until it is clean, Land and Pull
   wait, and say so.
 - **A rebase stopped on a conflict** lists its files, each with **✓ Resolved**, which LaneKit
   refuses while a conflict marker is left in the file; then **Continue** carries on.
@@ -382,7 +382,7 @@ The page in the picture above, for every repository in a folder:
   commit, and never steps past a rule. A pull request merged on GitHub some other way is said too.
 - **Review somebody's pull request in a lane of its own.** Next to each pull request that waits on
   your review, on Home and in a repository's header, **Review in a lane** checks it out as
-  `review-<number>`, with its own port and its own `.env`, ready to run and gate. Its lane says
+  `review-<number>`, with its own port and its own `.env`, ready to run and verify. Its lane says
   *Reviewing #8 by kim*. **Review…**, its one solid button, opens a form for your words, with
   **Approve**, **Request changes** and **Comment**, and sends the review to GitHub. When the author
   pushes again, its next step is **Pull** (also behind ⋯ as **Pull what its author pushed**). That
@@ -491,7 +491,7 @@ in the picture. There its clicks drive the editor:
   (`lanekit.reportAgents` answers instead, `always` or `never`), or run
   `node ~/.lanekit/bin/agent-reports.mjs`;
 - a rebase that stopped on a conflict opens its files (**Conflicts**), where each conflict can be
-  accepted one way, the other, or both; a file and line in a failed gate's output opens there;
+  accepted one way, the other, or both; a file and line in a failed verification's output opens there;
 - the status bar names the lane the file in front of you is in, and what it needs ("ready to
   land"); a click opens that lane's menu: Terminal, Changes, Start agent, Verify, Land, Rebase, Push, **New
   lane from here** (on top of this one), or the lane in a new window of its own;
@@ -499,7 +499,7 @@ in the picture. There its clicks drive the editor:
   checks, and a press that ends while LaneKit is out of sight says how it ended;
 - `lanekit.opensIn`, `tab` by default, says where the icon, the status bar's lane menu and a
   notification's **Show** open LaneKit: an editor tab, or `sideBar`;
-- `lanekit.gateOnCommit`, off by default, gates a lane by itself when a commit lands in it;
+- `lanekit.gateOnCommit`, off by default, verifies a lane by itself when a commit lands in it;
 - `lanekit.updates`, `ask` by default, says whether LaneKit keeps the copy of lanekit it runs from up
   to date by itself (below): `always`, `never`, or ask once, the first time there is something new.
 
@@ -553,8 +553,8 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ./<project> lane new --pr <n>    review somebody's pull request in a lane of its own, review-<n>
 ./<project> lane list            what exists, each lane's port, and what is serving
 ./<project> lane queue [name]    which lane should land next, and which would collide
-./<project> gate                 in a lane: is this branch ready to merge?
-./<project> lane land <name>     in main: merge a lane whose gate is green, then sweep it
+./<project> verify               in a lane: is this branch ready to merge? (gate, its old name, too)
+./<project> lane land <name>     in main: merge a lane that is verified, then sweep it
 ./<project> lane rebase <name>   replay a lane onto main as it is now; --continue or --abort after a conflict
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased,
                                  never over somebody else's commits there unless --force
@@ -575,7 +575,7 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ./<project> lane drop <name>     remove a lane's folder and keep its branch; --dry-run says what it would do
 ./<project> lane sweep [name]    remove lanes whose branch has landed
 ./<project> lane web             a page of every lane (in your editor: LaneKit's side bar)
-./<project> check                what the gate runs
+./<project> check                what verifying runs
 ```
 
 `lane new` takes `--base <ref>` to start from something other than the integration branch,
@@ -585,30 +585,30 @@ nothing),
 `--pr <n>` to check out somebody's pull request to review (from this repository, following its
 branch; from a fork, GitHub's copy of its head; never with `--base`, `--existing` or `--carry`),
 `--install` to build the lane's own copies of what would otherwise be shared, `--no-seed` to
-skip filling what it must own, and `--no-provision` to make the folder and stop. `gate` takes
+skip filling what it must own, and `--no-provision` to make the folder and stop. `verify` takes
 `--fast` (tier 1 whatever the change earns; it says `INCOMPLETE` rather than `VERIFIED`),
 `--tier <n>` and `--json`. `land` and `sweep` take `--dry-run`.
 
 ## What the tests said: `$LAB_RESULTS`
 
-A gate can say more than whether its steps passed. Each step is given `LAB_RESULTS`, the path of a
-folder, and a gate's tests may write JUnit XML there: what they write is counted, and the gate says
+A verification can say more than whether its steps passed. Each step is given `LAB_RESULTS`, the path of a
+folder, and its tests may write JUnit XML there: what they write is counted, and the verification says
 how many passed, failed, errored and were skipped, and names the first five that did not pass. From a
 real run, with `node --test` in `./check`:
 
 ```
-$ ./piano-sheets gate
-[gate   0s] already on top of main
-[gate   0s] 0 generated artifacts checked
-[gate   0s] 1 file changed — server or tooling only
-[gate   0s] tier 1: the tests
-[gate   0s] running ./check…
+$ ./piano-sheets verify
+[verify   0s] already on top of main
+[verify   0s] 0 generated artifacts checked
+[verify   0s] 1 file changed — server or tooling only
+[verify   0s] tier 1: the tests
+[verify   0s] running ./check…
 .X.X.
   …the failure, as the test runner prints it…
-[gate   1s] tests: 2 passed, 1 failed, 1 skipped
+[verify   1s] tests: 2 passed, 1 failed, 1 skipped
   failed   test::a long score splits into pages
 
-[gate] running ./check failed
+[verify] running ./check failed
 
 
 ────────────────────────────────────────────────────────────────────
@@ -629,25 +629,25 @@ Most test runners write JUnit when asked:
 `.lab-results/` in `.gitignore`, gives it somewhere to write. The files can be anywhere under the
 folder, so a repository of several parts can give each part a folder of its own.
 
-- **Whoever runs the tests chooses the folder.** The gate gives its steps `.lanekit/results/` in the
-  checkout it gates, which git ignores in a repository `lane adopt` or `lane init` set up (where it does
-  not, the checkout's own git directory instead, so a gate never leaves the tree dirty for the next), and
+- **Whoever runs the tests chooses the folder.** Verifying gives its steps `.lanekit/results/` in the
+  checkout it verifies, which git ignores in a repository `lane adopt` or `lane init` set up (where it does
+  not, the checkout's own git directory instead, so a verification never leaves the tree dirty for the next), and
   empties it before the steps run, so nothing is counted from an earlier run. Where the environment the
-  gate starts in sets `LAB_RESULTS` already, as a CI job's may, the gate uses that folder as it is:
+  verification starts in sets `LAB_RESULTS` already, as a CI job's may, verifying uses that folder as it is:
   it removes nothing from it, and reads only the files the steps wrote or rewrote.
 - **The exit code is the verdict.** The counts say what the tests said; they never pass or fail a
-  gate. A step that exits 0 while its JUnit names a failure still passes, with the counts beside it.
+  verification. A step that exits 0 while its JUnit names a failure still passes, with the counts beside it.
 - **A file that is not well-formed XML is said once**, plainly, with what is wrong with it, and its
   tests are not counted; the others still are. A file with a DOCTYPE is refused the same way, so nothing
   in a file expands into anything else. XML that is not JUnit (a coverage report) is passed over.
 - **What is read is bounded:** at most 200 files, four folders down, 32 MB of one file and 128 MB in
-  all. A file past a bound is not read, and the gate says so. Symbolic links are not followed.
+  all. A file past a bound is not read, and the verification says so. Symbolic links are not followed.
 - **A project whose tests write no JUnit** is reported exactly as before.
 
-The counts are kept with the run (`gate --json` prints them), and shown wherever a gate's result is:
-beside the lane's gate on the page and in the editor, with the failing tests above a failed step's last
-lines; in the editor's notice when a gate ends out of sight (*LaneKit: midi-export failed (exit 1);
-tests: 2 passed, 1 failed, 1 skipped.*); and first in the answer of the agents' `gate` tool. lanekit
+The counts are kept with the run (`verify --json` prints them), and shown wherever a verification's result is:
+beside the lane's verification on the page and in the editor, with the failing tests above a failed step's last
+lines; in the editor's notice when a verification ends out of sight (*LaneKit: midi-export failed (exit 1);
+tests: 2 passed, 1 failed, 1 skipped.*); and first in the answer of the agents' `verify` tool. lanekit
 reads JUnit itself, with no XML library, so it still has no dependencies. Anything else that runs the
 same `./check` with `LAB_RESULTS` set, a CI job say, can read the same files.
 
@@ -693,9 +693,10 @@ to its front end might say:
 |---|---|
 | `name`, `slug` | what is shown, and the form safe in a path: the shim and every lane folder are named from it |
 | `integrationBranch` | what a lane starts from, and what "landed" means |
-| `roots` | the project's directories, used as `{server}` and `{app}` in the gate's steps; refused if one names nothing |
-| `gate.tiers` | what the gate runs. Tier 1 is every change; tier 2 is earned by a change to `gate.sides.app` or to `gate.seam`, the files one side shares with the other |
+| `roots` | the project's directories, used as `{server}` and `{app}` in verifying's steps; refused if one names nothing |
+| `gate.tiers` | what verifying runs. Tier 1 is every change; tier 2 is earned by a change to `gate.sides.app` or to `gate.seam`, the files one side shares with the other |
 | `gate.generated` | committed files a generator owns: regenerated and compared, so a stale one is caught |
+| `verify` | the same as `gate`, by its new name: either is read, never both. `init` and `adopt` write `gate`, which a lanekit older than this one reads too |
 | `lane.portBase`, `portCeiling` | the window a lane's port comes from. A machine can take a share of it with `LANEKIT_PORTS="<slug>=<first>-<last>"`, which narrows it and never widens it |
 | `lane.staleAfterDays` | optional: after how many days with nothing done in it a lane is called quiet; fourteen when left out |
 | `lane.copyOnCreate` | files git ignores that a running checkout needs: copied into each lane, never shared |
@@ -706,7 +707,7 @@ to its front end might say:
 | `lane.runHint` | how to start the app, printed when a lane is made |
 
 In any of these, `{lane}` is the lane's folder, `{main}` the main checkout, `{port}` the lane's
-port and `{name}` its name; in a gate step, `{repo}` is the checkout being gated.
+port and `{name}` its name; in a step of `verify`, `{repo}` is the checkout being verified.
 [INSTALL.md](INSTALL.md) says how to find each answer in a repository.
 
 ## Two decisions worth knowing
