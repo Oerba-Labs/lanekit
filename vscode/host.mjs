@@ -952,7 +952,9 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
             // What the page shows, for its title: a repository's name on its tab, or beside the side bar's.
             page.showing = typeof message.repo === 'string' && message.repo ? message.repo : null
             const title = typeof message.title === 'string' && message.title ? message.title.slice(0, 80) : null
-            if (page.made) page.made.title = title ? `${title} · LaneKit` : 'LaneKit'
+            // And how many things wait on you there, before it, as the page's own title says it.
+            const waiting = Number.isInteger(message.waiting) && message.waiting > 0 ? `(${message.waiting}) ` : ''
+            if (page.made) page.made.title = `${waiting}${title ? `${title} · ` : ''}LaneKit`
             else if (page.view) page.view.description = title ?? undefined
             return
         }

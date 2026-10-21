@@ -971,3 +971,28 @@ test('a verification shows its three parts as it runs, Rebase, the tests of its 
     assert.doesNotMatch(said.text, /tier \d/)
     assert.match(said.title, /^Tier 1\n/, 'its number in the title')
 })
+
+test('a tab\'s title counts what waits on you, as the strip lists it; the bar says where LaneKit looks, its version only in the title; Home counts no lanes', { skip, timeout: 60_000 * SLOW }, async () => {
+    const said = await page.until((() => {
+        const strip = document.querySelectorAll('#strip:not([hidden]) .strip-item').length
+        return strip ? { strip, title: document.title } : null
+    }), [], { what: 'something waiting on you in the strip' })
+    assert.equal(said.title, `(${said.strip}) Demo · LaneKit`, 'the count before the repository\'s name')
+    const bar = await page.run(() => ({ text: document.querySelector('#where').textContent, title: document.querySelector('#where').title, kit: current.kit }))
+    assert.doesNotMatch(bar.text, / · lanekit /, `no version in the bar: ${bar.text}`)
+    if (bar.kit) assert.match(bar.title, new RegExp(`\\nlanekit ${bar.kit}$`), 'it is in the title')
+    const home = await page.run(() => {
+        const tab = document.querySelector('#switcher [data-key="switcher:"]')
+        return { n: tab.querySelector('.n'), label: tab.getAttribute('aria-label'), repos: [...document.querySelectorAll('#switcher [data-key^="switcher:"]:not([data-key="switcher:"]) .n')].length }
+    })
+    assert.equal(home.n, null, 'Home counts no lanes')
+    assert.equal(home.label, 'Home')
+    assert.ok(home.repos > 0, 'each repository\'s tab keeps its count')
+    // At Home, every repository's, summed.
+    await page.run(() => { showRepo(null); return true })
+    const atHome = await page.until((() => (/LaneKit$/.test(document.title) && !/·/.test(document.title) ? document.title : null)), [], { what: 'Home\'s title' })
+    const total = await page.run(() => current.repos.reduce((sum, repo) => sum + waitingIn(repo).length, 0))
+    assert.equal(atHome, total ? `(${total}) LaneKit` : 'LaneKit')
+    await page.run(() => { showRepo('demo'); return true })
+    await page.until((() => /Demo · LaneKit$/.test(document.title)), [], { what: 'back on demo' })
+})

@@ -194,7 +194,7 @@ const editorHost = (api) => {
         remember: (value) => api.setState(value),
         recall: () => api.getState(),
         // What the page shows, for its tab's title: one repository, by its id and its name, or every one.
-        showing: (repo, title) => api.postMessage({ type: 'showing', repo, title }),
+        showing: (repo, title, waiting) => api.postMessage({ type: 'showing', repo, title, waiting }),
         tab: (repo) => ask('tab', { repo }),
         ready: () => api.postMessage({ type: 'ready' })
     }
@@ -1122,6 +1122,7 @@ const redrawAgents = () => {
         row.closest('.home-card')?.classList.toggle('wants-you', glance.needsYou > 0)
     }
     drawStrip()
+    sayTitle()
     markPointer()
 }
 
@@ -3185,7 +3186,7 @@ const drawSwitcher = () => {
         // Its key keeps the keyboard on it across a redraw, as a lane's does.
         'data-key': `switcher:${id ?? ''}`,
         title, 'aria-current': id === showing ? 'page' : null,
-        'aria-label': `${label}, ${plural(count, 'lane')}${running ? ', something running' : ''}${broken ? ', unreadable' : ''}`,
+        'aria-label': `${label}${count === null ? '' : `, ${plural(count, 'lane')}`}${running ? ', something running' : ''}${broken ? ', unreadable' : ''}`,
         onclick: (event) => {
             const elsewhere = event.metaKey || event.ctrlKey || event.shiftKey
             // A browser opens the address in a tab of its own by itself; the editor is asked to.
@@ -3197,10 +3198,11 @@ const drawSwitcher = () => {
         onauxclick: (event) => { if (host.inEditor && event.button === 1) { event.preventDefault(); if (id) openOwnTab(id) } }
     },
     el('span', { class: broken ? 'broken' : null, text: label }),
-    el('span', { class: 'n', text: String(count), 'data-anim': `switcher:${id ?? ''}:count`, 'data-sig': count }),
+    count === null ? null : el('span', { class: 'n', text: String(count), 'data-anim': `switcher:${id ?? ''}:count`, 'data-sig': count }),
     running ? el('span', { class: 'busy', title: 'Something is running in it', 'data-anim': `switcher:${id ?? ''}:busy` }) : null)
     nav.replaceChildren(
-        tab(null, 'Home', repos.reduce((sum, repo) => sum + liveLanes(repo).length, 0), 'Every repository at a glance, each opened from its card ([ and ] step through them)'),
+        // Home counts nothing: each repository's tab says its own (the owner, 21 Oct).
+        tab(null, 'Home', null, 'Every repository at a glance, each opened from its card ([ and ] step through them)'),
         ...repos.map((repo) => tab(repo.id, repo.name ?? repo.id, liveLanes(repo).length,
             `${fromHome(repo.path, current.home)}${repo.error ? ` — ${repo.error}` : ''}\n${host.inEditor ? 'Cmd- or Ctrl-click, or a middle click' : 'Cmd- or Ctrl-click'}: a tab of its own`,
             { running: repo.id !== showing && busy(repo.id), broken: !!repo.error })))
@@ -3211,38 +3213,46 @@ const drawSwitcher = () => {
  * failed, a lane ready to land, a pull request waiting on your review. Each opens what it names. Nothing while nothing
  * waits, and nothing at Home, whose cards say it for every repository.
  */
+/** What waits on you in a repository, each [tone, words, key, what opens it]: the strip's, and the title's count. */
+const waitingIn = (repo) => {
+    if (!repo || repo.error) return []
+    const items = []
+    const lanes = repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
+    const open = (lane) => () => focusLane(repo.id, lane.name)
+    for (const lane of lanes) {
+        const words = wantsWords(repo.id, lane.name)
+        if (words) items.push(['warn', `${words} in ${lane.name}`, `${repo.id}/${lane.name}:needs`, open(lane)])
+    }
+    for (const lane of lanes) if (lane.gate?.current && lane.gate.result === 'failed') items.push(['risk', `${lane.name} failed verification`, `${repo.id}/${lane.name}:failed`, open(lane)])
+    for (const lane of lanes) if (lane.queue?.verdict === 'land now' && !lane.review) items.push(['done', `${lane.name} ready to land`, `${repo.id}/${lane.name}:ready`, open(lane)])
+    const mine = repo.github?.slug ? (current.reviews ?? []).filter((review) => review.repo === repo.github.slug) : []
+    for (const review of mine) items.push(['warn', `#${review.number} waits on your review`, `${repo.id}:review:${review.number}`, safeHref(review.url)])
+    return items
+}
 const drawStrip = () => {
     const strip = $('strip')
-    const repo = shownId() ? current?.repos.find((candidate) => candidate.id === shownId() && !candidate.error) : null
-    const items = []
-    if (repo) {
-        const lanes = repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
-        const open = (lane) => () => focusLane(repo.id, lane.name)
-        for (const lane of lanes) {
-            const words = wantsWords(repo.id, lane.name)
-            if (words) items.push(['warn', `${words} in ${lane.name}`, `${repo.id}/${lane.name}:needs`, open(lane)])
-        }
-        for (const lane of lanes) if (lane.gate?.current && lane.gate.result === 'failed') items.push(['risk', `${lane.name} failed verification`, `${repo.id}/${lane.name}:failed`, open(lane)])
-        for (const lane of lanes) if (lane.queue?.verdict === 'land now' && !lane.review) items.push(['done', `${lane.name} ready to land`, `${repo.id}/${lane.name}:ready`, open(lane)])
-        const mine = repo.github?.slug ? (current.reviews ?? []).filter((review) => review.repo === repo.github.slug) : []
-        for (const review of mine) items.push(['warn', `#${review.number} waits on your review`, `${repo.id}:review:${review.number}`, safeHref(review.url)])
-    }
+    const items = shownId() ? waitingIn(current?.repos.find((candidate) => candidate.id === shownId())) : []
     strip.hidden = !items.length
     strip.replaceChildren(...items.map(([tone, text, key, go]) => (typeof go === 'string'
         ? el('a', { class: 'strip-item', href: go, target: '_blank', rel: 'noopener noreferrer', 'data-anim': key, 'data-sig': text }, state(tone, text, 'small'))
         : el('button', { type: 'button', class: 'strip-item', 'data-anim': key, 'data-sig': text, onclick: go ?? undefined }, state(tone, text, 'small')))))
 }
 
-/** The page's title, and the editor's tab's: the repository's name while one is shown, LaneKit while every one is. */
+/**
+ * The page's title, and the editor's tab's: the repository's name while one is shown, LaneKit while every one is; and
+ * before it how many things wait on you there, as the strip lists them (every repository's, at Home), so a tab in the
+ * background says it (the owner, 21 Oct). Nothing waiting, no count.
+ */
 let titled = null
 const sayTitle = () => {
     const shown = current ? shownRepos() : []
     const one = shown.length === 1 ? shown[0] : null
-    const said = JSON.stringify([shownId(), one ? one.name ?? one.id : null])
+    const waiting = (shownId() ? [one] : current?.repos ?? []).reduce((sum, repo) => sum + waitingIn(repo).length, 0)
+    const said = JSON.stringify([shownId(), one ? one.name ?? one.id : null, waiting])
     if (said === titled) return
     titled = said
-    document.title = one ? `${one.name ?? one.id} · LaneKit` : 'LaneKit'
-    host.showing(shownId(), one ? one.name ?? one.id : null)
+    document.title = `${waiting ? `(${waiting}) ` : ''}${one ? `${one.name ?? one.id} · ` : ''}LaneKit`
+    host.showing(shownId(), one ? one.name ?? one.id : null, waiting)
 }
 
 // ---------------------------------------------------------------------------
@@ -3490,8 +3500,9 @@ const drawPage = () => {
     // Where LaneKit looks, said from home; the whole of it as the title.
     const roots = current.roots?.length ? current.roots : [current.scan]
     const where = roots.map((dir) => fromHome(dir, current.home)).join(', ')
-    $('where').textContent = where + (current.kit ? ` · lanekit ${current.kit}` : '')
-    $('where').title = roots.join(', ')
+    // LaneKit's own version only in its title: what you read in the bar is where it looks (the owner, 21 Oct).
+    $('where').textContent = where
+    $('where').title = [roots.join(', '), current.kit ? `lanekit ${current.kit}` : null].filter(Boolean).join('\n')
     drawSwitcher()
     drawStrip()
     sayTitle()
