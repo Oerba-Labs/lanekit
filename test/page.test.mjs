@@ -30,6 +30,8 @@ const { mainBlockOf, gateBlockOf, landBlockOf, pullBlockOf } = fromPage('mainBlo
 const { prStepOf } = fromPage('prStepOf', 'prStepOf', ['prStepOf'])
 const { fromHome } = fromPage('fromHome', 'fromHome', ['fromHome'])
 const colours = fromPage('HUES', 'huesOf', ['HUES', 'hueOf', 'huesOf'])
+// The command bar's own, of two of that name: the first is a form's words.
+const typed = new Function(`${page.match(/^const typed = \(command\)[^\n]*\n[^\n]*\n/m)[0]}; return typed`)()
 
 const repo = (main = {}, extra = {}) => ({
     integrationBranch: 'main',
@@ -206,4 +208,12 @@ test('a lane\'s colour is the one its terminals wear, the page\'s copy of the ru
     assert.equal(new Set(huesOf(names.slice(0, 6)).values()).size, 6, 'six lanes, six colours')
     assert.equal(huesOf(['a']).get('a'), hueOf('a'), 'alone, a lane keeps the colour its name falls on')
     assert.deepEqual([...huesOf(['b', 'a'])], [...huesOf(['a', 'b'])], 'whatever the order they are named in')
+})
+
+test('the command bar says a press as it would be typed: verify, lane and lane adopt, wherever lanekit is', () => {
+    assert.equal(typed('node /opt/lanekit/dev/gate.mjs'), 'verify')
+    assert.equal(typed('node dev/gate.mjs --tier 2'), 'verify --tier 2')
+    assert.equal(typed('node /opt/lanekit/dev/lane.mjs land feature'), 'lane land feature')
+    assert.equal(typed('node /opt/lanekit/bin/adopt.mjs --commit'), 'lane adopt --commit')
+    assert.equal(typed('git fetch'), 'git fetch')
 })

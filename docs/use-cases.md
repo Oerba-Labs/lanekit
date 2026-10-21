@@ -75,7 +75,7 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
 | 22 | Land a ready lane, then sweep it | **Land…**, **Land next**, **Sweep…**; `lane land`, `lane sweep` | web 7–9 |
 | 23 | Push main, only where the repository takes it | **Push** beside the repository's name; `lane push --main` | flow 20–22 |
 | 61 | **new** Know what the tests said: how many passed, failed, errored and were skipped, and the first five that did not pass, wherever a gate's result is shown; a file that cannot be read said once, and never deciding the gate; nothing new for a project that writes no JUnit | `./check` writes JUnit XML into `$LAB_RESULTS`; the gate, the page, the editor's notice, the `gate` tool | results 1–17, page 9 |
-| 77 | **new** Call it verifying everywhere it is said: `./<project> verify`, the agents' `verify` tool, a `verify` key in `lane.config.json`, `[verify Ns]` in its output, the skills and `/land`; `gate`, its old name, still answering as the shim, the tool and the key do (never both keys at once; `init` and `adopt` write `gate`, which an older lanekit reads too), and a shim from an older lanekit brought up to date by `lane adopt` | `./<project> verify`; the `verify` tool; `"verify"` in `lane.config.json` | adopt 5–7, mcp 1, mcp 2, results 8, results 12 |
+| 77 | **new** Call it verifying everywhere it is said: `./<project> verify`, the agents' `verify` tool, a `verify` key in `lane.config.json`, `[verify Ns]` in its output and `verify` in the command bar, the skills and `/land`; `gate`, its old name, still answering as the shim, the tool and the key do (never both keys at once; `init` and `adopt` write `gate`, which an older lanekit reads too), and a shim from an older lanekit brought up to date by `lane adopt` | `./<project> verify`; the `verify` tool; `"verify"` in `lane.config.json` | adopt 5–7, mcp 1, mcp 2, results 8, results 12, page 13 |
 
 ## Pull requests
 
@@ -178,7 +178,6 @@ as the editor does (`test/e2e.test.mjs`, skipped where there is no Chrome).
   its dashed row is looked at by hand: the press is quicker than any reading, so the page cannot be sure of drawing the
   dashed row first (what it draws from the state is tested, 60). Home's cards, the side bar and the details pane move
   too, untested.
-- The README's screenshots predate this round: they still show *You are here* and *Goto*.
 - **The tests' counts in the editor's notice** (a gate that ends while LaneKit is out of sight) are tested where the
   service hands them to the notice (results 15), not in the notice itself; JUnit from Xcode and Jest is read by the
   same rules as pytest's, `node --test`'s and Go's, and has no fixture of its own.

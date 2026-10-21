@@ -101,7 +101,7 @@ const fetchReview = (config, mainRepo, name, options) => {
         cwd: mainRepo, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' }
     })
     if (fetched.status !== 0) fail(`could not fetch #${number} from ${remote}: ${(fetched.stderr ?? '').trim().split('\n').pop()}`)
-    if (pr.baseRefName && pr.baseRefName !== config.integrationBranch) log(`${YELLOW}#${number} is into ${pr.baseRefName}, not ${config.integrationBranch}${OFF}: the gate tests it on ${config.integrationBranch}`)
+    if (pr.baseRefName && pr.baseRefName !== config.integrationBranch) log(`${YELLOW}#${number} is into ${pr.baseRefName}, not ${config.integrationBranch}${OFF}: verifying tests it on ${config.integrationBranch}`)
     return { number: Number(number), title: pr.title, author, head: pr.headRefName, sameRepo: !pr.isCrossRepository, remote }
 }
 
@@ -1197,7 +1197,7 @@ const refreshReview = (config, lane, number) => {
         const dirt = dirtIn(dir, config)
         if (dirt.length) fail(`${name} has uncommitted changes, which a pull would lose:\n\n${dirt.map((line) => `  ${line}`).join('\n')}`)
         git(['reset', '-q', '--hard', target], dir)
-        log(`what the gate rebased onto ${base} is put aside for what #${number}'s author pushed`)
+        log(`what verifying rebased onto ${base} is put aside for what #${number}'s author pushed`)
     }
     const rule = '─'.repeat(64)
     console.log(`\n${rule}\n  ${GREEN}PULLED${OFF}  ·  ${name}  ·  ${was} -> ${git(['rev-parse', '--short', 'HEAD'], dir)}, #${number} as its author pushed it\n${rule}\n`)
