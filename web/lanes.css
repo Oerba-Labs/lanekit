@@ -521,6 +521,15 @@ li[data-key]:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--
 .live .live-step { font-family: var(--mono); color: var(--ink); }
 .live .live-clock { font-variant-numeric: tabular-nums; }
 .live .state::before { animation: pulse 1.2s ease-in-out infinite; }
+/* A verification's parts in a row, › between them: done ticked, the one under way pulsing in the accent, the rest dim. */
+.verify-steps { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin: 0; padding: 0; list-style: none; }
+.verify-step { display: inline-flex; align-items: baseline; gap: 4px; }
+.verify-step + .verify-step::before { content: "›"; margin-right: 2px; color: var(--muted); }
+.verify-step.done { color: var(--ink); }
+.verify-step.done .verify-mark { color: var(--done); }
+.verify-step.now { color: var(--ink); font-weight: 600; }
+.verify-step.now .verify-mark { color: var(--accent); display: inline-block; animation: pulse 1.2s ease-in-out infinite; }
+.verify-step.next { opacity: 0.6; }
 @keyframes pulse { 50% { opacity: 0.25; } }
 
 /* The agents at work in a lane, on a line of their own under its name: each one's state, the tool it runs or asks
@@ -620,7 +629,7 @@ html[data-compact] .landing-lane > td[data-label] > div { display: inline; margi
 html[data-compact] .landing-lane > td[data-label="Needs"] > .landing-why { display: block; max-width: none; }
 html[data-compact] .landing-lane > td[data-label] > .agents:not(:empty) { display: inline-flex; flex-direction: row; flex-wrap: wrap; gap: 2px 12px; vertical-align: top; }
 html[data-compact] .landing-lane > td:has(> .muted:only-child), html[data-compact] .landing-lane > td:has(> .agents:empty:only-child) { display: none; }
-@media (prefers-reduced-motion: reduce) { .live .state::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .live .state::before, .verify-step.now .verify-mark { animation: none; } }
 /* Why a gate failed: the step, and its last lines. */
 .failure { margin: 6px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--risk-wash); font-size: var(--s12); }
 .failure .files-head { color: var(--risk); }

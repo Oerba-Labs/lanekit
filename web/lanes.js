@@ -778,8 +778,11 @@ document.addEventListener('keydown', (event) => {
 // drawing
 // ---------------------------------------------------------------------------
 
+/** A tier by the label its repository gives it ("lanekit's tests"), or by its number where it has none. */
+const tierName = (repo, tier, label = null) => label ?? repo?.tiers?.[tier] ?? `tier ${tier}`
+
 /** What a lane's state is, in a dashboard's words: [tone, word, detail]. */
-const statusOf = (lane) => {
+const statusOf = (repo, lane) => {
     if (lane.kind === 'missing') return ['risk', 'Folder is gone', 'git worktree prune, in the main checkout, clears it away']
     if (lane.aside) return ['quiet', 'Set aside', null]
     if (lane.operation) return ['warn', lane.operation === 'rebase' ? 'Mid-rebase' : 'Mid-merge', 'Finish or abort it in the lane before anything else']
@@ -789,7 +792,7 @@ const statusOf = (lane) => {
     if (!queue) return ['quiet', 'Not planned', null]
     switch (queue.verdict) {
         case 'land now': return ['done', 'Ready to land', null]
-        case 'gate now': return ['info', 'Needs verifying', queue.why ? `Earns tier ${queue.tier}: ${queue.why}` : null]
+        case 'gate now': return ['info', 'Needs verifying', queue.why ? `Earns ${tierName(repo, queue.tier)}: ${queue.why}` : null]
         case 'hold the gate': {
             const first = queue.collisions.map((collision) => collision.lane).join(', ')
             return ['warn', `Wait for ${first || 'another lane'}`, 'It should land first: landing this one now would void its verification']
@@ -916,19 +919,20 @@ const pullBlockOf = (repo) => {
 /** What a gate's tests said, where they wrote JUnit: " · 1,617 passed, 2 failed", for a gate of the commit there now. */
 const testsSaidOf = (gate) => (gate?.current && gate.tests?.said ? ` · ${gate.tests.said}` : '')
 
-/** A lane's last gate, where there is one. None is not said: the lane's state says what it needs instead. */
-const gateOf = (lane) => {
+/** A lane's last gate, where there is one, its tier by its label. None is not said: the lane's state says what it needs instead. */
+const gateOf = (repo, lane) => {
     const gate = lane.gate
     if (!gate) return null
     const when = gate.at ? ` · ${ago(gate.at)}` : ''
     const tests = testsSaidOf(gate)
     let node
-    if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Verified · tier ${gate.tier}${tests}${when}`, 'small')
-    else if (gate.result === 'passed' && gate.current) node = state('warn', `Verified with tier ${gate.tier} only; it earns tier ${gate.earned}${tests}${when}`, 'small')
+    const tier = tierName(repo, gate.tier)
+    if (gate.result === 'passed' && gate.current && !gate.narrowed) node = state('done', `Verified · ${tier}${tests}${when}`, 'small')
+    else if (gate.result === 'passed' && gate.current) node = state('warn', `Verified with ${tier} only; it earns ${tierName(repo, gate.earned)}${tests}${when}`, 'small')
     else if (gate.result === 'passed') node = state('quiet', `Verified on an older commit${when}`, 'small')
-    else if (gate.current) node = state('risk', `Verification failed · tier ${gate.tier}${tests}${when}`, 'small')
+    else if (gate.current) node = state('risk', `Verification failed · ${tier}${tests}${when}`, 'small')
     else node = state('quiet', `Verification failed on an older commit${when}`, 'small')
-    node.title = [exactly(gate.at), gate.current ? gate.tests?.unread : null].filter(Boolean).join('\n')
+    node.title = [`Tier ${gate.tier}`, exactly(gate.at), gate.current ? gate.tests?.unread : null].filter(Boolean).join('\n')
     return node
 }
 
@@ -1176,14 +1180,34 @@ const showCommit = (repo, commit) => () => openIn('commit', { repo: repo.path, s
 const DOING = { gate: 'Verifying', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making it', pull: 'Pulling', fetch: 'Fetching', review: 'Sending the review' }
 const runningIn = (repo, lane) => (current?.jobs ?? []).find((job) => job.state === 'running' && job.repo === repo.id && job.lane === lane.name)
 
-/** What a press is doing to a lane, live: the verb, the gate's step, and a clock. */
+/**
+ * A verification's three parts, as it runs: Rebase, then the tests of the tier it runs (by its label), then Record, each
+ * done (✓), under way (pulsing, the gate's own words for what it is doing in its title) or still to come (the owner, 20
+ * Oct: the gate explained as it goes, rather than a line of its output).
+ */
+const VERIFY_PARTS = [['rebase', 'Rebase'], ['tests', 'Tests'], ['record', 'Record']]
+const verifySteps = (repo, job, key) => {
+    const at = VERIFY_PARTS.findIndex(([phase]) => phase === job.verify.phase)
+    const parts = VERIFY_PARTS.map(([phase, word], index) => {
+        const where = index < at ? 'done' : index === at ? 'now' : 'next'
+        const words = phase === 'tests' && job.verify.tier ? `${word}: ${tierName(repo, job.verify.tier, job.verify.label)}` : word
+        return el('li', {
+            class: `verify-step ${where}`, 'data-anim': `${key}:verify:${phase}`, 'data-sig': `${where} ${words}`,
+            ...(where === 'now' ? { 'aria-current': 'step', title: job.step ?? '' } : {})
+        }, el('span', { class: 'verify-mark', 'aria-hidden': 'true', text: where === 'done' ? '✓' : where === 'now' ? '◉' : '○' }), el('span', { text: words }))
+    })
+    return el('ol', { class: 'verify-steps', 'aria-label': `Verifying${job.dryRun ? ' (a check)' : ''}` }, parts)
+}
+
+/** What a press is doing to a lane, live: the verb and the gate's step (a verification's parts), and a clock. */
 const liveOf = (repo, lane) => {
     const job = runningIn(repo, lane)
     if (!job) return null
     const key = `${repo.id}/${lane.name}`
-    return el('p', { class: 'live', 'data-anim': `${key}:live` },
-        keyed(state('info', `${DOING[job.verb] ?? job.verb}${job.dryRun ? ' (a check)' : ''}`, 'small'), `${key}:live-verb`, true),
-        job.step ? el('span', { class: 'live-step', text: job.step, 'data-anim': `${key}:live-step`, 'data-sig': job.step }) : null,
+    return el('div', { class: 'live', 'data-anim': `${key}:live` },
+        job.verify ? verifySteps(repo, job, key) : [
+            keyed(state('info', `${DOING[job.verb] ?? job.verb}${job.dryRun ? ' (a check)' : ''}`, 'small'), `${key}:live-verb`, true),
+            job.step ? el('span', { class: 'live-step', text: job.step, 'data-anim': `${key}:live-step`, 'data-sig': job.step }) : null],
         el('span', { class: 'live-clock', 'data-since': String(job.startedAt), text: secondsSince(job.startedAt) }),
         el('button', { type: 'button', class: 'btn link', text: 'Output', onclick: () => showJob(job.id) }))
 }
@@ -2140,7 +2164,7 @@ const confirmOf = (repo, lane, key) => {
     }
     if (waiting.verb === 'gate') {
         return el('div', { class: 'confirm' },
-            el('p', { text: `Verify ${lane.name}? It rebases the branch onto ${base}, then runs the tier its changes earn${lane.queue?.tier ? ` (tier ${lane.queue.tier})` : ''}, and records the result against its commit. It never merges.` }),
+            el('p', { text: `Verify ${lane.name}? It rebases the branch onto ${base}, then runs the tier its changes earn${lane.queue?.tier ? ` (${tierName(repo, lane.queue.tier)})` : ''}, and records the result against its commit. It never merges.` }),
             go('Verify it', { repo: repo.id, verb: 'gate', lane: lane.name }), cancel)
     }
     if (waiting.verb === 'land') {
@@ -2266,7 +2290,7 @@ const forkCurve = () => {
 const laneCard = (repo, lane, forked = true) => {
     const key = `${repo.id}/${lane.name}`
     const step = prStepOf(repo, lane)
-    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(lane)
+    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(repo, lane)
     const busy = busyIn(repo.id) || Boolean(lane.pending)
     const merged = isMerged(lane)
     // A lane with nothing in it has nothing to gate or land; one with uncommitted work is shown the buttons, held,
@@ -2446,7 +2470,7 @@ const laneCard = (repo, lane, forked = true) => {
             () => readHistory(repo, 'fork', `fork:${lane.name}`, lane)),
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         merged && lane.sinceMerge === null && lane.pull?.head ? el('span', { text: `#${lane.pull.number}'s commit is not in its history now: what it merged cannot be told apart` }) : null,
-        lane.pending ? null : keyed(gateOf(lane), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier} ${testsSaidOf(gate)}`),
+        lane.pending ? null : keyed(gateOf(repo, lane), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier} ${testsSaidOf(gate)}`),
         lane.pending ? null : keyed(pushedOf(lane), `${key}:pushed`, true),
         stack0(lane) ? null : keyed(badgesOf(repo, lane), `${key}:badges`, true),
         keyed(serverOf(lane), `${key}:serving`))
@@ -2578,7 +2602,7 @@ const laneCard = (repo, lane, forked = true) => {
 
 const landedRow = (repo, lane) => {
     const key = `${repo.id}/${lane.name}`
-    const [tone, word, detail] = statusOf(lane)
+    const [tone, word, detail] = statusOf(repo, lane)
     const busy = busyIn(repo.id)
     const sweepable = lane.kind === 'landed' && !lane.dirty
     // Landed, and something begun in it since: moved to a lane of its own, after which this one sweeps as usual.
@@ -2993,7 +3017,7 @@ const landingStep = (repo, lane) => {
     and on which files, its pull request, its agents, and its next step. */
 const landingRow = (repo, lane, item = null) => {
     const step = prStepOf(repo, lane)
-    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(lane)
+    const [tone, word, detail] = lane.pending ? ['info', lane.pending, null] : step ? [step.tone, step.word, step.detail] : statusOf(repo, lane)
     const why = item?.after?.length ? `After ${item.after.join(' and ')}: they change the same files` : item?.days ? `Quiet for ${quietFor(item.days)}` : detail
     const files = lane.queue?.files ?? []
     const changes = [
@@ -3009,7 +3033,7 @@ const landingRow = (repo, lane, item = null) => {
     return el('tr', { class: 'landing-lane', 'data-landing': `${repo.id}/${lane.name}`, 'data-anim': `${repo.id}:landing-lane:${lane.name}`, 'data-anim-kids': true },
         el('th', { scope: 'row', 'data-label': 'Lane' }, name, wantsBadge(repo.id, lane.name)),
         cell('Needs', state(tone, word, 'small'), why ? el('div', { class: 'landing-why', text: why }) : null),
-        cell('Verified', gateOf(lane) ?? el('span', { class: 'muted', text: 'Not yet' })),
+        cell('Verified', gateOf(repo, lane) ?? el('span', { class: 'muted', text: 'Not yet' })),
         cell('Changes', changes.length ? changes.map((part) => el('div', {}, part)) : none()),
         cell('Collides with', collisions.length ? collisions.map((collision) => el('div', { class: 'landing-collision', title: `${lane.name} and ${collision.lane} both change:\n${collision.paths.join('\n')}` },
             el('span', { class: 'queue-name', 'data-hue': hueName(repo, collision.lane), text: collision.lane }),

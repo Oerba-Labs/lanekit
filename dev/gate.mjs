@@ -322,6 +322,7 @@ if (tests) {
 // 7. write it down, then say what happened
 // ---------------------------------------------------------------------------
 
+log('recording the result…')
 const passed = failures.length === 0
 const record = {
     id: mintRunId(`tier${chosen}`),
