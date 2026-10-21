@@ -1,6 +1,6 @@
 ---
 name: lanes
-description: How to work in a repository that has lanes (LaneKit; a lane.config.json at its root) — every change made in a lane of its own, a second checkout beside the repository with its own branch, port and environment, then committed, gated and handed back to land. Use before changing anything in such a repository, when asked about its lanes or what should land, or when work was begun in the main checkout by mistake.
+description: How to work in a repository that has lanes (LaneKit; a lane.config.json at its root) — every change made in a lane of its own, a second checkout beside the repository with its own branch, port and environment, then committed, verified and handed back to land. Use before changing anything in such a repository, when asked about its lanes or what should land, or when work was begun in the main checkout by mistake.
 allowed-tools: mcp__plugin_lanekit_lanekit__lanes
 ---
 
@@ -9,7 +9,7 @@ allowed-tools: mcp__plugin_lanekit_lanekit__lanes
 A lane is a second checkout of the repository in a folder beside it (`../<repo>-<lane>`), on a branch of its own,
 with its own port and its own copy of what a running app needs (its `.env`, its database). Several pieces of work,
 or several agents, run side by side without sharing a file, a process or a database row, and each lands on `main`
-only once it is verified (its gate is green).
+only once it is verified (its tests green on its newest commit).
 
 LaneKit's MCP tools do everything here; each refuses what LaneKit's page refuses, and says why.
 
@@ -28,13 +28,13 @@ LaneKit's MCP tools do everything here; each refuses what LaneKit's page refuses
 
 - Run the app on the lane's own port, from the lane's folder; another lane's server is on another port.
 - Commit with **`commit`**, or `git commit` in the lane's folder.
-- **Verify** the lane with **`gate`** once it is committed: it rebases onto `main` as it is now and runs the tests the
+- **Verify** the lane with **`verify`** once it is committed: it rebases onto `main` as it is now and runs the tests the
   change earns. Read its banner: `VERIFIED` is green; `INCOMPLETE` and `FAILED` are not, whatever the exit code says.
 - When `main` moves on, **`rebase`** the lane; if it stops on conflicts, use the `resolve-conflicts` skill.
 
 ## Handing it back
 
-- Say what the gate said, plainly, and **ask the person before `land`, `push`, `pull_request` or `drop`**.
+- Say what the verification said, plainly, and **ask the person before `land`, `push`, `pull_request` or `drop`**.
 - `land` merges into `main` here and removes the lane's folder; it never pushes. Where `main` takes its changes by
   pull request, `pull_request` and the person's merge on GitHub are the way instead.
 - A **review lane** (`reviewing #N`) is somebody else's pull request: never push it, land it or open a pull request
@@ -48,5 +48,5 @@ keep one lane's work from overwriting another's.
 
 ## Without the tools
 
-The project's shim does the same from a terminal: `./<project> lane new <name>`, `./<project> gate` in the lane,
+The project's shim does the same from a terminal: `./<project> lane new <name>`, `./<project> verify` in the lane,
 `./<project> lane land <name>` in the main checkout (or `lane …` where lanekit is on the PATH).

@@ -87,6 +87,8 @@ export const configFor = (name, slug, portBase, { integrationBranch = 'main', en
     name,
     slug,
     integrationBranch,
+    // `gate`, the key every lanekit reads, though `verify` is its name now: a teammate's lanekit older than 21 Oct
+    // reads no tiers at all from a `verify` key.
     roots: {},
     gate: {
         sides: {},
@@ -113,10 +115,10 @@ export const configFor = (name, slug, portBase, { integrationBranch = 'main', en
 })
 
 export const shimFor = (name, slug) => `#!/bin/sh
-# ${name}'s one entrypoint: \`./${slug} lane new <name>\`, \`./${slug} gate\`, \`./${slug} check\`.
+# ${name}'s one entrypoint: \`./${slug} lane new <name>\`, \`./${slug} verify\`, \`./${slug} check\`.
 #
 # WHICH COPY YOU RUN DECIDES WHICH CHECKOUT IS ACTED ON. This finds its own directory and
-# works from there, so a lane's ./${slug} gates the lane and reads the lane's port.
+# works from there, so a lane's ./${slug} verifies the lane and reads the lane's port.
 #
 # No dependency enters the repository: the lane tooling is found on the machine, in the
 # order below, and the project carries only this file and lane.config.json.
@@ -132,12 +134,14 @@ command=$1
 [ $# -gt 0 ] && shift
 
 case "$command" in
-    lane|gate)
+    lane|verify|gate)
         if [ -z "$kit" ]; then
             echo "  the lane tooling is not on this machine." >&2
             echo "  git clone https://github.com/Oerba-Labs/lanekit.git ~/.lanekit, or point at a copy with LANEKIT=/path/to/lanekit." >&2
             exit 1
         fi
+        # verify, and gate, its old name: the same.
+        [ "$command" = lane ] || command=gate
         exec node "$kit/dev/$command.mjs" "$@" ;;
     check)
         exec "$here/check" "$@" ;;
@@ -145,16 +149,16 @@ case "$command" in
         echo
         echo "  ./${slug} lane new <name>    start a lane: a worktree, a branch, a port of its own"
         echo "  ./${slug} lane list          what exists and what is serving"
-        echo "  ./${slug} gate               from inside a lane: is this branch ready to merge?"
-        echo "  ./${slug} lane land <name>   from main: merge a lane whose gate is green"
+        echo "  ./${slug} verify             from inside a lane: is this branch ready to merge?"
+        echo "  ./${slug} lane land <name>   from main: merge a lane that is verified"
         echo "  ./${slug} lane sweep         remove lanes that have landed"
-        echo "  ./${slug} check              what the gate runs"
+        echo "  ./${slug} check              what verifying runs"
         echo ;;
 esac
 `
 
 export const CHECK = `#!/bin/sh
-# What the gate runs. Tier 1 of lane.config.json is this script and nothing else, so the
+# What verifying runs. Tier 1 of lane.config.json is this script and nothing else, so the
 # project's tests go here and the config does not change when they arrive.
 #
 # It passes, and says every time that it looked at nothing: a green that checked nothing
@@ -167,7 +171,7 @@ exit 0
 export const GITIGNORE = `# A lane's port and paths live in its environment file, and secrets end up there too.
 .env
 
-# What the gate records about its runs. It names absolute paths on one machine.
+# What verifying records about its runs. It names absolute paths on one machine.
 .lanekit/
 `
 
@@ -177,10 +181,10 @@ Work happens in lanes: a worktree with its own branch and its own port, so two p
 work can be in flight without sharing a process or a file.
 
     ./${slug} lane new first-idea     then: cd ../${slug}-first-idea
-    ./${slug} gate                    from inside the lane, when it is ready
-    ./${slug} lane land first-idea    from here, once the gate is green
+    ./${slug} verify                  from inside the lane, when it is ready
+    ./${slug} lane land first-idea    from here, once it is verified
 
-\`./check\` is what the gate runs, and today it checks nothing. \`lane.config.json\` says
+\`./check\` is what verifying runs, and today it checks nothing. \`lane.config.json\` says
 what the project is; start there when it grows a server, an app, or a database a lane
 must have its own copy of.
 `

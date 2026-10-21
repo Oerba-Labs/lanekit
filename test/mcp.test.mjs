@@ -81,7 +81,8 @@ test('it answers the handshake in the version asked, with its tools and what eac
 
     const { tools } = (await ask('tools/list')).result
     const named = Object.fromEntries(tools.map((one) => [one.name, one]))
-    assert.deepEqual(Object.keys(named).sort(), ['commit', 'drop', 'gate', 'land', 'lanes', 'new_lane', 'pull', 'pull_request', 'push', 'rebase', 'resolve', 'review'])
+    assert.deepEqual(Object.keys(named).sort(), ['commit', 'drop', 'gate', 'land', 'lanes', 'new_lane', 'pull', 'pull_request', 'push', 'rebase', 'resolve', 'review', 'verify'])
+    assert.match(named.gate.description, /^The old name of verify, and the same/)
     assert.equal(named.lanes.annotations.readOnlyHint, true)
     for (const removes of ['land', 'drop']) assert.equal(named[removes].annotations.destructiveHint, true, removes)
     for (const reaches of ['push', 'pull_request', 'review', 'pull']) assert.equal(named[reaches].annotations.openWorldHint, true, reaches)
@@ -90,7 +91,7 @@ test('it answers the handshake in the version asked, with its tools and what eac
     assert.equal((await ask('no/such')).error.code, -32601)
 })
 
-test('a lane through its tools: made, committed, refused a land before its gate, gated, landed', async () => {
+test('a lane through its tools: made, committed, refused a land before it is verified, verified, landed', async () => {
     let said = await tool('lanes')
     assert.match(said.text, /^Demo at .*demo: main at [0-9a-f]+ "Begin"/)
     assert.match(said.text, /No lanes yet: new_lane makes one/)
@@ -112,8 +113,11 @@ test('a lane through its tools: made, committed, refused a land before its gate,
     assert.match(said.text, /cannot land yet/)
     assert.ok(fs.existsSync(folder), 'and nothing removed')
 
-    said = await tool('gate', { lane: 'idea' })
+    said = await tool('verify', { lane: 'idea' })
     assert.equal(said.isError, false, said.text)
+    assert.match(said.text, /VERIFIED/)
+    said = await tool('gate', { lane: 'idea' })
+    assert.equal(said.isError, false, 'gate, its old name, does the same')
     assert.match(said.text, /VERIFIED/)
     assert.match((await tool('lanes')).text, /- idea \(ready to land\)/)
     said = await tool('land', { lane: 'idea' })

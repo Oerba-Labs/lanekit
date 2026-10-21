@@ -15,4 +15,4 @@ allowed-tools: mcp__plugin_lanekit_lanekit__lanes, Read, Grep, Bash(git diff:*),
    may stop on its own conflicts: repeat.
 5. **Or put it back**: `rebase` with `abort` returns the lane exactly as it was before the rebase. Offer this whenever
    the resolution is not clear.
-6. Once it is through, **verify** the lane again with `gate`: a resolution is new code.
+6. Once it is through, **verify** the lane again with `verify`: a resolution is new code.

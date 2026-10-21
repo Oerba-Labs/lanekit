@@ -13,7 +13,7 @@ did in the shape step 8 gives.
 lanekit gives every piece of work its own **lane**: a git worktree beside the repository, on its
 own branch, with its own port and its own copy of whatever else a running checkout needs (an
 environment file, a database, an upload folder). Work in one lane cannot touch another, and a
-lane lands on the integration branch only once its gate (its tests) passes.
+lane lands on the integration branch only once it is verified (its tests pass).
 
 lanekit itself lives **on the machine**, never in the repository. The repository gains a few
 small files and no dependency:
@@ -22,13 +22,13 @@ small files and no dependency:
 |---|---|
 | `lane.config.json` | what a lane of this project owns and what it borrows from the main checkout |
 | `./<slug>` | the shim: finds lanekit on the machine and hands over. Every lane command goes through it |
-| `./check` | what the gate runs: the project's tests |
-| `.gitignore` | a line for `.lanekit/`, the gate's records, and for the environment file if git would otherwise see it |
+| `./check` | what verifying runs: the project's tests |
+| `.gitignore` | a line for `.lanekit/`, the verifications' records, and for the environment file if git would otherwise see it |
 | `.claude/commands/lane.md`, `land.md` | `/lane` and `/land` for Claude Code |
 | `.opencode/commands/lane.md`, `land.md` | `/lane` and `/land` for OpenCode |
 
 **Done looks like this:** `./<slug> lane new lanekit-trial` makes a lane with a port of its own,
-`./<slug> gate` inside it prints `VERIFIED`, and the trial lane is cleared away again.
+`./<slug> verify` inside it prints `VERIFIED`, and the trial lane is cleared away again.
 
 ## Rules for the whole install
 
@@ -108,8 +108,8 @@ answer these questions from the repository itself: its README, `package.json`, `
 Keep the config's `note` field accurate, since it is what the next reader of the file sees first.
 
 Anywhere in the `lane` section a value may use `{lane}` (the lane's folder), `{main}` (the main
-checkout), `{port}` (the lane's port) and `{name}` (the lane's name). In a gate step, `{repo}` is
-the checkout being gated.
+checkout), `{port}` (the lane's port) and `{name}` (the lane's name). In a step of `verify`, `{repo}` is
+the checkout being verified.
 
 ### 4.1 How does the app choose its port? `lane.env.file`, `lane.env.portKey`
 
@@ -188,7 +188,7 @@ Use the variable names the app already reads; do not invent new ones. `seed` run
 `lane new` (`--no-seed` skips it). Each step is `{ "what", "command", "args", "cwd" }`, with `cwd`
 relative to the lane.
 
-### 4.5 What are the tests? `./check`, `gate`
+### 4.5 What are the tests? `./check`, `verify`
 
 Find the test command (`npm test`, `pytest -q`, `go test ./...`, `cargo test`, `make test`, or what
 CI runs) and replace the two placeholder lines of `./check` with it:
@@ -199,12 +199,12 @@ exec npm test
 ```
 
 Run `./check` once to see it pass on the integration branch; if it fails there, tell the person
-rather than change the tests. It must work without a network or a person, because the gate runs
+rather than change the tests. It must work without a network or a person, because verifying runs
 it unattended. If the repository has no tests, leave the placeholder, which passes and says it
 checked nothing, and say so in the report.
 
 Where the test runner writes JUnit XML with a flag and no new package (pytest's `--junitxml`,
-`node --test`'s junit reporter), have `./check` write it into `$LAB_RESULTS`, so the gate can say
+`node --test`'s junit reporter), have `./check` write it into `$LAB_RESULTS`, so the verification can say
 how many passed and name what failed (README, *What the tests said*):
 
 ```sh
@@ -215,16 +215,19 @@ exec .venv/bin/python -m pytest -q --junitxml "$results/pytest.xml"
 ```
 
 and add `.lab-results/` to `.gitignore`, for `./check` run by hand. Do not add a dependency for it:
-a check that writes no JUnit is gated exactly as before.
+a check that writes no JUnit is verified exactly as before.
 
 Tier 1 runs `./check` for every change. Add tier 2 only if some checks are slow and needed only
 when one side of the project changes (a front-end build, an end-to-end run):
+
+(`gate` may be called `verify`, its new name, where every lanekit that reads the file is one of
+21 Oct or newer; never both.)
 
 - `gate.sides.app`: path prefixes of the client (`["web/"]`). A change there earns tier 2.
 - `gate.seam`: paths one side shares with the other (an API schema, a generated client). A change
   there earns tier 2 and is reported as risk to the far side.
 - `gate.tiers["2"]`: the steps, as `{ "what", "command", "args", "cwd" }`, usually tier 1's step
-  plus the slow ones. `cwd` is relative to the checkout being gated.
+  plus the slow ones. `cwd` is relative to the checkout being verified.
 - `roots`: the project's parts, as in `{ "server": "api", "app": "web" }`, available as `{server}`
   and `{app}` in the steps. Each must exist. Leave it `{}` when unused.
 
@@ -270,7 +273,7 @@ It prints the lane's folder and port. Then check:
 ```sh
 cat ../<checkout folder>-lanekit-trial/<env file>   # this lane's own PORT, and each perLane value
 cd ../<checkout folder>-lanekit-trial
-./<slug> gate                                        # prints VERIFIED
+./<slug> verify                                      # prints VERIFIED
 ```
 
 If you set a `runHint`, start the app in the lane with the port it printed, check it answers on
@@ -297,7 +300,7 @@ the fix as a second commit, and try again. Never work around a failure with a ba
 | `the lane tooling is not on this machine` | step 2: clone lanekit to `~/.lanekit`, or set `LANEKIT` |
 | `LANEKIT_PORTS gives … outside the window` | the machine's `LANEKIT_PORTS` names this project with ports outside its window: correct that entry |
 | `no free port between …` | sweep finished lanes, `lane drop` ones no longer wanted, or raise `lane.portCeiling` |
-| `the working tree has uncommitted changes` (gate) | commit in the lane first: a gate result names a commit |
+| `the working tree has uncommitted changes` (verify) | commit in the lane first: a verification names a commit |
 | `… is on "…", not <branch>` (land) | switch the main checkout to the integration branch |
 
 ## 8. Tell the person
@@ -308,12 +311,12 @@ Report in this shape, briefly:
   with the files committed in `<commit>` (not pushed).
 - **Each lane**: its port from `<first>–<last>`, written to `<env file>` as `<portKey>`; its own
   `<database, uploads…>`; shares `<linked folders>`; copies `<copied files>`.
-- **The gate**: tier 1 runs `<test command>` (or: "checks nothing yet: there are no tests").
+- **Verifying**: tier 1 runs `<test command>` (or: "checks nothing yet: there are no tests").
   Tier 2, if any, and what earns it.
 - **Proposed, not done**: anything waiting on them, such as reading the port from the
   environment.
 - **How to use it**: `/lane <what the work is>` starts a lane and moves the agent into it; `/land`
-  gates it and asks before merging; `./<slug> lane web` shows every lane on one page.
+  verifies it and asks before merging; `./<slug> lane web` shows every lane on one page.
 
 ## Afterwards: working in lanes
 
@@ -321,9 +324,9 @@ Report in this shape, briefly:
   checkout and then work in the folder it prints.
 - **Inside a lane, run the lane's own `./<slug>`**: which copy runs decides which checkout is
   acted on.
-- While iterating, `./<slug> gate --fast` runs tier 1 whatever the change earns and says
-  `INCOMPLETE` when it earns more. The full `./<slug> gate` is what certifies a commit.
-- When the work is done, `/land` commits, gates and reports, then asks before merging. Land only
+- While iterating, `./<slug> verify --fast` runs tier 1 whatever the change earns and says
+  `INCOMPLETE` when it earns more. The full `./<slug> verify` is what certifies a commit.
+- When the work is done, `/land` commits, verifies and reports, then asks before merging. Land only
   when the person says so: `./<slug> lane land <name>`, from the main checkout.
 - A lane behind the integration branch: `./<slug> lane rebase <name>`. On a conflict it stops with the files
   named; resolve them, then `--continue` (or `--abort` to put the lane back). Never resolve somebody's

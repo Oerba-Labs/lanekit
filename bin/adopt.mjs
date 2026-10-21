@@ -20,9 +20,9 @@
  *                       environment file the repository keeps out of git, a port window
  *                       above every sibling project's
  *   ./<slug>            the shim, the project's one entrypoint to lanekit
- *   ./check             what the gate runs; it passes and says it checked nothing, until
+ *   ./check             what verifying runs; it passes and says it checked nothing, until
  *                       the project's tests are put in it
- *   .gitignore          a line for .lanekit/ (the gate's records), and one for the
+ *   .gitignore          a line for .lanekit/ (the verifications' records), and one for the
  *                       environment file when git would otherwise see it
  *   /lane and /land     for Claude Code (.claude/commands) and OpenCode (.opencode/commands)
  *
@@ -30,7 +30,7 @@
  * (bin/agent-reports.mjs, or the editor's extension asking).
  *
  * --commit, AND ONLY WHAT IT WROTE. A lane starts from a commit of main, so files that are
- * written and not committed are files no lane has: no config, no shim, no ./check for its gate.
+ * written and not committed are files no lane has: no config, no shim, no ./check to verify it with.
  * The lanes page gives a repository lanes in one press, after showing what it would write, and
  * so commits them; a person at a terminal asks for it. It commits on the branch lanes land on and
  * names each path, so nothing else staged or changed goes in with it; where .gitignore, the one
@@ -154,16 +154,25 @@ export const adopt = ({ dir, name: givenName, portBase: givenBase, agents = Obje
         return true
     }
     const isShim = (file) => fs.statSync(file).isFile() && fs.readFileSync(file, 'utf8').includes('the lane tooling')
-    if (!writeFile(slug, shimFor(name, slug), 0o755) && !isShim(path.join(dir, slug))) {
-        said.warnings.push(`./${slug} is here already and is not lanekit's shim: choose another name (--name, or "slug" in ${CONFIG_NAME}) so the project's entrypoint can be written`)
+    if (!writeFile(slug, shimFor(name, slug), 0o755)) {
+        const shim = path.join(dir, slug)
+        if (!isShim(shim)) {
+            said.warnings.push(`./${slug} is here already and is not lanekit's shim: choose another name (--name, or "slug" in ${CONFIG_NAME}) so the project's entrypoint can be written`)
+        } else if (fs.readFileSync(shim, 'utf8') !== shimFor(name, slug)) {
+            // lanekit's own shim, from an older lanekit (one without ./<slug> verify, say): brought up to date.
+            if (!check) fs.writeFileSync(shim, shimFor(name, slug))
+            said.kept.splice(said.kept.indexOf(slug), 1)
+            said.wrote.push(slug)
+            said.paths.push(slug)
+        }
     }
     if (!writeFile('check', CHECK, 0o755) && !fs.statSync(path.join(dir, 'check')).isFile()) {
-        said.warnings.push('./check is here and is not a file: point tier 1 of the gate at the project\'s own test command instead')
+        said.warnings.push('./check is here and is not a file: point tier 1 of verifying at the project\'s own test command instead')
     }
 
     // .gitignore: the gate's records always, the environment file when git would see it.
     const wanted = []
-    if (!ignored(dir, '.lanekit/runs.json')) wanted.push('# What the gate records about its runs. It names absolute paths on one machine.', '.lanekit/')
+    if (!ignored(dir, '.lanekit/runs.json')) wanted.push('# What verifying records about its runs. It names absolute paths on one machine.', '.lanekit/')
     if (tracked(dir, envFile)) said.warnings.push(`${envFile} is tracked by git: a lane writes its port into it, so every lane would look uncommitted; move the port to an ignored file and name it in lane.env.file`)
     else if (!ignored(dir, envFile)) wanted.push("# A lane's port and paths live in its environment file, and secrets end up there too.", envFile)
     // Whether .gitignore holds somebody's changes before this adds to it: then a commit of it would take them too.
@@ -204,7 +213,7 @@ const commitWritten = (dir, said, { name, integrationBranch, ignoreTheirs }) => 
     if (said.paths.includes('.gitignore') && ignoreTheirs) return { refused: '.gitignore already held changes of yours, which a commit of it would take too; commit them together yourself' }
     const add = spawnSync('git', ['add', '--', ...said.paths], { cwd: dir, encoding: 'utf8' })
     if (add.status !== 0) return { refused: `git add said: ${(add.stderr || add.stdout).trim().split('\n').pop()}` }
-    const message = `Give ${name} lanes\n\nWritten by lanekit's adopt: the config, the project's shim, a ./check for the gate,\n` +
+    const message = `Give ${name} lanes\n\nWritten by lanekit's adopt: the config, the project's shim, a ./check to verify with,\n` +
         'the /lane and /land commands for its agents, and what .gitignore must keep out. INSTALL.md in\nlanekit says what to decide next.'
     const made = spawnSync('git', ['commit', '--quiet', '-m', message, '--', ...said.paths], { cwd: dir, encoding: 'utf8' })
     if (made.status !== 0) return { refused: `git commit said: ${(made.stderr || made.stdout).trim().split('\n').pop()}` }

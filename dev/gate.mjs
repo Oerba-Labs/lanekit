@@ -44,7 +44,8 @@ const OFF = '\x1b[0m'
 
 const started = Date.now()
 const elapsed = () => `${Math.round((Date.now() - started) / 1000)}s`
-const log = (message) => console.log(`${DIM}[gate ${elapsed().padStart(4)}]${OFF} ${message}`)
+// [verify 12s]: what a person reads, as the page says Verify (the owner, 21 Oct); the page reads [gate …] from older copies too.
+const log = (message) => console.log(`${DIM}[verify ${elapsed().padStart(4)}]${OFF} ${message}`)
 
 const argv = process.argv.slice(2)
 const options = {
@@ -77,7 +78,7 @@ const banner = (word, colour, detail) => {
 }
 
 const fail = (stage, message, help) => {
-    console.error(`\n${RED}[gate] ${message}${OFF}\n`)
+    console.error(`\n${RED}[verify] ${message}${OFF}\n`)
     if (help) console.error(`${help}\n`)
     banner('FAILED', RED, `${stage}  ·  ${elapsed()}`)
     process.exit(1)
@@ -347,7 +348,7 @@ const recordFile = recordRun(record, REPO)
 if (options.json) console.log(JSON.stringify({ ...record, certifies: passed && !short }, null, 2))
 
 if (!passed) {
-    console.error(`\n${RED}[gate] ${failures.map((f) => f.what).join(', ')} failed${OFF}\n`)
+    console.error(`\n${RED}[verify] ${failures.map((f) => f.what).join(', ')} failed${OFF}\n`)
     banner('FAILED', RED, `${branch}  ·  tier ${chosen} failed  ·  ${elapsed()}`)
     console.log(`  run  → ${path.relative(REPO, recordFile)}\n`)
     process.exit(1)
@@ -356,7 +357,7 @@ if (!passed) {
 if (short) {
     banner('INCOMPLETE', YELLOW, `${branch}  ·  tier ${chosen} green, but the diff earns ${earned}  ·  ${elapsed()}`)
     console.log(`  This run is green for what it covered and is ${YELLOW}not${OFF} a green for the branch.`)
-    console.log(`  Verify in full before landing (gate, without --fast): that is what certifies the sha.\n`)
+    console.log(`  Verify in full before landing (verify, without --fast): that is what certifies the sha.\n`)
     process.exit(0)
 }
 

@@ -37,7 +37,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "LaneKit runs the repository's own lane and gate commands."
+      "description": "LaneKit runs the repository's own lane and verify commands."
     }
   },
   "activationEvents": [
@@ -259,7 +259,7 @@
         "lanekit.gateOnCommit": {
           "type": "boolean",
           "default": false,
-          "description": "Verify a lane by itself when a commit lands in it and nothing is uncommitted: the gate rebases the lane onto the integration branch and runs the tests its change earns, as it always does."
+          "description": "Verify a lane by itself when a commit lands in it and nothing is uncommitted: verifying rebases the lane onto the integration branch and runs the tests its change earns, as it always does."
         }
       }
     }
