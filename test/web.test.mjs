@@ -146,6 +146,10 @@ test('each lane is read as what it is: working, empty with work in it, or landed
     assert.equal(byName.empty.kind, 'fresh', 'an empty lane is not a landed one, though both are contained in main')
     assert.equal(byName.empty.dirty, 1)
     assert.equal(byName.finished.kind, 'landed')
+    // main's merge of it says what it brought, newest first; a commit that is no merge brought nothing.
+    assert.match(demo.spine[0].subject, /^Merge branch 'finished'/)
+    assert.deepEqual(demo.spine[0].brought, { count: 1, commits: [{ sha: git(repo, 'rev-parse', 'finished').trim(), short: git(repo, 'rev-parse', '--short', 'finished').trim(), subject: 'Finish it' }] })
+    assert.equal(demo.spine[1].brought, undefined)
     assert.ok(Number.isInteger(byName.working.port))
     assert.equal(body.open.sshHost, 'demo.coder')
 })
@@ -203,6 +207,7 @@ test('land checks first, refuses without a green gate, and lands after one', asy
     assert.equal(landed.code, 0, landed.output)
     assert.match(landed.output, /LANDED/)
     assert.equal(git(repo, 'merge-base', '--is-ancestor', 'working', 'main'), '')
+    assert.match(git(repo, 'log', '-1', '--format=%B', 'main').trim(), /^Merge branch 'working'\n\n\* working:\n {2}Add the feature$/, 'its merge lists the commits it brought')
     assert.ok(!fs.existsSync(path.join(work, 'demo-working')), 'land sweeps the lane it merged')
     assert.equal(await laneIn('working'), undefined)
 })

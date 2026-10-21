@@ -235,6 +235,8 @@ const RECORD = () => {
                 leaving: this.matches?.('.leaving') ?? false, inert: this.inert === true,
                 findable: Boolean(this.matches?.('.leaving') && this.querySelector('[data-key], [data-anim], [tabindex], [id]')),
                 text: this.textContent.replace(/\s+/g, ' ').trim().slice(0, 240),
+                // Which of a repository's kept parts it is, when it is one: its log, its landing table, what settled.
+                part: this.parentElement?.matches?.('section.repo') ? (this.matches('ol.log') ? 'log' : this.dataset.anim?.split(':').pop() ?? null) : null,
                 transforms: frames.map((frame) => frame.transform).filter((transform) => transform && transform !== 'none'),
                 moves: frames.some((frame) => (frame.transform && frame.transform !== 'none') || frame.scale)
             })
@@ -603,14 +605,25 @@ test('a lane an agent lands slides into main\'s line as it goes, its merge commi
     const tip = git(repo, 'rev-parse', 'HEAD')
     await page.until((sha) => !card('tiny') && document.querySelector('li.commit.tip')?.dataset.sha === sha, [tip], { what: 'tiny gone, and main at its merge' })
     assert.equal(await page.run(() => document.querySelector('li.commit.tip .tag.merged')?.textContent), 'tiny', 'main\'s merge is tagged with the lane it brought')
-    assert.equal(await page.run(() => document.querySelector('li.commit.tip .subject')?.textContent), 'Landed', 'and reads Landed, git\'s words in its title')
+    assert.deepEqual(await page.run(() => ['.landed-word', '.subject', '.brought-more'].map((part) => document.querySelector(`li.commit.tip ${part}`)?.textContent ?? null)),
+        ['Landed', 'Add a tiny thing', null], 'and reads Landed, with the one commit it brought; git\'s words in its title')
     assert.match(await page.run(() => document.querySelector('li.commit.tip').title), /^Merge branch 'tiny'/)
+    assert.match(git(repo, 'log', '-1', '--format=%b'), /\* tiny:\n {2}Add a tiny thing/, 'git\'s own words for the merge list what it brought')
     const seen = await page.run(() => window.__motion)
     const said = JSON.stringify(seen.map((one) => `${one.id} ${one.key ?? one.text.slice(0, 40)} ${one.transforms.join(' ')}`))
     assert.ok(seen.some((one) => one.id === 'motion-leave' && /Add a tiny thing/.test(one.text) && one.transforms.some((transform) => /translateX\(-/.test(transform))),
         `tiny slides into main's line as it goes: ${said}`)
     assert.ok(seen.some((one) => one.id === 'motion-wash' && one.key === `demo@${tip}`), `the merge commit is washed onto main: ${said}`)
     assert.ok(seen.some((one) => one.id === 'motion-move' && one.key === 'demo:tag:main'), `main's name slides up to it: ${said}`)
+    // Chosen, the merge says in the details what it brought, each commit with its hash.
+    await page.click((() => document.querySelector('li.commit.tip')))
+    const brought = await page.until((() => {
+        const list = document.querySelector('.pane-commit .details-brought')
+        return list ? [...list.querySelectorAll('p, li')].map((node) => node.textContent) : null
+    }), [], { what: 'what the merge brought, in the details' })
+    assert.deepEqual(brought, ['Brought 1 commit', `${git(repo, 'rev-parse', '--short', 'tiny')}Add a tiny thing`])
+    await page.click((() => document.querySelector('.pane-commit .close')))
+    await page.until((() => !document.querySelector('.pane-commit')), [], { what: 'the details closed' })
 })
 
 test('where the machine asks for less motion nothing slides and what changes only fades; a lane something runs in is lit along its line', { skip, timeout: 120_000 * SLOW }, async () => {
@@ -904,4 +917,27 @@ test('the landing order has a view of its own: a table of every lane in its grou
     await page.click(((name) => [...document.querySelectorAll('tr.landing-lane .lane-name')].find((node) => node.textContent === name)), name)
     await page.until(((name) => document.querySelector('.landing').hidden && getComputedStyle(document.querySelector('ol.log')).display !== 'none' && card(name)?.classList.contains('flash')), [name], { what: `the log, with ${name} marked` })
     assert.deepEqual(await page.run(() => [...document.querySelectorAll('.view-tab')].map((tab) => tab.getAttribute('aria-selected'))), ['true', 'false'])
+})
+
+test('from one view to the other, the view shown fades in whole: nothing in the log slides in from the page\'s corner, and nothing of the landing table fades over it', { skip, timeout: 60_000 * SLOW }, async () => {
+    const tab = (label) => [...document.querySelectorAll('.view-tab')].find((node) => node.textContent.startsWith(label))
+    const across = async (label, shown) => {
+        await page.until(atRest, [], { what: 'the page at rest' })
+        await page.run(RECORD)
+        await page.click(tab, label)
+        await page.until(((shown) => !document.querySelector(shown).hidden), [shown], { what: `${shown} shown` })
+        await page.until(atRest, [], { what: 'the page at rest again' })
+        return page.run(() => window.__motion.map((one) => ({ id: one.id, key: one.key, leaving: one.leaving, moves: one.moves, part: one.part })))
+    }
+    const counts = () => [...document.querySelectorAll('.view-count')].map((node) => Math.round(node.getBoundingClientRect().left))
+    const before = await page.run(counts)
+    const toLanding = await across('Landing', '.landing')
+    assert.deepEqual(await page.run(counts), before, 'the Landing tab\'s counts stay where they were as it is chosen')
+    const toLog = await across('Log', 'ol.log')
+    for (const [seen, to] of [[toLanding, 'the landing table'], [toLog, 'the log']]) {
+        const said = JSON.stringify(seen)
+        assert.ok(!seen.some((one) => one.moves), `nothing slides on the way to ${to}: ${said}`)
+        assert.ok(!seen.some((one) => one.leaving), `nothing of the other view fades over ${to}: ${said}`)
+        assert.deepEqual(seen.filter((one) => one.id === 'motion-fade').map((one) => one.part), to === 'the log' ? ['log', 'settled'] : ['landing'], `${to} fades in whole, and only it: ${said}`)
+    }
 })

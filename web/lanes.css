@@ -254,6 +254,12 @@ html[data-compact] .subject { max-width: none; }
   background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 .tag[data-hue] { color: var(--lane); background: color-mix(in srgb, var(--lane) 12%, transparent); }
+/* A merge on main: Landed, the newest commit it brought, how many more. */
+.landed-word { flex: none; color: var(--muted); }
+.brought-more { flex: none; font-size: var(--s12); color: var(--muted); font-variant-numeric: tabular-nums; }
+.details-brought ul { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 2px; }
+.details-brought li { display: flex; gap: 8px; min-width: 0; }
+.details-brought li > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A merge on main, tagged with the lane it brought, in that lane's colour. */
 .tag.merged { font-weight: 600; }
 .tag.merged::before { content: "⤶ "; font-family: var(--sans); font-weight: 400; }
@@ -573,6 +579,9 @@ html[data-compact] .agent-row .agent-session { display: none; }
 .view-tab:hover { color: var(--ink); }
 .view-tab:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -2px; border-radius: 4px; }
 .view-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+/* A tab's name as wide as it is chosen, bold or not, so the counts beside it stay put from one view to the other. */
+.view-label { display: inline-flex; flex-direction: column; }
+.view-label::after { content: attr(data-text); font-weight: 600; height: 0; overflow: hidden; visibility: hidden; }
 .view-tab .n { font-size: var(--s12); font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 .landing[hidden], .log[hidden] { display: none; }
 

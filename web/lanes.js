@@ -420,7 +420,9 @@ const motion = (() => {
             if (old.node === node) return
             const [dx, dy] = [old.box.left - box.left, old.box.top - box.top]
             const [x, y] = [dx - held[0], dy - held[1]]
-            const slid = !calm && (Math.abs(x) >= 1 || Math.abs(y) >= 1) && (onScreen(box) || onScreen(old.box))
+            // What was not drawn (in a view out of sight) has no place to slide from: its box was the page's corner.
+            const drawn = old.box.width + old.box.height > 0
+            const slid = !calm && drawn && (Math.abs(x) >= 1 || Math.abs(y) >= 1) && (onScreen(box) || onScreen(old.box))
             if (slid) {
                 slide(node, x, y)
                 shifted.set(node, [dx, dy])
@@ -543,7 +545,12 @@ const showView = (repoId, view) => {
     keep({ views: Object.fromEntries(views) })
     // A commit chosen in a log no longer drawn goes with it.
     if (view === 'landing' && selected?.repo === repoId) selected = null
+    // The other view, drawn whole and faded in as one, rather than as what changed from the view before: the log, kept
+    // out of sight, was read at the page's corner and slid in from there, and the landing table faded out over it.
+    motion.hush()
     draw(true)
+    const kept = sections.get(repoId)
+    if (kept) for (const part of view === 'landing' ? [kept.landing] : [kept.log, kept.settled]) motion.fadeIn(part)
 }
 // `${repo}/${lane}` folded to its name row: its files, commits and facts kept out of the way until it is unfolded.
 const folded = new Set(host.recall()?.folded ?? [])
@@ -1359,8 +1366,23 @@ const mergedTag = (repo, commit) => {
     return name ? el('span', { class: 'tag merged', 'data-hue': hueName(repo, name), text: name, title: `Landed from ${name}` }) : null
 }
 
+/** What a merge brought, one commit a line, newest first: for a title. */
+const broughtWords = (brought) => [...brought.commits.map((one) => `${one.short} ${one.subject}`),
+    brought.count > brought.commits.length ? `and ${plural(brought.count - brought.commits.length, 'older commit')}` : null].filter(Boolean).join('\n')
+
 /** What a commit is, for its title: the words, who, when, and the hash the log no longer prints. */
 const aboutCommit = (commit) => `${commit.subject}\n${commit.short} · ${commit.author} · ${exactly(commit.at)}`
+
+/** A commit's words on its row; a merge's, Landed and what it brought. */
+const landedWords = (commit) => {
+    if (!mergedOf(commit)) return [el('span', { class: 'subject', text: commit.subject })]
+    const brought = commit.brought?.count ? commit.brought : null
+    if (!brought) return [el('span', { class: 'subject', text: 'Landed' })]
+    const all = broughtWords(brought)
+    return [el('span', { class: 'landed-word', text: 'Landed' }),
+        el('span', { class: 'subject', text: brought.commits[0].subject, title: all }),
+        brought.count > 1 ? el('span', { class: 'brought-more', text: `+${brought.count - 1}`, title: all }) : null]
+}
 
 const commitRow = (repo, commit, className, label) => {
     const upstream = repo.main?.upstream
@@ -1370,8 +1392,9 @@ const commitRow = (repo, commit, className, label) => {
         label ? el('span', { class: 'tag', text: label, 'data-anim': `${repo.id}:tag:${label}` }) : null,
         remote ? el('span', { class: 'tag remote', text: remote, title: `Where ${remote} is, as of the last fetch`, 'data-anim': `${repo.id}:tag:${remote}` }) : null,
         isNaming(repo, commit) ? namingForm(repo, commit, naming.from) : [
-            // A merge reads Landed, with the lane as its tag; git's own words are in the row's title and the details.
-            el('span', { class: 'subject', text: mergedOf(commit) ? 'Landed' : commit.subject }),
+            // A merge reads Landed, with the newest commit it brought and how many more, and the lane as its tag; git's
+            // own words are in the row's title and the details.
+            ...landedWords(commit),
             mergedTag(repo, commit),
             el('span', { class: 'when', text: short(commit.at), title: exactly(commit.at) }),
             rowActions(repo, commit)
@@ -1767,6 +1790,12 @@ const fileRow = (file, open) => {
     `Show what changed in ${file.path}`, open)
 }
 
+/** What a merge brought, in the details pane: how many, then each commit's hash and words, newest first. */
+const broughtList = (brought) => el('div', { class: 'details-brought' },
+    el('p', { class: 'muted small', text: `Brought ${plural(brought.count, 'commit')}` }),
+    el('ul', {}, brought.commits.map((one) => el('li', {}, el('span', { class: 'mono', text: one.short }), el('span', { text: one.subject })))),
+    brought.count > brought.commits.length ? el('p', { class: 'muted small', text: `and ${plural(brought.count - brought.commits.length, 'older commit')}` }) : null)
+
 /** A commit, as the details pane shows it: its words, who and when, what can be done with it, and its files. */
 const commitPane = (repo, commit, laneName) => {
     const lane = laneName ? repo.lanes.find((candidate) => candidate.name === laneName) : null
@@ -1781,9 +1810,11 @@ const commitPane = (repo, commit, laneName) => {
             el('span', { class: 'mono', text: commit.short }),
             el('span', { text: commit.author || details?.author || '' }),
             el('span', { text: ago(commit.at), title: exactly(commit.at) })),
-        details?.error ? el('p', { class: 'muted', text: details.error })
-            : !details ? el('p', { class: 'muted', text: 'Reading…' })
-                : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
+        // A merge says what it brought, each commit its own line, in place of the list git wrote of it (--log) or none.
+        commit.brought?.count ? broughtList(commit.brought)
+            : details?.error ? el('p', { class: 'muted', text: details.error })
+                : !details ? el('p', { class: 'muted', text: 'Reading…' })
+                    : details.body ? el('p', { class: 'details-body', text: details.body }) : el('p', { class: 'muted details-body', text: 'No description.' }),
         // One row where it fits: words only on what changes the commit, first; then the icons, which wrap together.
         el('div', { class: 'details-actions' },
             newest ? iconButton('pencil', 'Edit message', { onclick: () => select({ repo: repo.id, lane: lane.name, form: 'reword' }), title: 'A new title and description, nothing else' }) : null,
@@ -2918,7 +2949,7 @@ const viewTabs = (repo) => {
     const tab = (id, label, title, ...extra) => el('button', {
         type: 'button', role: 'tab', class: 'view-tab', 'data-key': `${repo.id}:view:${id}`, 'aria-selected': String(view === id), title,
         onclick: () => showView(repo.id, id)
-    }, el('span', { text: label }), extra)
+    }, el('span', { class: 'view-label', 'data-text': label, text: label }), extra)
     return [el('div', { class: 'views-row' },
         el('div', { class: 'views', role: 'tablist', 'aria-label': `${repo.name ?? repo.id}: what to show` },
             tab('log', 'Log', `${repo.integrationBranch}'s line, with each lane on it`),
