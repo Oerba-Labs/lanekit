@@ -11,7 +11,7 @@ process, a file or a database row, and each lands back on `main` only once its t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-dark.png">
-  <img alt="The LaneKit page on Piano Sheets, chosen in the switcher along the top beside All and api, whose dot says a gate is running there. It is in two halves, as Sapling's Interactive Smartlog is. On the left, the landing order in groups (Ready: midi-export; Needs a gate: page-turns; Commit first: dark-mode) with Land midi-export…, then main as a line of dots and three lanes, each on a line of its own that curves into main where it started. dark-mode's line is amber and it says Claude needs you: Claude asks to run Bash, above the lane's uncommitted files, ticked, with Commit… and Amend under them. midi-export is ready to land, Claude done in it, with its pull request's badges under its newest commit, which is chosen; the pointer on it shows Gate and Land…, solid as the next step, and its ⋯ is open on Push, Set aside and Drop…. page-turns needs a gate, with OpenCode running an edit in it. On the right, the chosen commit's details: its words, its lane, hash, author and age, Edit message, Uncommit, New lane here, Copy hash, and its files. Along the bottom, the command bar: api's gate running the tests, with its clock." src="docs/images/lanes-light.png">
+  <img alt="The LaneKit page on Piano Sheets, chosen in the switcher along the top beside Home and api, whose dot says something runs there; under it, a line of what waits on you: Claude needs you in dark-mode, midi-export ready to land, #8 waits on your review. Piano Sheets' header says it is up to date with origin/main and has 3 agents, 1 needing you; under it the Log and Landing tabs, Landing counting a lane in each group, and Land midi-export… at the row's end. The log, as Sapling's Interactive Smartlog draws one: main as a line of rings and three lanes, each on a line of its own in its own colour that curves into main where it started. page-turns needs verifying, OpenCode running an edit in it. midi-export is ready to land, verified with the tests, Claude done in it, its pull request open and approved under its newest commit, which is chosen; the pointer is on it, showing Verify and Land…, solid as the next step, and its ⋯ is open on Request review, Merge on GitHub, Set aside and Drop. dark-mode has uncommitted changes and Claude needs you there, asking to run Bash, above its files, ticked, with Commit… and Amend under them. On the right, the chosen commit's details: its words, its lane, hash, author and age, Edit message, Uncommit and its files. Along the bottom, the command bar: api's lane being verified, running the tests, with its clock." src="docs/images/lanes-light.png">
 </picture>
 
 <sub>`lane web`: every lane of every repository on one page, each on a line of its own that
@@ -35,7 +35,7 @@ Every lane starts from `main`, and comes back to it with a merge commit of its o
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanes-graph-dark.svg">
-  <img alt="main as a line of commits. Two lanes start from it with lane new: midi-export, whose gate says VERIFIED and which lane land brings back as a merge commit of its own, and dark-mode, still in progress." src="docs/images/lanes-graph-light.svg">
+  <img alt="main as a line of commits. Two lanes start from it with lane new: midi-export, which verify says is VERIFIED and lane land brings back as a merge commit of its own, and dark-mode, still in progress." src="docs/images/lanes-graph-light.svg">
 </picture>
 
 ## The loop
@@ -445,7 +445,7 @@ in the picture. There its clicks drive the editor:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/lanekit-sidebar-dark.png">
-  <img alt="LaneKit in the editor's side bar, on Piano Sheets, with the switcher above it and Goto beside Fetch for the main checkout. The landing order in groups (Ready: midi-export; Needs a gate: page-turns; Commit first: dark-mode), then dark-mode marked You are here, its line amber because Claude needs you there, asking to run Bash, with its uncommitted files ticked; midi-export ready to land, Claude done in it, with its pull request's badges; and page-turns under the pointer, OpenCode running in it, offering Gate, its next step, and a ⋯ for the rest. All three curve into main. The command bar along the bottom." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
+  <img alt="LaneKit in the editor's side bar, on Piano Sheets, with the switcher above it and what waits on you under that: Claude needs you in dark-mode, midi-export ready to land, #8 waits on your review. The header's 3 agents, 1 needing you, a terminal and Fetch; the Log and Landing tabs with Land midi-export…. page-turns under the pointer, OpenCode running in it, offering Verify, its next step, over its corner, and a ⋯ for the rest; midi-export verified and ready to land, Claude done in it, with its pull request's badges; dark-mode's uncommitted files ticked, Claude needing you there to run Bash. All three curve into main. The command bar along the bottom, verifying." src="docs/images/lanekit-sidebar-light.png" width="320" align="right">
 </picture>
 
 - a commit opens as the diffs of what it changed; a lane's **Changes** opens everything it

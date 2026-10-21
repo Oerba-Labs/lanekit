@@ -1995,7 +1995,7 @@ const inlineDetails = (repo, commit) => (compact() && selected?.sha && isSelecte
 const VERB_WORDS = { gate: 'Verifying', land: 'Landing', rebase: 'Rebasing', push: 'Pushing', pr: 'Opening a pull request', sweep: 'Sweeping', new: 'Making a lane',
     pull: 'Pulling', 'push-main': 'Pushing main', fetch: 'Fetching', review: 'Reviewing', commit: 'Committing', uncommit: 'Uncommitting', discard: 'Discarding', resolve: 'Marking resolved', adopt: 'Giving it lanes' }
 /** A job's command as a person would type it: lane …, gate, git …, without the node and the path in front. */
-const typed = (command) => String(command ?? '').replace(/^node (?:\S*\/)?dev\/lane\.mjs /, 'lane ').replace(/^node (?:\S*\/)?dev\/gate\.mjs\b/, 'gate')
+const typed = (command) => String(command ?? '').replace(/^node (?:\S*\/)?dev\/lane\.mjs /, 'lane ').replace(/^node (?:\S*\/)?dev\/gate\.mjs\b/, 'verify')
     .replace(/^node (?:\S*\/)?bin\/adopt\.mjs\b/, 'lane adopt')
 const cancelJob = async (id) => {
     try { if (!await host.cancel(id)) notice('It had begun already, so it was not cancelled.') } catch { notice('LaneKit did not answer; nothing was cancelled.') }

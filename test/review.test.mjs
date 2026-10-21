@@ -150,7 +150,7 @@ test('lane pull brings what the author pushed, the gate\'s rebase put aside, and
     authorPushes(5, 'more.txt', 'more\n', 'And more', 'feature-x')
     const after = lane('pull', 'review-5')
     assert.equal(after.code, 0, after.out)
-    assert.match(after.out, /what the gate rebased onto main is put aside for what #5's author pushed/)
+    assert.match(after.out, /what verifying rebased onto main is put aside for what #5's author pushed/)
     assert.equal(git(laneDir('review-5'), 'rev-parse', 'HEAD'), git(author, 'rev-parse', 'HEAD'))
 
     // A commit of the reviewer's own is theirs: a pull that would lose it is refused.
