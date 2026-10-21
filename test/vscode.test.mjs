@@ -839,6 +839,13 @@ test('a tab is titled with the repository its page shows, and LaneKit while it s
     assert.equal(editor.panel.title, 'Demo · LaneKit')
     await editor.tabSays({ type: 'showing', repo: null, title: null })
     assert.equal(editor.panel.title, 'LaneKit')
+    // How many things wait on you there, before it, as the page's own title says it; none, no count.
+    await editor.tabSays({ type: 'showing', repo: 'demo', title: 'Demo', waiting: 3 })
+    assert.equal(editor.panel.title, '(3) Demo · LaneKit')
+    await editor.tabSays({ type: 'showing', repo: null, title: null, waiting: 5 })
+    assert.equal(editor.panel.title, '(5) LaneKit')
+    await editor.tabSays({ type: 'showing', repo: null, title: null, waiting: 0 })
+    assert.equal(editor.panel.title, 'LaneKit')
 })
 
 test('a repository opens in a tab of its own, on it and with its name, and a second ask brings that one forward', async () => {
