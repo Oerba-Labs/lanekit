@@ -156,6 +156,18 @@ a:hover { text-decoration: underline; }
 /* Something running in a repository the page is not showing: a dot, so it is not missed. */
 .switcher .busy { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); align-self: center; }
 .switcher .broken { color: var(--risk); }
+/* Laid out on one line for a moment, to see whether the tabs fit there. */
+.switcher.measuring { flex-wrap: nowrap !important; overflow-x: hidden !important; }
+/* Where they do not: one button saying the repository shown, opening every one as a menu. */
+.switcher.as-menu { overflow: visible; margin-bottom: -4px; }
+.btn.switcher-toggle { display: inline-flex; align-items: baseline; gap: 6px; font-weight: 600; }
+.switcher-toggle .n { font-weight: 400; }
+.switcher-toggle .caret { font-size: var(--s11); color: var(--muted); }
+.switcher-toggle .busy { align-self: center; }
+.switcher-menu { left: 0; right: auto; min-width: 200px; max-width: calc(100vw - 24px); max-height: 60vh; overflow: auto; }
+.switcher .switcher-menu a { justify-content: space-between; padding: 4px 8px; border: 0; border-radius: 4px; }
+.switcher .switcher-menu a:hover, .switcher .switcher-menu a:focus-visible { background: var(--vscode-list-hoverBackground, var(--soft)); outline: none; }
+.switcher .switcher-menu a[aria-current="page"] { background: var(--vscode-list-activeSelectionBackground, var(--wash)); }
 
 .notice {
   margin: 12px 24px 0; padding: 8px 12px;
