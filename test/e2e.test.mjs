@@ -205,9 +205,18 @@ const open = async (browser, url, { editor = false, still = false, width = 1400,
         await until(`(...args) => { const node = (${find})(...args); if (!node) return false; node.click(); return true }`, args, { what: `${find}, clicked` })
     }
     const type = (text) => send('Input.insertText', { text })
+    /** A key pressed and let go, as a keyboard sends it: Tab (with Shift), j, the arrows. */
+    const KEY_CODES = { Tab: 9, Enter: 13, ' ': 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }
+    const key = async (name, { shift = false } = {}) => {
+        const vk = KEY_CODES[name] ?? name.toUpperCase().charCodeAt(0)
+        const code = name.length === 1 && name !== ' ' ? `Key${name.toUpperCase()}` : name === ' ' ? 'Space' : name
+        const text = name.length === 1 ? name : undefined
+        for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: name, code, windowsVirtualKeyCode: vk, modifiers: shift ? 8 : 0, ...(type === 'keyDown' && text ? { text } : {}) })
+        await sleep(40)
+    }
     // Closing a tab never holds a test past what it found: a failure's own words are what it reports.
     const close = () => Promise.race([browser.send('Target.closeTarget', { targetId }).catch(() => null), sleep(5000)])
-    return { run, until, pointAt, click, type, close, resize }
+    return { run, until, pointAt, click, type, key, close, resize }
 }
 
 // Finders, run in the page: each is a function there.
@@ -995,4 +1004,71 @@ test('a tab\'s title counts what waits on you, as the strip lists it; the bar sa
     assert.equal(atHome, total ? `(${total}) LaneKit` : 'LaneKit')
     await page.run(() => { showRepo('demo'); return true })
     await page.until((() => /Demo · LaneKit$/.test(document.title)), [], { what: 'back on demo' })
+})
+
+test('each list is one stop for Tab, j and k move row to row in it, lanes and commits alike, and the focus stays where it is as the page is drawn again', { skip, timeout: 60_000 * SLOW }, async () => {
+    await page.run(() => { window.scrollTo(0, 0); return true })
+    await page.until(atRest, [], { what: 'the page at rest' })
+    // What has the focus: the row (data-row) it is, or is in, and its own words.
+    const where = () => {
+        const active = document.activeElement
+        const row = active?.closest?.('[data-row]')
+        return { row: row?.dataset.row ?? null, own: active === row, list: active?.closest?.('[data-rows]')?.dataset.rows ?? null, words: (active?.getAttribute('aria-label') || active?.textContent || '').trim().slice(0, 40), tag: active?.localName }
+    }
+    // Into the log from Log and Landing (past Land next, where a lane is ready), then Tab until out of it: one row, and
+    // that row's own buttons, on the way.
+    await page.run(() => { document.querySelector('.view-tab[aria-selected="true"]').focus(); return true })
+    const stops = []
+    for (let i = 0; i < 40; i++) {
+        await page.key('Tab')
+        const at = await page.run(where)
+        if (!stops.length && at.list !== 'log:demo' && /^Land /.test(at.words)) continue
+        if (stops.length && at.list !== 'log:demo') break
+        stops.push(at)
+    }
+    const said = JSON.stringify(stops)
+    assert.equal(stops[0].list, 'log:demo', `Tab from Log and Landing comes into the log: ${said}`)
+    assert.ok(stops[0].own, 'at a row')
+    assert.ok(stops.every((stop) => stop.row === stops[0].row), `and only that row and its buttons are stops: ${said}`)
+    // j and k, row to row: lanes and main's commits alike, in the order drawn.
+    await page.key('Tab', { shift: true })
+    while ((await page.run(where)).own === false) await page.key('Tab', { shift: true })
+    const order = await page.run(() => [...document.querySelector('ol.log[data-rows="log:demo"]').querySelectorAll('[data-row]')].filter((row) => row.getClientRects().length).map((row) => row.dataset.row))
+    const first = (await page.run(where)).row
+    const walked = [first]
+    for (let i = 0; i < 6; i++) { await page.key('j'); walked.push((await page.run(where)).row) }
+    const from = order.indexOf(first)
+    assert.deepEqual(walked, order.slice(from, from + 7), `j steps through the log's rows in order: ${JSON.stringify(walked)} of ${JSON.stringify(order)}`)
+    await page.key('k')
+    assert.equal((await page.run(where)).row, walked[5], 'k, the row before')
+    // On down, past the lanes, to main's commits.
+    let reached = null
+    for (let i = 0; i < order.length && !reached; i++) { await page.key('j'); const row = (await page.run(where)).row; if (/^demo@/.test(row)) reached = row }
+    assert.equal(reached, order.slice(from + 6).find((row) => /^demo@/.test(row)), 'j goes on from the lanes to main\'s commits')
+    // Tab out and back in: the log comes back at the row last in focus.
+    const last = reached
+    await page.run(() => { document.querySelector('.view-tab[aria-selected="true"]').focus(); return true })
+    await page.key('Tab')
+    if (/^Land /.test((await page.run(where)).words)) await page.key('Tab')
+    assert.equal((await page.run(where)).row, last, 'Tab comes back to the row last in focus')
+    // A commit's button in focus, and the page drawn again: the same button keeps the focus.
+    const commit = order.find((row) => /^demo@/.test(row))
+    await page.run(((commit) => { document.querySelector(`[data-row="${commit}"]`).focus(); return true }), commit)
+    await page.key('Tab')
+    const before = await page.run(where)
+    assert.equal(before.row, commit)
+    assert.equal(before.own, false, `a button of the commit: ${JSON.stringify(before)}`)
+    await page.run(() => { draw(true); return true })
+    assert.deepEqual(await page.run(where), before, 'drawn again, the focus is where it was')
+    // The switcher's tabs: one stop, ← and → between them, ↓ into the log.
+    const tabs = await page.run(() => [...document.querySelectorAll('#switcher [data-row]')].map((tab) => ({ row: tab.dataset.row, tabindex: tab.tabIndex })))
+    assert.equal(tabs.filter((tab) => tab.tabindex === 0).length, 1, `one of the switcher's tabs is a stop: ${JSON.stringify(tabs)}`)
+    await page.run(() => { document.querySelector('#switcher [data-row][tabindex="0"]').focus(); return true })
+    const on = (await page.run(where)).row
+    await page.key('ArrowLeft')
+    const left = (await page.run(where)).row
+    assert.notEqual(left, on, '← moves to the tab before')
+    assert.equal(left, tabs[tabs.findIndex((tab) => tab.row === on) - 1].row)
+    await page.key('ArrowDown')
+    assert.equal((await page.run(where)).list, 'log:demo', '↓ from the switcher, into the log')
 })
