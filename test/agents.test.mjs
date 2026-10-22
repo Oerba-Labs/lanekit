@@ -448,6 +448,45 @@ test('the reporters are installed once a machine, where Claude Code and OpenCode
         path.join(scratch, 'xdg', 'opencode', 'plugins', 'lanekit', 'tui.js')])
 })
 
+test('a lanekit reached through a link is named as it was installed, whichever path to its folder asks again', () => {
+    const home = path.join(scratch, 'home-linked')
+    const places = { home, env: {} }
+    const link = path.join(scratch, "it's", 'lanekit-link')
+    fs.mkdirSync(path.dirname(link), { recursive: true })
+    fs.symlinkSync(KIT, link)
+    const settingsFile = path.join(home, '.claude', 'settings.json')
+    const pluginFile = path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')
+    const tuiFile = path.join(home, '.config', 'opencode', 'plugins', 'lanekit', 'tui.js')
+    const names = () => [fs.readFileSync(settingsFile, 'utf8'), fs.readFileSync(pluginFile, 'utf8'), fs.readFileSync(tuiFile, 'utf8')]
+    // Installed by the link (as the editor names it), then asked by the folder behind it (as a script finds itself).
+    assert.equal(installForUser(link, places).wrote.length, 3)
+    const written = names()
+    assert.ok(written.every((text) => text.includes('lanekit-link')))
+    const again = installForUser(KIT, places)
+    assert.deepEqual([again.wrote, again.kept.length], [[], 3], 'the same folder: current')
+    assert.deepEqual(names(), written, 'kept naming the link')
+    assert.ok(Object.values(reportersOn(KIT, places)).every((reporter) => reporter.state === 'current'))
+    // And the other way about.
+    fs.rmSync(home, { recursive: true })
+    installForUser(KIT, places)
+    const byFolder = names()
+    assert.deepEqual(installForUser(link, places).wrote, [])
+    assert.deepEqual(names(), byFolder)
+    // A lanekit that is another folder is still brought up to date.
+    const elsewhere = path.join(scratch, 'another-lanekit')
+    fs.mkdirSync(path.join(elsewhere, 'lib'), { recursive: true })
+    assert.equal(installForUser(elsewhere, places).wrote.length, 3)
+    assert.ok(names().every((text) => text.includes('another-lanekit')))
+    // agent-reports, run by the link, names the link.
+    const cli = path.join(scratch, 'home-cli-linked')
+    const ran = spawnSync(process.execPath, [path.join(link, 'bin', 'agent-reports.mjs')], {
+        env: { ...env, HOME: cli, CLAUDE_CONFIG_DIR: '', XDG_CONFIG_HOME: '', NO_COLOR: '1' }, encoding: 'utf8'
+    })
+    assert.equal(ran.status, 0, ran.stderr)
+    assert.match(fs.readFileSync(path.join(cli, '.claude', 'settings.json'), 'utf8'), /it'\\\\''s\/lanekit-link\/dev\/lane\.mjs/)
+    assert.match(fs.readFileSync(path.join(cli, '.config', 'opencode', 'plugins', 'lanekit', 'tui.js'), 'utf8'), /lanekit-link/)
+})
+
 test('every repository\'s agents are attributed to the lane whose folder holds theirs, the main checkout else', () => {
     const repos = [{ id: 'demo', path: repo, lanes: [{ name: 'midi-export', path: laneDir, exists: true }] }]
     reportClaude(JSON.stringify({ ...event('SessionStart'), session_id: 'in-main', cwd: path.join(repo) }), { chain: chainTo(RUNNING) })
