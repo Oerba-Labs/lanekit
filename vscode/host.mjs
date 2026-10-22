@@ -657,7 +657,7 @@ export const activate = async (context, vscode, { root, home = os.homedir(), env
         const setting = vscode.workspace.getConfiguration('lanekit').get('reportAgents') ?? 'ask'
         if (setting === 'never') return
         const now = reportersOn(root, places)
-        if (now.claude.state !== 'missing' && now.opencode.state !== 'missing') return
+        if (!Object.values(now).some((reporter) => reporter.state === 'missing')) return
         const answered = context.globalState?.get?.('lanekit.reportAgents')
         if (setting === 'always' || answered === 'yes') { addReporters(true); return }
         if (answered === 'no') return

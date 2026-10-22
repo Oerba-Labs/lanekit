@@ -22,7 +22,7 @@ import { after, before, test } from 'node:test'
 
 import {
     agentsDir, agentsIn, ancestry, CLAUDE_EVENTS, claudeHooks, claudeStep, installForUser, opencodePlugin, opencodeReporter,
-    readReports, reportClaude, reportersOn, statOf, tmuxOf, withClaudeHooks
+    opencodeTui, opencodeTuiPlugin, readReports, reportClaude, reportersOn, statOf, tmuxOf, withClaudeHooks
 } from '../lib/agents.mjs'
 import { createService } from '../lib/service.mjs'
 
@@ -232,22 +232,117 @@ test('OpenCode\'s events come to one state for the process, written only when it
     fs.rmSync(file)
 })
 
+test('OpenCode 2\'s events come to the same states as OpenCode 1\'s, a tool named before it is called', async () => {
+    const hooks = await opencodeReporter({ directory: laneDir }, { pid: RUNNING, chain: [{ pid: RUNNING, name: 'opencode' }] })
+    const file = path.join(AGENTS, `opencode-${RUNNING}.json`)
+    const read = () => JSON.parse(fs.readFileSync(file, 'utf8'))
+    const say = (type, data) => hooks.event({ event: { type, data } })
+    // As OpenCode 2.1.2 says them, a shell command asked for and run.
+    await say('session.execution.started', { sessionID: 's1' })
+    assert.deepEqual([read().state, read().session], ['thinking', 's1'])
+    await say('session.tool.input.started', { sessionID: 's1', assistantMessageID: 'm1', id: 'c1', name: 'shell' })
+    assert.equal(read().state, 'thinking', 'named, not yet called')
+    await say('session.tool.called', { sessionID: 's1', assistantMessageID: 'm1', id: 'c1', input: { command: 'secret' }, executed: false })
+    assert.deepEqual([read().state, read().tool], ['running', 'shell'])
+    await say('permission.asked', { id: 'p1', sessionID: 's1', action: 'shell', resources: ['secret'] })
+    assert.deepEqual([read().state, read().tool], ['needs-you', 'shell'])
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('secret'))
+    await say('permission.replied', { sessionID: 's1', requestID: 'p1', reply: 'once' })
+    assert.equal(read().state, 'running')
+    await say('session.tool.success', { sessionID: 's1', assistantMessageID: 'm1', id: 'c1', content: [{ type: 'text', text: 'hi' }], executed: true })
+    assert.equal(read().state, 'thinking')
+    await say('form.created', { form: { id: 'f1', sessionID: 's1', title: 'Which?', fields: [] } })
+    assert.deepEqual([read().state, read().tool], ['needs-you', 'question'])
+    await say('form.cancelled', { id: 'f1', sessionID: 's1' })
+    assert.equal(read().state, 'thinking')
+    await say('session.execution.succeeded', { sessionID: 's1' })
+    assert.equal(read().state, 'done')
+    await say('session.execution.started', { sessionID: 's1' })
+    await say('session.execution.failed', { sessionID: 's1', error: { type: 'provider', message: 'down' } })
+    assert.equal(read().state, 'failed')
+    await say('session.execution.started', { sessionID: 's1' })
+    await say('session.execution.interrupted', { sessionID: 's1', reason: 'user' })
+    assert.equal(read().state, 'done', 'stopped by the person is not a failure')
+    fs.rmSync(file)
+})
+
+test('OpenCode 2\'s terminal reports its own sessions only, though it hears every terminal\'s', async () => {
+    let hear
+    const route = { type: 'home' }
+    const running = new Set()
+    const parents = new Map()
+    const context = {
+        location: { directory: laneDir },
+        ui: { router: { current: () => ({ ...route }) }, tabs: { list: () => [] } },
+        data: {
+            listen: (handler) => { hear = handler; return () => { hear = null } },
+            session: { root: (id) => parents.get(id) ?? id, status: (id) => (running.has(id) ? 'running' : 'idle') }
+        }
+    }
+    const cleanup = await opencodeTui(context, { pid: RUNNING, chain: [{ pid: RUNNING, name: 'opencode' }] })
+    const file = path.join(AGENTS, `opencode-${RUNNING}.json`)
+    const read = () => JSON.parse(fs.readFileSync(file, 'utf8'))
+    const say = (type, data) => hear({ details: { type, data, location: { directory: laneDir } } })
+    assert.equal(read().state, 'ready')
+    // Another terminal's session, on the service both share.
+    say('session.execution.started', { sessionID: 'theirs' })
+    assert.equal(read().state, 'ready')
+    // This one's, shown here: and a subagent of it.
+    Object.assign(route, { type: 'session', sessionID: 'mine' })
+    say('session.execution.started', { sessionID: 'mine' })
+    assert.deepEqual([read().state, read().session], ['thinking', 'mine'])
+    parents.set('child', 'mine')
+    say('session.created', { sessionID: 'child', parentID: 'mine' })
+    say('session.tool.input.started', { sessionID: 'child', id: 'c1', name: 'read' })
+    say('session.tool.called', { sessionID: 'child', id: 'c1', input: {}, executed: false })
+    assert.deepEqual([read().state, read().tool], ['running', 'read'])
+    say('session.tool.success', { sessionID: 'child', id: 'c1', content: [{ type: 'text', text: 'x' }], executed: true })
+    say('permission.asked', { id: 'p9', sessionID: 'theirs', action: 'shell', resources: [] })
+    assert.equal(read().state, 'thinking', 'theirs asking is not this one waiting')
+    say('session.execution.succeeded', { sessionID: 'mine' })
+    assert.equal(read().state, 'done')
+    // A session already at work when it is first shown here.
+    running.add('later')
+    Object.assign(route, { sessionID: 'later' })
+    say('session.text.delta', { sessionID: 'later', delta: '…' })
+    assert.deepEqual([read().state, read().session], ['thinking', 'later'])
+    await cleanup()
+    assert.ok(!fs.existsSync(file), 'gone with the terminal\'s OpenCode')
+    assert.equal(hear, null)
+})
+
 test('OpenCode\'s plugin finds this lanekit, hands over to it, and does nothing outside a repository with lanes', async () => {
     const plugin = path.join(scratch, 'opencode-plugins', 'lanekit.js')
     fs.mkdirSync(path.dirname(plugin), { recursive: true })
     fs.writeFileSync(plugin, opencodePlugin(KIT))
-    const { LaneKitReport } = await import(pathToFileURL(plugin).href)
-    const hooks = await LaneKitReport({ directory: laneDir, worktree: laneDir })
+    const { default: lanekit } = await import(pathToFileURL(plugin).href)
+    // OpenCode 1 takes a default with an id and server(); OpenCode 2 one with an id and setup(), which it runs in its
+    // background service, where no terminal's OpenCode is: there it does nothing.
+    assert.equal(lanekit.id, 'lanekit')
+    assert.equal(typeof lanekit.setup, 'function')
+    const file = path.join(AGENTS, `opencode-${process.pid}.json`)
+    assert.equal(lanekit.setup({}), undefined)
+    assert.ok(!fs.existsSync(file), 'the service is reported by nobody')
+    const hooks = await lanekit.server({ directory: laneDir, worktree: laneDir })
     assert.equal(typeof hooks.event, 'function')
     assert.equal(typeof hooks['tool.execute.before'], 'function')
-    const file = path.join(AGENTS, `opencode-${process.pid}.json`)
     assert.ok(fs.existsSync(file))
     fs.rmSync(file)
     const elsewhere = path.join(scratch, 'elsewhere')
     fs.mkdirSync(elsewhere, { recursive: true })
-    const there = await LaneKitReport({ directory: elsewhere, worktree: elsewhere })
+    const there = await lanekit.server({ directory: elsewhere, worktree: elsewhere })
     assert.equal(typeof there.event, 'function', 'outside a repository too')
     fs.rmSync(path.join(AGENTS, `opencode-${process.pid}.json`))
+    // OpenCode 2's TUI plugin, in each terminal's OpenCode: its setup reports, and its cleanup takes the report away.
+    const tui = path.join(scratch, 'opencode-plugins', 'lanekit', 'tui.js')
+    fs.mkdirSync(path.dirname(tui), { recursive: true })
+    fs.writeFileSync(tui, opencodeTuiPlugin(KIT))
+    const { default: inTerminal } = await import(pathToFileURL(tui).href)
+    assert.equal(inTerminal.id, 'lanekit-tui')
+    const cleanup = await inTerminal.setup({ location: { directory: laneDir }, data: { listen: () => () => {} } })
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).cwd, laneDir)
+    await cleanup()
+    assert.ok(!fs.existsSync(file))
 })
 
 test('an agent in a repository without lanes is named by it, and the repository is given no file', async () => {
@@ -315,35 +410,42 @@ test('the reporters are installed once a machine, where Claude Code and OpenCode
     const places = { home, env: {} }
     const settingsFile = path.join(home, '.claude', 'settings.json')
     const pluginFile = path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')
+    const tuiFile = path.join(home, '.config', 'opencode', 'plugins', 'lanekit', 'tui.js')
+    const states = () => Object.values(reportersOn(KIT, places)).map((reporter) => reporter.state)
     fs.mkdirSync(path.dirname(settingsFile), { recursive: true })
     fs.writeFileSync(settingsFile, JSON.stringify({ model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] } }))
-    assert.deepEqual([reportersOn(KIT, places).claude.state, reportersOn(KIT, places).opencode.state], ['missing', 'missing'])
+    assert.deepEqual(states(), ['missing', 'missing', 'missing'])
     const checked = installForUser(KIT, { ...places, check: true })
-    assert.equal(checked.wrote.length, 2)
-    assert.ok(!fs.existsSync(pluginFile), '--check writes nothing')
+    assert.equal(checked.wrote.length, 3)
+    assert.ok(!fs.existsSync(pluginFile) && !fs.existsSync(tuiFile), '--check writes nothing')
     const first = installForUser(KIT, places)
-    assert.deepEqual(first.wrote, [`${settingsFile} (LaneKit's hooks)`, pluginFile])
+    assert.deepEqual(first.wrote, [`${settingsFile} (LaneKit's hooks)`, pluginFile, tuiFile])
     const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
     assert.equal(settings.model, 'opus')
     assert.equal(settings.hooks.Stop[0].hooks[0].command, 'say done', 'theirs kept, first')
     assert.equal(settings.hooks.Stop.length, 2)
     assert.equal(fs.readFileSync(pluginFile, 'utf8'), opencodePlugin(KIT))
-    assert.deepEqual([reportersOn(KIT, places).claude.state, reportersOn(KIT, places).opencode.state], ['current', 'current'])
+    assert.equal(fs.readFileSync(tuiFile, 'utf8'), opencodeTuiPlugin(KIT))
+    assert.deepEqual(states(), ['current', 'current', 'current'])
     assert.deepEqual(installForUser(KIT, places).wrote, [], 'once')
     // Another lanekit: LaneKit's own brought up to date.
-    assert.equal(installForUser('/opt/lanekit', places).wrote.length, 2)
+    assert.equal(installForUser('/opt/lanekit', places).wrote.length, 3)
     assert.match(fs.readFileSync(pluginFile, 'utf8'), /\["\/opt\/lanekit"/)
+    assert.match(fs.readFileSync(tuiFile, 'utf8'), /\["\/opt\/lanekit"/)
     // What is not LaneKit's is left, and said.
     fs.writeFileSync(pluginFile, '// somebody else\'s plugin\n')
+    fs.writeFileSync(tuiFile, '// somebody else\'s too\n')
     fs.writeFileSync(settingsFile, '{ not json')
     const refused = installForUser(KIT, places)
     assert.deepEqual(refused.wrote, [])
-    assert.equal(refused.warnings.length, 2)
+    assert.equal(refused.warnings.length, 3)
     assert.equal(fs.readFileSync(pluginFile, 'utf8'), '// somebody else\'s plugin\n')
+    assert.equal(fs.readFileSync(tuiFile, 'utf8'), '// somebody else\'s too\n')
     assert.equal(fs.readFileSync(settingsFile, 'utf8'), '{ not json')
     // Where Claude Code and OpenCode are told to look instead.
     const elsewhere = installForUser(KIT, { home, env: { CLAUDE_CONFIG_DIR: path.join(scratch, 'cc'), XDG_CONFIG_HOME: path.join(scratch, 'xdg') } })
-    assert.deepEqual(elsewhere.wrote, [`${path.join(scratch, 'cc', 'settings.json')} (LaneKit's hooks)`, path.join(scratch, 'xdg', 'opencode', 'plugins', 'lanekit.js')])
+    assert.deepEqual(elsewhere.wrote, [`${path.join(scratch, 'cc', 'settings.json')} (LaneKit's hooks)`, path.join(scratch, 'xdg', 'opencode', 'plugins', 'lanekit.js'),
+        path.join(scratch, 'xdg', 'opencode', 'plugins', 'lanekit', 'tui.js')])
 })
 
 test('every repository\'s agents are attributed to the lane whose folder holds theirs, the main checkout else', () => {
@@ -362,14 +464,15 @@ test('agent-reports installs for the person running it, and says what it did in 
     })
     const checked = run('--check', '--json')
     assert.equal(checked.status, 0, checked.stderr)
-    assert.equal(JSON.parse(checked.stdout).wrote.length, 2)
+    assert.equal(JSON.parse(checked.stdout).wrote.length, 3)
     assert.ok(!fs.existsSync(home), '--check writes nothing')
     const words = run()
     assert.equal(words.status, 0, words.stderr)
     assert.match(words.stdout, /wrote\s+.*\.claude\/settings\.json \(LaneKit's hooks\)/)
     assert.ok(fs.existsSync(path.join(home, '.config', 'opencode', 'plugins', 'lanekit.js')))
+    assert.ok(fs.existsSync(path.join(home, '.config', 'opencode', 'plugins', 'lanekit', 'tui.js')))
     const again = JSON.parse(run('--json').stdout)
-    assert.deepEqual([again.wrote.length, again.kept.length, again.warnings.length], [0, 2, 0], 'settled: nothing to say')
+    assert.deepEqual([again.wrote.length, again.kept.length, again.warnings.length], [0, 3, 0], 'settled: nothing to say')
 })
 
 test('an agent in tmux says which pane it runs in, from what tmux puts in its environment, and nothing else of it', () => {

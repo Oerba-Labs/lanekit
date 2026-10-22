@@ -486,7 +486,8 @@ in the picture. There its clicks drive the editor:
   Each agent says this itself, into your own `~/.local/state/lanekit/agents/`, nothing in any
   repository: its state, the name of its tool, its folder, its machine and its process, never what
   the tool was given or what anybody said. An agent that ends, or dies, drops off. It says so
-  through a hook in your Claude Code settings and a plugin among your OpenCode plugins, installed
+  through a hook in your Claude Code settings and a plugin among your OpenCode plugins (OpenCode 1's
+  `lanekit.js`, and for OpenCode 2, which runs it in each terminal's OpenCode, `lanekit/tui.js`), installed
   once a machine: the extension asks the first time it finds lanes on a machine
   (`lanekit.reportAgents` answers instead, `always` or `never`), or run
   `node ~/.lanekit/bin/agent-reports.mjs`;
