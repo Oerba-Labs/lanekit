@@ -378,10 +378,11 @@ html[data-surface="sidebar"] .lane-title { gap: 4px 6px; }
 html[data-compact] .lane-title { flex: 1 1 100%; }
 /* In a narrow column nothing is wider than the column: the header's buttons go under its name, and the bar's Keys and
    its dot under LaneKit; a state's words and a button's wrap, and a state's word too long for the column breaks where
-   it must, as a lane's name too long for it does; any other tag is clipped; the switcher's button and the view tabs
-   wrap, and the Landing tab's counts under its name; and where a commit's tags leave its words less than 10em, its words, age and buttons go under the tags as one,
+   it must, as a lane's name too long for it does; any other tag is clipped; the switcher's button, the view tabs and
+   Land next wrap, and the Landing tab's counts under its name; and where a commit's tags leave its words less than 10em, its words, age and buttons go under the tags as one,
    where a merge's lane gives way to them (whole in its title). Each only where it would not fit otherwise, which a
-   scrollbar that takes room and a wide sans make sooner than a Mac's floating one and its own letters do. */
+   scrollbar that takes room, a wide sans and no hover (every row's buttons out) make sooner than a Mac's floating one,
+   its own letters and its pointer do. */
 html[data-compact] .repo-head, html[data-compact] .bar-line { flex-wrap: wrap; }
 html[data-compact] .bar-line { row-gap: 4px; }
 html[data-compact] .commit { flex-wrap: wrap; row-gap: 0; }
@@ -395,9 +396,11 @@ html[data-compact] .more-wrap { max-width: 100%; }
 html[data-compact] .btn.switcher-toggle { flex-wrap: wrap; }
 html[data-compact] .views { flex-wrap: wrap; min-width: 0; }
 html[data-compact] .view-tab { flex-wrap: wrap; row-gap: 2px; max-width: 100%; }
+html[data-compact] .views-row > .btn { max-width: 100%; white-space: normal; text-align: left; }
+html[data-compact] .views-row > .btn .label { min-width: 0; overflow-wrap: anywhere; }
 /* And narrower than any side bar is wide by default, a landing row's button goes under its name; and a merge's Landed
    goes above its words, which keep 3em with their age beside them, and its lane after its age, or under it where it
-   does not fit. */
+   does not fit; and a lane's commit has its buttons, out on hover or always where there is none, under its words. */
 @media (max-width: 239px) {
   html[data-compact] .landing-table .landing-lane { grid-template-columns: minmax(0, 1fr); }
   html[data-compact] .landing-table .landing-lane > .landing-step { grid-column: 1; grid-row: 2; text-align: left !important; }
@@ -406,6 +409,9 @@ html[data-compact] .view-tab { flex-wrap: wrap; row-gap: 2px; max-width: 100%; }
   html[data-compact] .words:has(> .landed-word) > .subject { flex: 1 1 0; min-width: 3em; }
   html[data-compact] .words:has(> .landed-word) > .landed-word { flex-basis: 100%; }
   html[data-compact] .words:has(> .landed-word) > .tag.merged { order: 1; }
+  html[data-compact] .stack-commit { flex-wrap: wrap; row-gap: 2px; }
+  html[data-compact] .stack-commit > .subject { max-width: calc(100% - 4em); }
+  html[data-compact] .stack-commit > .row-actions { flex-basis: 100%; flex-wrap: wrap; }
 }
 }
 html[data-surface="sidebar"] .stack-commit { gap: 6px; padding: 3px 0; font-size: var(--s12); }
