@@ -21,12 +21,18 @@
  * ~/.local/state/lanekit/agents/, once it is started.
  */
 
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { installForUser } from '../lib/agents.mjs'
 
-const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// lanekit by the path it was run from, ~/.lanekit say, as the editor names it: node follows a link to find
+// import.meta.url, and the hooks would name the folder behind it.
+const HERE = fileURLToPath(import.meta.url)
+const RUN = process.argv[1] ? path.resolve(process.argv[1]) : null
+const ranAs = (() => { try { return RUN && fs.realpathSync(RUN) === fs.realpathSync(HERE) } catch { return false } })()
+const KIT = path.resolve(path.dirname(ranAs ? RUN : HERE), '..')
 const TINT = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR
 const [GREEN, YELLOW, DIM, OFF] = TINT ? ['\x1b[32m', '\x1b[33m', '\x1b[2m', '\x1b[0m'] : ['', '', '', '']
 
