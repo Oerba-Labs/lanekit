@@ -146,11 +146,22 @@ window.acquireVsCodeApi = () => {
 }`
 
 /**
+ * The page as the narrowest of the machines that run these tests draws it: a scrollbar that takes its 15px of the
+ * window rather than floating over the page, as CI's do and a Mac's need not (where a 170px window was 155px of page),
+ * and a sans as wide as Linux's (Verdana where there is one, else DejaVu Sans, which CI's Linux draws by default).
+ */
+const WIDE = `addEventListener('DOMContentLoaded', () => {
+    const style = document.createElement('style')
+    style.textContent = ':root { --sans: Verdana, "DejaVu Sans", sans-serif !important } ::-webkit-scrollbar { width: 15px; height: 15px } ::-webkit-scrollbar-thumb { background: #999 }'
+    document.head.append(style)
+})`
+
+/**
  * A tab on `url`, and what a test does with it: run a function in the page, wait for one to be true, point, click, type.
  * `still`: a machine that asks for less motion. Without it, one that does not, whatever the machine running the tests
- * says: CI's macOS runners ask for less motion, and Chrome follows them.
+ * says: CI's macOS runners ask for less motion, and Chrome follows them. `wide`: the page drawn as WIDE says.
  */
-const open = async (browser, url, { editor = false, still = false, width = 1400, height = 1000 } = {}) => {
+const open = async (browser, url, { editor = false, still = false, wide = false, width = 1400, height = 1000 } = {}) => {
     const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true })
     const send = (method, params) => browser.send(method, params, sessionId)
@@ -162,6 +173,7 @@ const open = async (browser, url, { editor = false, still = false, width = 1400,
     await resize(width, height)
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: still ? 'reduce' : 'no-preference' }] })
     if (editor) await send('Page.addScriptToEvaluateOnNewDocument', { source: EDITOR })
+    if (wide) await send('Page.addScriptToEvaluateOnNewDocument', { source: WIDE })
     await send('Page.navigate', { url })
     // Each function is run with the finders below in its scope.
     const run = async (fn, ...args) => {
@@ -1114,7 +1126,6 @@ test('nothing on the page is wider than the column, down to the narrowest side b
     // A long lane name, with work uncommitted in it, beside main's tags: what was wider than a narrow column before.
     lane('new', 'a-rather-long-lane-name')
     write(laneDir('a-rather-long-lane-name'), 'long.txt', 'long\n')
-    const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 900 })
     // What sticks out past the window's right edge, and by how much.
     const wider = () => {
         const width = document.documentElement.clientWidth
@@ -1124,30 +1135,51 @@ test('nothing on the page is wider than the column, down to the narrowest side b
         return { scroll: document.documentElement.scrollWidth, width, out: out.slice(0, 6) }
     }
     try {
-        for (const width of [170, 200, 240, 320]) {
-            await thin.resize(width, 900)
-            for (const view of ['Home', 'Log', 'Landing']) {
-                if (view === 'Home') await thin.run(() => { location.search = '' })
-                if (view === 'Log') await thin.run(() => { location.search = '?repo=demo' })
-                if (view === 'Home') await thin.until(() => document.querySelectorAll('.home-card').length >= 2, [], { what: 'Home\'s cards' })
-                else await thin.until(() => document.querySelector('.lane[data-key$="/a-rather-long-lane-name"]'), [], { what: 'the long lane in the log' })
-                if (view === 'Landing') {
-                    await thin.click(() => [...document.querySelectorAll('.view-tab')].find((tab) => /^Landing/.test(tab.textContent)))
-                    await thin.until(() => document.querySelector('.landing-table:not([hidden]) .landing-lane'), [], { what: 'the landing table' })
+        // As this machine draws the page, and as the narrowest machine running these tests does (WIDE): a Mac's
+        // floating scrollbar and its letters passed what CI's Linux and macOS did not.
+        for (const wide of [false, true]) {
+            const drawn = wide ? ', drawn wide' : ''
+            const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 900, wide })
+            try {
+                // Something run, so the command bar is there with its Output, as it is once anything has been pressed.
+                if (!wide) {
+                    await thin.until(() => current?.repos?.length)
+                    await thin.run(() => press({ repo: current.repos[0].id, verb: 'fetch' }))
                 }
-                const said = await thin.run(wider)
-                assert.ok(said.scroll <= said.width, `${view} at ${width}px is ${said.scroll}px wide: ${said.out.join(', ')}`)
-                if (view !== 'Log') continue
-                // A commit's age stays on its words' line, wherever the two go.
-                const apart = await thin.run(() => [...document.querySelectorAll('li.commit')].filter((row) => {
-                    const words = row.querySelector('.subject')?.getBoundingClientRect(), when = row.querySelector('.when')?.getBoundingClientRect()
-                    return words && when && when.width && Math.abs(words.bottom - when.bottom) > 4
-                }).map((row) => row.querySelector('.subject').textContent))
-                assert.deepEqual(apart, [], `at ${width}px, a commit's age on a line of its own`)
+                await thin.until(() => document.querySelector('#cmdbar:not([hidden]) .btn.with-icon'), [], { what: 'the command bar\'s Output' })
+                for (const width of [170, 200, 240, 320]) {
+                    await thin.resize(width, 900)
+                    for (const view of ['Home', 'Log', 'Landing']) {
+                        if (view === 'Home') await thin.run(() => { location.search = '' })
+                        if (view === 'Log') await thin.run(() => { location.search = '?repo=demo' })
+                        if (view === 'Home') await thin.until(() => document.querySelectorAll('.home-card').length >= 2, [], { what: 'Home\'s cards' })
+                        else await thin.until(() => document.querySelector('.lane[data-key$="/a-rather-long-lane-name"]'), [], { what: 'the long lane in the log' })
+                        if (view === 'Landing') {
+                            await thin.click(() => [...document.querySelectorAll('.view-tab')].find((tab) => /^Landing/.test(tab.textContent)))
+                            await thin.until(() => document.querySelector('.landing-table:not([hidden]) .landing-lane'), [], { what: 'the landing table' })
+                        }
+                        const said = await thin.run(wider)
+                        assert.ok(said.scroll <= said.width, `${view} at ${width}px${drawn} is ${said.scroll}px wide, its column ${said.width}px: ${said.out.join(', ')}`)
+                        // And not by squeezing the command bar's Output a letter to a line.
+                        const output = await thin.run(() => {
+                            const label = document.querySelector('#cmdbar .btn.with-icon .label')
+                            return label ? { height: label.getBoundingClientRect().height, size: parseFloat(getComputedStyle(label).fontSize) } : null
+                        })
+                        assert.ok(output && output.height < output.size * 2, `${view} at ${width}px${drawn}: the command bar's Output ${output ? `is ${output.height}px tall` : 'is not there'}`)
+                        if (view !== 'Log') continue
+                        // A commit's age stays on its words' line, wherever the two go.
+                        const apart = await thin.run(() => [...document.querySelectorAll('li.commit')].filter((row) => {
+                            const words = row.querySelector('.subject')?.getBoundingClientRect(), when = row.querySelector('.when')?.getBoundingClientRect()
+                            return words && when && when.width && Math.abs(words.bottom - when.bottom) > 4
+                        }).map((row) => row.querySelector('.subject').textContent))
+                        assert.deepEqual(apart, [], `at ${width}px${drawn}, a commit's age on a line of its own`)
+                    }
+                }
+            } finally {
+                await thin.close()
             }
         }
     } finally {
-        await thin.close()
         fs.rmSync(path.join(laneDir('a-rather-long-lane-name'), 'long.txt'))
         lane('drop', 'a-rather-long-lane-name')
     }
