@@ -149,6 +149,7 @@ window.acquireVsCodeApi = () => {
  * The page as the narrowest of the machines that run these tests draws it: a scrollbar that takes its 15px of the
  * window rather than floating over the page, as CI's do and a Mac's need not (where a 170px window was 155px of page),
  * and a sans as wide as Linux's (Verdana where there is one, else DejaVu Sans, which CI's Linux draws by default).
+ * And, as `open` emulates touch for it, no hover, as Linux's headless Chrome has none: what shows on hover is always out.
  */
 const WIDE = `addEventListener('DOMContentLoaded', () => {
     const style = document.createElement('style')
@@ -172,6 +173,7 @@ const open = async (browser, url, { editor = false, still = false, wide = false,
     const resize = (w, h) => send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false })
     await resize(width, height)
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: still ? 'reduce' : 'no-preference' }] })
+    if (wide) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
     if (editor) await send('Page.addScriptToEvaluateOnNewDocument', { source: EDITOR })
     if (wide) await send('Page.addScriptToEvaluateOnNewDocument', { source: WIDE })
     await send('Page.navigate', { url })
@@ -1141,13 +1143,14 @@ test('nothing on the page is wider than the column, down to the narrowest side b
             const drawn = wide ? ', drawn wide' : ''
             const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 900, wide })
             try {
-                // Something run, so the command bar is there with its Output, as it is once anything has been pressed.
-                if (!wide) {
+                // Drawn wide, it has no hover either, as Linux's headless Chrome has not: every row's buttons are out.
+                if (wide) assert.ok(await thin.run(() => matchMedia('(hover: none)').matches), 'no hover, drawn wide')
+                for (const width of [170, 200, 240, 320]) {
+                    // Something run, so the command bar is there with its Output, as it is once anything has been pressed;
+                    // at each width, as the bar goes two minutes after the last press, which a slow machine gets to.
                     await thin.until(() => current?.repos?.length)
                     await thin.run(() => press({ repo: current.repos[0].id, verb: 'fetch' }))
-                }
-                await thin.until(() => document.querySelector('#cmdbar:not([hidden]) .btn.with-icon'), [], { what: 'the command bar\'s Output' })
-                for (const width of [170, 200, 240, 320]) {
+                    await thin.until(() => document.querySelector('#cmdbar:not([hidden]) .btn.with-icon'), [], { what: 'the command bar\'s Output' })
                     await thin.resize(width, 900)
                     for (const view of ['Home', 'Log', 'Landing']) {
                         if (view === 'Home') await thin.run(() => { location.search = '' })
@@ -1166,6 +1169,12 @@ test('nothing on the page is wider than the column, down to the narrowest side b
                             return label ? { height: label.getBoundingClientRect().height, size: parseFloat(getComputedStyle(label).fontSize) } : null
                         })
                         assert.ok(output && output.height < output.size * 2, `${view} at ${width}px${drawn}: the command bar's Output ${output ? `is ${output.height}px tall` : 'is not there'}`)
+                        // Nor Land next's words, which go two to a line at most.
+                        const next = await thin.run(() => {
+                            const label = document.querySelector('.views-row > .btn .label')
+                            return label ? { height: label.getBoundingClientRect().height, size: parseFloat(getComputedStyle(label).fontSize) } : null
+                        })
+                        assert.ok(!next || next.height < next.size * 4, `${view} at ${width}px${drawn}: Land next is ${next?.height}px tall`)
                         if (view !== 'Log') continue
                         // A commit's age stays on its words' line, wherever the two go.
                         const apart = await thin.run(() => [...document.querySelectorAll('li.commit')].filter((row) => {
