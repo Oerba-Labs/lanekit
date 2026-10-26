@@ -234,6 +234,13 @@ when one side of the project changes (a front-end build, an end-to-end run):
 `gate.generated` catches a committed file that a generator owns going stale. Leave it empty unless
 the repository commits generated code and the generator is deterministic.
 
+`gate.full` says when the whole suite runs, for a project whose tiers run less than all of it (only
+the tests a change touches, say). Leave it out otherwise: everything is then as it was. Where it is
+wanted, ask the person which: `before-land` (verifying runs it too, and a land needs it passed),
+`after-land` (it runs on main after each land, in the background) or `nightly` with an `at`
+(README, *The full suite*). Never run `lane nightly --install` for them: scheduling a job on their
+machine is theirs to ask for.
+
 ### 4.6 The port window. `lane.portBase`, `lane.portCeiling`
 
 Keep what `adopt` chose unless the app's own port, or something else the person runs, falls inside

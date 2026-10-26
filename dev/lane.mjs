@@ -20,7 +20,12 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { configFor } from '../lib/config.mjs'
+import { configFor, loadConfig } from '../lib/config.mjs'
+import {
+    cronLineFor, fullLabelOf, fullOf, isRealLaunchAgents, jobFor, labelFor, mainFullLines, mainFullOf, platformOf, plistFor,
+    plistPathFor, startAfterLand
+} from '../lib/full.mjs'
+import { listRuns } from '../lib/runs.mjs'
 import { ghApiNow, pushRuleFrom, pushTargetOf } from '../lib/github.mjs'
 import { planQueue, landBlockers } from '../lib/queue.mjs'
 import { changesOf } from '../lib/state.mjs'
@@ -426,6 +431,13 @@ const list = (config) => {
         const server = row.name === 'main' ? '' : (row.serving ? `${GREEN}● up${OFF}  ` : `${DIM}○ down${OFF}`)
         console.log(`  ${row.name.padEnd(width)}  ${port.padEnd(4)}  ${server.padEnd(10)} ${DIM}${row.note}${OFF}`)
     }
+    // Main's full suite, where it runs on main (gate.full: nightly, after-land): nothing at all for a project without one.
+    const fullLines = mainFullLines(mainFullOf(listRuns(mainRepo), {
+        config, mainRepo, headSha: gitQuiet(['rev-parse', config.integrationBranch], mainRepo).out,
+        behindOf: (sha) => Number(gitQuiet(['rev-list', '--count', `${sha}..${config.integrationBranch}`], mainRepo).out) || 0
+    }), config.integrationBranch)
+    if (fullLines.length) console.log('')
+    for (const line of fullLines) console.log(`  ${/^FULL SUITE/.test(line) ? `${RED}${line}${OFF}` : line}`)
     console.log('')
 }
 
@@ -546,9 +558,12 @@ const land = (config, name, options) => {
     const entry = plan.entries.find((candidate) => candidate.name === name)
     const branch = lane.branch ?? name
 
+    const full = fullOf(config)
     if (options.dryRun) {
         log(`would merge ${branch} into ${config.integrationBranch} (--no-ff), then sweep it`)
         log(`green: tier ${entry.tier} run on ${String(entry.snapshot).slice(0, 10)}`)
+        if (full?.when === 'before-land') log(`and ${fullLabelOf(full)} passed on it`)
+        if (full?.when === 'after-land') log(`then would start ${fullLabelOf(full)} on the merge, in the background`)
         return
     }
 
@@ -576,10 +591,104 @@ const land = (config, name, options) => {
     if (options.sweep) sweep(config, name, { dryRun: false })
     else log('left the lane in place (--no-sweep)')
 
+    // After-land (gate.full; the owner, 26 Oct 2026): the full suite on the commit just made, started and left running,
+    // so a land returns now and not in minutes. It undoes nothing: lanes says how it went, loudly where it failed.
+    let after = null
+    if (full?.when === 'after-land') {
+        try {
+            after = startAfterLand({ mainRepo, config, sha: gitQuiet(['rev-parse', 'HEAD'], mainRepo).out, landed: name })
+            log(`started ${fullLabelOf(full)} on ${config.integrationBranch} at ${at}, in a scratch copy, in the background: lanes says how it went`)
+            log(`  its output: ${after.log}`)
+        } catch (error) {
+            log(`${RED}could not start ${fullLabelOf(full)} after the land${OFF}: ${error.message} — lane nightly runs it on ${config.integrationBranch}`)
+        }
+    }
+
     const rule = '─'.repeat(64)
     console.log(`\n${rule}`)
     console.log(`  ${GREEN}LANDED${OFF}  ·  ${name}  ·  ${config.integrationBranch} at ${at}`)
     console.log(`${rule}\n`)
+}
+
+// ---------------------------------------------------------------------------
+// nightly
+// ---------------------------------------------------------------------------
+
+/**
+ * The full suite on main now (lib/full.mjs, dev/full.mjs), or its nightly schedule installed or taken away.
+ *
+ * NOTHING IS INSTALLED UNASKED. `--install` is the asking, and it shows what it writes before it writes it; `--dry-run`
+ * shows it and writes nothing. On a Mac it is a LaunchAgent, loaded with launchctl, in the person's own LaunchAgents
+ * folder (LANEKIT_LAUNCH_AGENTS names another, which launchd does not read, so nothing is loaded from there: the tests'
+ * scratch folder). Elsewhere it is a crontab line, printed for the person to add: a crontab is theirs to edit, and one
+ * edited by a tool is one nobody remembers the lines of.
+ */
+const nightly = (here, options) => {
+    // Main's config, wherever it is asked from: the schedule and the runs are main's.
+    const mainRepo = mainRepoFrom(process.cwd())
+    const config = mainRepo === here.checkout ? here : loadConfig(mainRepo)
+    const full = fullOf(config)
+    if (!options.install && !options.uninstall) {
+        if (!full) fail(`${config.file} has no gate.full, so nothing says what the full suite is.\n\n  The README's lane.config.json reference says how to give it one.`)
+        const ran = spawnSync(process.execPath, [path.join(path.dirname(new URL(import.meta.url).pathname), 'full.mjs'), '--why', 'nightly', ...(options.force ? ['--force'] : [])],
+            { cwd: mainRepo, stdio: 'inherit' })
+        process.exit(ran.status ?? 1)
+    }
+
+    const mac = platformOf() === 'darwin'
+    const file = plistPathFor(config.slug)
+    if (options.uninstall) {
+        if (!mac) {
+            console.log(`\n  lanekit wrote no crontab line: remove the one running ${labelFor(config.slug)}'s full suite with crontab -e, if you added it.\n`)
+            return
+        }
+        if (!fs.existsSync(file)) {
+            console.log(`\n  nothing to remove: there is no ${file}\n`)
+            return
+        }
+        if (options.dryRun) {
+            log(`would unload ${labelFor(config.slug)} and remove ${file}`)
+            return
+        }
+        if (isRealLaunchAgents()) spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${labelFor(config.slug)}`], { encoding: 'utf8' })
+        fs.rmSync(file, { force: true })
+        log(`removed ${file}${isRealLaunchAgents() ? `, and unloaded ${labelFor(config.slug)}` : ''}`)
+        return
+    }
+
+    if (!full) fail(`${config.file} has no gate.full: there is no full suite to schedule.`)
+    if (full.when !== 'nightly') {
+        fail(`gate.full.when is "${full.when}", so the full suite runs ${full.when === 'after-land' ? 'after each land' : 'before each land, as part of verifying'}: there is nothing to run at night.\n\n` +
+            '  Make it "nightly", with an "at", to schedule it.')
+    }
+    const job = jobFor({ mainRepo, config })
+    if (!mac) {
+        console.log(`\n  On this machine the nightly run is a crontab line, and lanekit does not edit your crontab.`)
+        console.log(`  Add this with crontab -e (${String(job.hour).padStart(2, '0')}:${String(job.minute).padStart(2, '0')} local time, each night):\n`)
+        console.log(`${cronLineFor(job)}\n`)
+        return
+    }
+    const plist = plistFor(job)
+    console.log(`\n  ${options.dryRun ? 'would write' : 'writes'} ${file}:\n`)
+    console.log(plist.split('\n').map((line) => `    ${line}`).join('\n'))
+    console.log(`  It runs ${fullLabelOf(full)} on ${config.integrationBranch} at ${full.at} each night, in a scratch copy, as lane nightly does,`)
+    console.log(`  writing to ${job.log}.`)
+    if (isRealLaunchAgents()) console.log(`  Then it loads it: launchctl bootstrap gui/${process.getuid()} ${file}`)
+    console.log('')
+    if (options.dryRun) return
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.mkdirSync(path.dirname(job.log), { recursive: true })
+    const replacing = fs.existsSync(file)
+    if (replacing && isRealLaunchAgents()) spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${job.label}`], { encoding: 'utf8' })
+    fs.writeFileSync(file, plist)
+    log(`${replacing ? 'replaced' : 'wrote'} ${file}`)
+    if (!isRealLaunchAgents()) {
+        log(`not loaded: ${path.dirname(file)} is not ~/Library/LaunchAgents (LANEKIT_LAUNCH_AGENTS names it), so launchd does not read it`)
+        return
+    }
+    const loaded = spawnSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, file], { encoding: 'utf8' })
+    if (loaded.status !== 0) fail(`wrote ${file}, but launchctl could not load it: ${(loaded.stderr || loaded.stdout).trim()}\n\n  It loads at your next login; lane nightly --uninstall takes it away.`)
+    log(`loaded ${job.label}: lanes says how each night's run went; lane nightly --uninstall takes it away`)
 }
 
 // ---------------------------------------------------------------------------
@@ -1283,7 +1392,7 @@ const pull = (config, name) => {
 
 // ---------------------------------------------------------------------------
 
-const COMMANDS = { new: create, list, sweep, queue, land, rebase, push, pr, merge, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop, review: reviewLane }
+const COMMANDS = { new: create, list, sweep, queue, land, nightly, rebase, push, pr, merge, pull, commit: commitIn, uncommit, discard, resolve, aside, resume, drop, review: reviewLane }
 
 const main = () => {
     const argv = process.argv.slice(2)
@@ -1300,7 +1409,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|review|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--pr <number>] [--approve|--request-changes|--comment] [--install] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|nightly|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|review|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--pr <number>] [--approve|--request-changes|--comment] [--install|--uninstall] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -1308,6 +1417,8 @@ const main = () => {
         base: argv.includes('--base') ? argv[argv.indexOf('--base') + 1] : undefined,
         provision: !argv.includes('--no-provision'),
         install: argv.includes('--install'),
+        // lane nightly --uninstall: its schedule taken away (--install, above, writes it).
+        uninstall: argv.includes('--uninstall'),
         existing: argv.includes('--existing'),
         seed: !argv.includes('--no-seed'),
         dryRun: argv.includes('--dry-run'),
@@ -1359,6 +1470,7 @@ const main = () => {
     if (command === 'list') return list(config)
     if (command === 'queue') return process.exit(queue(config, name))
     if (command === 'land') return land(config, name, options)
+    if (command === 'nightly') return nightly(config, options)
     if (command === 'rebase') return rebase(config, name, options)
     if (command === 'push' && options.main) {
         if (name) fail('lane push --main pushes the integration branch: give no lane with it.')

@@ -3,8 +3,8 @@
 Every thing a person does with LaneKit, on the page or with `lane`, and the tests that show it works. A test is
 named by its file and its number in that file (`node --test --test-name-pattern "<words from its name>"` runs one).
 Use cases marked **new** came with the page's second round of changes (2 Oct), with review lanes and the Claude Code
-plugin (3 Oct), with the page's motion (4 Oct), with the tests' counts from their JUnit (17 Oct), or with the page laid out by its
-width (19 Oct). Their tests are
+plugin (3 Oct), with the page's motion (4 Oct), with the tests' counts from their JUnit (17 Oct), with the page laid out by its
+width (19 Oct), or with the full suite (26 Oct). Their tests are
 new too.
 
 The tests run against scratch repositories with a bare `origin` and a second clone that pushes to it; GitHub is
@@ -22,6 +22,7 @@ there is no Chrome).
 | [e2e-narrow-wide](../test/e2e-narrow-wide.test.mjs) | the page in Chrome: a land, a verification, the narrowest side bar drawn wide |
 | [e2e-views](../test/e2e-views.test.mjs) | the page in Chrome: its motion, widths, views and keyboard |
 | [flow](../test/flow.test.mjs) | a lane between being made and landing |
+| [full](../test/full.test.mjs) | the full suite: before a land, after one, and nightly, and what `lanes` says of it |
 | [github](../test/github.test.mjs) | pull requests, through `gh` |
 | [loader](../test/loader.test.mjs) | the extension's loader: installing lanekit, and keeping it current |
 | [mcp](../test/mcp.test.mjs) | the MCP server, spoken to as an agent's client speaks to it |
@@ -79,6 +80,12 @@ there is no Chrome).
 | 22 | Land a ready lane, then sweep it | **Land…**, **Land next**, **Sweep…**; `lane land`, `lane sweep` | web 7–9 |
 | 23 | Push main, only where the repository takes it | **Push** beside the repository's name; `lane push --main` | flow 20–22 |
 | 61 | **new** Know what the tests said: how many passed, failed, errored and were skipped, and the first five that did not pass, wherever a gate's result is shown; a file that cannot be read said once, and never deciding the gate; nothing new for a project that writes no JUnit | `./check` writes JUnit XML into `$LAB_RESULTS`; the gate, the page, the editor's notice, the `gate` tool | results 1–17, page 9 |
+| 79 | **new** Say when the project's full suite runs, `nightly` at a time, `after-land` or `before-land`, with its steps and a name for it; a `when`, an `at` or a step it cannot mean refused with the key it is about; nothing different for a project that says nothing | `gate.full` in `lane.config.json` | full 1, full 2 |
+| 80 | **new** Before a land, the full suite as well: one verification runs the tier and then, if it passed, the full suite, in the lane, each its own record, `VERIFIED` only when both passed and neither run again on a commit it passed; never for a narrowed run or a failed tier; a land refused until a passing full run names the lane's commit, `lanes`, `lane queue` and the refusal saying which is missing | `verify`; `lane land`; `lane queue <name>` | full 3, full 4 |
+| 81 | **new** After a land, the full suite on the commit it made, without waiting for it: the land returns at once, through the agents' `land` tool too, while it runs by itself in a scratch copy of main, never in the main checkout and never a lane; a failure undoes nothing and is recorded as main's | `lane land`; the `land` tool | full 5, full 6 |
+| 82 | **new** Run the full suite on main now: main's newest commit, from anywhere in the repository, in a scratch copy cleaned before each run, recorded in the main checkout's runs; not again on a commit that passed unless forced; never two at once; a run whose process went said to have stopped, and run again | `lane nightly`, `--force` | full 7, full 8 |
+| 83 | **new** Run it each night, only when asked: on a Mac a LaunchAgent at `at`, shown before it is written and loaded, its PATH finding node and git, and taken away again; elsewhere a crontab line to add, no crontab edited; refused for a full suite that is not nightly | `lane nightly --install [--dry-run]`, `--uninstall` | full 11, full 12 |
+| 84 | **new** Know how main's full suite went wherever an agent or a person looks first: failed, said first and in capitals, with the step, how long ago, the commit, its tests and last lines, and where its output is; passed, how long ago and on which commit; running; stopped; none yet; overdue after 36 hours; no nightly job on this Mac; and a slow-down said against the full suite's own runs | the `lanes` tool, `lane list` | full 5, full 6, full 9, full 10 |
 | 77 | **new** Call it verifying everywhere it is said: `./<project> verify`, the agents' `verify` tool, a `verify` key in `lane.config.json`, `[verify Ns]` in its output and `verify` in the command bar, the skills and `/land`; `gate`, its old name, still answering as the shim, the tool and the key do (never both keys at once; `init` and `adopt` write `gate`, which an older lanekit reads too), and a shim from an older lanekit brought up to date by `lane adopt` | `./<project> verify`; the `verify` tool; `"verify"` in `lane.config.json` | adopt 5–7, mcp 1, mcp 2, results 8, results 12, page 13 |
 
 ## Pull requests
@@ -185,6 +192,10 @@ there is no Chrome).
 - **The tests' counts in the editor's notice** (a gate that ends while LaneKit is out of sight) are tested where the
   service hands them to the notice (results 15), not in the notice itself; JUnit from Xcode and Jest is read by the
   same rules as pytest's, `node --test`'s and Go's, and has no fixture of its own.
+- **The full suite on the page**: `lanes` and `lane list` say main's last full run and a lane's (before-land); the page
+  does not show either yet, and its Land waits on a missing full run with the words it has for a missing verification.
+  `launchctl` loading the LaunchAgent is not tested: the tests write it to a scratch folder, which launchd never reads,
+  and check it with `plutil -lint` on a Mac. A crontab line is printed and compared, not run.
 - **The workflows** (`.github/workflows/`) run on GitHub only: `node --test` does not run them, and Open VSX
   takes the `.vsix` only where its token is set (`OVSX_PAT`).
 - **The VS Code Marketplace** is not published to: VS Code installs the extension from a release's file, and it

@@ -258,6 +258,8 @@ const main = () => {
     4. What each lane must own: its database, its uploads           lane.env.perLane, makeDirs, seed
     5. The tests                                                    ./check
     6. Which paths are the app and which the server                 gate.sides, gate.seam, tier 2
+    7. If verifying runs less than every test, when everything runs  gate.full: nightly, after-land
+       or before-land (lane nightly --install schedules a nightly one; nothing is scheduled unasked)
 
   Then try it:  ./${done.slug} lane new lanekit-trial
 `)
