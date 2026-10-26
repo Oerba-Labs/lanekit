@@ -1,7 +1,7 @@
 /**
  * The page end to end (test/e2e-harness says how): what changes as it happens, the page at the widths of a narrow window,
- * a middling one and a wide one, what waits on you, folding, the agents, the landing order's own view, a tab's title, and
- * the keyboard.
+ * a middling one and a wide one, what waits on you, folding, the agents, the landing order's own view, a tab's title, the
+ * keyboard, and main's full suite.
  *
  *     node --test test/e2e-views.test.mjs
  *
@@ -15,7 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
-import { SLOW, skip, repo, env, git, commit, laneDir, open, card, RECORD, atRest, begin, end } from './e2e-harness'
+import { SLOW, skip, scratch, repo, env, git, commit, laneDir, open, card, RECORD, atRest, begin, end } from './e2e-harness'
 
 let browser, base, page
 
@@ -490,4 +490,63 @@ test('in a narrow column, the switcher is one button opening every repository as
     } finally {
         await thin.close()
     }
+})
+
+test('main\'s full suite, where it runs nightly, is said on main\'s row: none yet; a failure first in the strip and on Home\'s card, its tests and its step\'s last lines opened from the strip; then passed, and the strip clear', { skip, timeout: 60_000 * SLOW }, async () => {
+    // Where this machine's nightly job would be, here a folder with none in it, on a Mac or not.
+    Object.assign(process.env, { LANEKIT_LAUNCH_AGENTS: path.join(scratch, 'launch-agents'), LANEKIT_PLATFORM: 'darwin' })
+    const config = JSON.parse(fs.readFileSync(path.join(repo, 'lane.config.json'), 'utf8'))
+    config.gate.full = { when: 'nightly', at: '02:00', label: 'every test', steps: [{ what: 'running every test', command: 'true', args: [] }] }
+    fs.writeFileSync(path.join(repo, 'lane.config.json'), JSON.stringify(config))
+    git(repo, 'add', 'lane.config.json')
+    git(repo, 'commit', '-qm', 'Run every test nightly')
+    const row = () => {
+        const node = document.querySelector('li.main-full')
+        return node && { words: [...node.querySelectorAll(':scope > .facts > *')].map((one) => `${one.className.replace(/^state |\s?small|\s?opens|\s?discloses/g, '')}: ${one.textContent}`), open: node.querySelector('[aria-expanded]')?.getAttribute('aria-expanded') ?? null }
+    }
+    const none = await page.until(`(() => { const said = (${row})(); return said?.words.length ? said : null })`, [], { what: 'main\'s full suite on its row' })
+    assert.deepEqual(none.words, ['quiet: No full suite run on main yet', 'warn: No nightly job on this machine'])
+    assert.equal(await page.run(() => document.querySelector('li.commit.tip').nextElementSibling?.className), 'main-full', 'under main\'s newest commit')
+
+    // A run of it that failed, on the commit before main's newest, nine hours ago.
+    const runs = path.join(repo, '.lanekit', 'runs')
+    fs.mkdirSync(runs, { recursive: true })
+    const full = (ago, extra) => {
+        const at = new Date(Date.now() - ago)
+        const id = `${at.toISOString().replace(/[:.]/g, '-').replace(/-\d+Z$/, 'Z')}-1-full`
+        fs.writeFileSync(path.join(runs, `${id}.json`), JSON.stringify({
+            id, kind: 'full', why: 'nightly', label: 'every test', branch: 'main', worktree: repo, startedAt: at.toISOString(), durationSeconds: 40,
+            steps: [{ what: 'running every test', seconds: 40 }], ...extra
+        }))
+    }
+    full(9 * 3600_000, {
+        sha: git(repo, 'rev-parse', 'HEAD~1'), result: 'failed',
+        failures: [{ what: 'running every test', status: 1, tail: 'ok 1 - counts\nnot ok 2 - backup restores\n  expected 3 snapshots, found 2' }],
+        tests: { files: 1, total: 2, passed: 1, failed: 1, errored: 0, skipped: 0, failing: [{ name: 'backup restores', outcome: 'failed' }] }
+    })
+    const strip = () => [...document.querySelectorAll('#strip > .strip-item')].map((item) => item.textContent)
+    const failed = await page.until(`(() => { const said = (${row})(); return said?.words[0]?.startsWith('risk') ? { ...said, strip: (${strip})() } : null })`, [], { what: 'main\'s full suite failed, on its row' })
+    assert.deepEqual(failed.words.slice(0, 3), ['risk: Full suite failed · every test · 1 passed, 1 failed · 9 h ago', `wraps: on ${git(repo, 'rev-parse', '--short=7', 'HEAD~1')}, 1 commit before main's newest`, 'warn: No nightly job on this machine'])
+    assert.equal(failed.strip[0], 'Full suite failed on main', `first in the strip: ${JSON.stringify(failed.strip)}`)
+    assert.equal(failed.open, 'false', 'why, not yet open')
+    // The strip's item opens main's row, and why it failed.
+    await page.click(() => [...document.querySelectorAll('#strip > .strip-item')].find((item) => item.textContent === 'Full suite failed on main'))
+    const why = await page.until(() => {
+        const failure = document.querySelector('li.main-full .failure')
+        return failure && { heads: [...failure.querySelectorAll('.files-head')].map((one) => one.textContent), failing: [...failure.querySelectorAll('.failing li')].map((one) => one.textContent), tail: failure.querySelector('.tail')?.textContent }
+    }, [], { what: 'why main\'s full suite failed, opened under its row' })
+    assert.deepEqual(why.heads, ['1 test did not pass', 'Full suite: running every test failed (exit 1)'])
+    assert.deepEqual(why.failing, ['backup restores'])
+    assert.match(why.tail, /not ok 2 - backup restores\n {2}expected 3 snapshots, found 2/)
+    assert.equal((await page.run(row)).open, 'true')
+    // Home's card says it too, for a repository not shown.
+    await page.run(() => { location.search = ''; return true })
+    assert.ok(await page.until(() => [...document.querySelectorAll('.home-card[data-home="demo"] .state.risk')].some((one) => one.textContent === 'Full suite failed'), [], { what: 'Home\'s card for demo saying its full suite failed' }))
+
+    // A newer run passed, on main's newest commit: said quietly, and nothing waits on you for it.
+    full(3600_000, { sha: git(repo, 'rev-parse', 'HEAD'), result: 'passed', failures: [], tests: { files: 1, total: 2, passed: 2, failed: 0, errored: 0, skipped: 0, failing: [] } })
+    await page.run(() => { location.search = '?repo=demo'; return true })
+    const passed = await page.until(`(() => { const said = (${row})(); return said?.words[0]?.startsWith('done') ? { ...said, strip: (${strip})() } : null })`, [], { what: 'main\'s full suite passed, on its row' })
+    assert.deepEqual(passed.words, ['done: Full suite passed · every test · 2 passed · 1 h ago', 'warn: No nightly job on this machine'], 'on main\'s newest, so no commit named')
+    assert.ok(!passed.strip.some((item) => /Full suite/.test(item)), `the strip clear of it: ${JSON.stringify(passed.strip)}`)
 })

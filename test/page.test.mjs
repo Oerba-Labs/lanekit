@@ -217,3 +217,32 @@ test('the command bar says a press as it would be typed: verify, lane and lane a
     assert.equal(typed('node /opt/lanekit/bin/adopt.mjs --commit'), 'lane adopt --commit')
     assert.equal(typed('git fetch'), 'git fetch')
 })
+
+const { secondsSaid, timesSaid, grownSaid, slowerSaid } = fromPage('secondsSaid', 'slowerSaid', ['secondsSaid', 'timesSaid', 'grownSaid', 'slowerSaid'])
+
+test('where the full suite runs before a land, Land held on a verified lane says the full suite has not passed on this commit, or failed on it, by the project\'s name for it', () => {
+    const before = (label) => repo({}, { fullSuite: { when: 'before-land', label, main: null } })
+    const verified = { result: 'passed', current: true, narrowed: false, tier: 1 }
+    const waiting = { verdict: 'gate now', fullGreen: false, collisions: [] }
+    assert.equal(landBlockOf(before('the full suite'), lane({ gate: verified, queue: waiting, full: null })),
+        'The full suite has not passed on this commit: a land needs it, and Verify runs it after the tier')
+    assert.match(landBlockOf(before('every selftest'), lane({ gate: verified, queue: waiting, full: { result: 'passed', current: false } })),
+        /^The full suite \(every selftest\) has not passed on this commit/, 'a run of it on an older commit is no run of it on this one')
+    assert.equal(landBlockOf(before('the full suite'), lane({ gate: verified, queue: waiting, full: { result: 'failed', current: true } })),
+        'The full suite failed on this commit: fix it, commit, and verify it again')
+    assert.match(landBlockOf(before('the full suite'), lane({ gate: { ...verified, result: 'failed' }, queue: waiting })), /^Verification failed on this commit/, 'the tier failing is said first')
+    assert.match(landBlockOf(before('the full suite'), lane({ queue: waiting })), /^Verify it first/, 'not verified at all: verify it')
+    assert.match(landBlockOf(repo(), lane({ gate: verified })), /^Verify it first/, 'a project without one reads as before')
+    assert.equal(landBlockOf(before('the full suite'), lane({ gate: verified, queue: { verdict: 'land now', fullGreen: true } })), null)
+})
+
+test('a slow-down is said as the gate says it: "4.4× slower than usual", seconds as 0.4s and 1,100s, a test grown as "0.4s → 612s"', () => {
+    assert.equal(slowerSaid({ ratio: 4.4 }), '4.4× slower than usual')
+    assert.equal(slowerSaid({ ratio: 44.4 }), '44× slower than usual')
+    assert.equal(slowerSaid({ ratio: null }), 'Much slower than usual', 'a usual run of no time at all')
+    assert.deepEqual([0.44, 9.5, 12.4, 1100].map(secondsSaid), ['0.4s', '9.5s', '12s', '1,100s'])
+    assert.equal(timesSaid(2), '2.0×')
+    assert.equal(grownSaid({ seconds: 612, was: 0.4, since: 'was' }), '0.4s → 612s')
+    assert.equal(grownSaid({ seconds: 300, was: 0.2, since: 'at most' }), 'at most 0.2s → 300s')
+    assert.equal(grownSaid({ seconds: 120, was: 0, since: 'new' }), 'new → 120s')
+})

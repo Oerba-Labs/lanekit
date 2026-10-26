@@ -1,6 +1,6 @@
 /**
  * The page end to end (test/e2e-harness says how): a lane's buttons, held until what they need is there; a pull request
- * reviewed in a lane from Home; and then, with a lane ready to land and a review lane in it, nothing on the page wider
+ * reviewed in a lane from Home; a lane's full suite, where a land needs it; and then, with a lane ready to land and a review lane in it, nothing on the page wider
  * than the narrowest side bar, as this machine draws it.
  *
  *     node --test test/e2e-narrow.test.mjs
@@ -11,10 +11,11 @@
  */
 
 import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
-import { sleep, SLOW, skip, ghState, laneDir, open, card, buttonIn, laneButton, begin, end, nothingWider } from './e2e-harness'
+import { KIT, sleep, SLOW, skip, scratch, work, env, git, commit, ghState, laneDir, open, card, buttonIn, laneButton, begin, end, nothingWider } from './e2e-harness'
 
 let browser, base, page
 
@@ -80,6 +81,58 @@ test('a pull request waiting on your review opens in a lane of its own from Home
         assert.deepEqual(review && { state: review.state, body: review.body }, { state: 'APPROVED', body: 'It counts as it says.' }, 'the approval reached GitHub, in its words')
     } finally {
         await home.close()
+    }
+})
+
+test('where the full suite runs before a land, a lane\'s verification says it as a state of its own, and Land waits on it, saying the full suite failed on this commit, until it passes', { skip, timeout: 120_000 * SLOW }, async () => {
+    // Quiet runs every test before each land, failing while a file says so.
+    const quiet = path.join(work, 'quiet')
+    const fails = path.join(scratch, 'every-test-fails')
+    const config = JSON.parse(fs.readFileSync(path.join(quiet, 'lane.config.json'), 'utf8'))
+    config.gate.full = { when: 'before-land', steps: [{ what: 'running every test', command: 'sh', args: ['-c', `test ! -e '${fails}'`] }] }
+    fs.writeFileSync(path.join(quiet, 'lane.config.json'), JSON.stringify(config))
+    // And keeps its runs out of git, as demo does: a run left uncommitted in the main checkout would hold a land too.
+    fs.writeFileSync(path.join(quiet, '.gitignore'), '.env\n.lanekit/\n')
+    git(quiet, 'add', 'lane.config.json', '.gitignore')
+    git(quiet, 'commit', '-qm', 'Run every test before each land')
+    execFileSync(process.execPath, [path.join(KIT, 'dev', 'lane.mjs'), 'new', 'hushed'], { cwd: quiet, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const dir = path.join(work, 'quiet-hushed')
+    commit(dir, 'hushed.txt', 'hushed\n', 'Hush it')
+    const verify = () => spawnSync(process.execPath, [path.join(KIT, 'dev', 'gate.mjs')], { cwd: dir, env, encoding: 'utf8' })
+    fs.writeFileSync(fails, '')
+    const failed = verify()
+    assert.notEqual(failed.status, 0, 'the tier passed, the full suite did not')
+
+    const tab = await open(browser, `${base}?repo=quiet`)
+    try {
+        const said = () => {
+            const lane = document.querySelector('li.lane[data-key="quiet/hushed"]')
+            if (!lane) return null
+            const land = [...lane.querySelectorAll('button')].find((button) => (button.getAttribute('aria-label') || button.textContent).trim().startsWith('Land'))
+            return {
+                facts: [...lane.querySelectorAll(':scope > .facts > .state')].map((one) => `${one.className.replace(/^state |\s?small|\s?opens|\s?discloses/g, '')}: ${one.textContent}`),
+                failure: [...lane.querySelectorAll(':scope > .failure .files-head')].map((one) => one.textContent),
+                land: land && { disabled: land.disabled, title: land.title },
+                strip: [...document.querySelectorAll('#strip > .strip-item')].map((item) => item.textContent)
+            }
+        }
+        const held = await tab.until(`(() => { const now = (${said})(); return now?.facts.some((one) => one.startsWith('risk: Full suite')) ? now : null })`, [], { what: 'hushed, its full suite failed' })
+        assert.match(held.facts[0], /^done: Verified · check · /, 'its tier passed')
+        assert.match(held.facts[1], /^risk: Full suite failed · /, `the full suite under it, failed: ${JSON.stringify(held.facts)}`)
+        assert.deepEqual(held.failure, ['Full suite: running every test failed (exit 1)'])
+        assert.deepEqual(held.land, { disabled: true, title: 'The full suite failed on this commit: fix it, commit, and verify it again' })
+        assert.ok(held.strip.includes('hushed failed the full suite'), `the strip says so: ${JSON.stringify(held.strip)}`)
+
+        // Passed: Land is there to press.
+        fs.rmSync(fails)
+        const passed = verify()
+        assert.equal(passed.status, 0, passed.stdout + passed.stderr)
+        const ready = await tab.until(`(() => { const now = (${said})(); return now?.land && !now.land.disabled ? now : null })`, [], { what: 'hushed, its full suite passed, and Land pressable' })
+        assert.match(ready.facts[1], /^done: Full suite passed · /, JSON.stringify(ready.facts))
+        assert.deepEqual(ready.failure, [])
+        assert.ok(!ready.strip.some((item) => /full suite/.test(item)), JSON.stringify(ready.strip))
+    } finally {
+        await tab.close()
     }
 })
 

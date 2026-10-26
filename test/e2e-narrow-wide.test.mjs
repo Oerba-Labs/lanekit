@@ -1,6 +1,6 @@
 /**
  * The page end to end (test/e2e-harness says how): a lane an agent lands, coming onto main's line; a verification as it
- * runs; and then, with that merge on main and a lane ready to land, nothing on the page wider than the narrowest side
+ * runs; a verification, and main's full suite, much slower than usual, and where their time went; and then, with that merge on main and a lane ready to land, nothing on the page wider than the narrowest side
  * bar, drawn as the narrowest machine running these tests draws it.
  *
  *     node --test test/e2e-narrow-wide.test.mjs
@@ -12,9 +12,10 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
-import { KIT, SLOW, skip, repo, env, git, lane, commit, laneDir, card, RECORD, atRest, begin, end, nothingWider } from './e2e-harness'
+import { KIT, SLOW, skip, repo, env, git, lane, commit, laneDir, open, card, RECORD, atRest, begin, end, nothingWider } from './e2e-harness'
 
 let browser, base, page
 
@@ -84,6 +85,87 @@ test('a verification shows its three parts as it runs, Rebase, the tests of its 
     assert.match(said.text, /^Verified · check/, 'the tier by its label')
     assert.doesNotMatch(said.text, /tier \d/)
     assert.match(said.title, /^Tier 1\n/, 'its number in the title')
+})
+
+test('a verification much slower than usual says so on its line, a lane\'s and main\'s full suite\'s alike; its details say the usual run\'s time and day, its steps\' seconds, the tests that grew and the slowest, and keep to the column at 170px', { skip, timeout: 90_000 * SLOW }, async () => {
+    const config = JSON.parse(fs.readFileSync(path.join(repo, 'lane.config.json'), 'utf8'))
+    config.gate.full = { when: 'after-land', label: 'every test', steps: [{ what: 'running every test', command: 'true', args: [] }] }
+    fs.writeFileSync(path.join(repo, 'lane.config.json'), JSON.stringify(config))
+    git(repo, 'add', 'lane.config.json')
+    git(repo, 'commit', '-qm', 'Run every test after each land')
+    // labelled's verification, and main's full suite, each 4.4 times as long as their kind's usual runs, as runs.mjs keeps it.
+    const runs = path.join(repo, '.lanekit', 'runs')
+    const timed = {
+        durationSeconds: 1100, steps: [{ what: 'building', seconds: 90 }, { what: 'running the self-tests', seconds: 1010 }], failures: [],
+        tests: { files: 1, total: 3, passed: 3, failed: 0, errored: 0, skipped: 0, failing: [], slowest: [
+            { name: 'selftest::backup restores', suite: 'selftests', seconds: 612 }, { name: 'selftest::vault unseals after a restart with every key it had before', file: 'tests/vault.sh', seconds: 41.2 }, { name: 'lint', seconds: 3.1 }] },
+        slowdown: {
+            seconds: 1100, median: 250, runs: 10, ratio: 4.4, usual: { id: 'usual', seconds: 248, startedAt: '2026-10-11T12:00:00.000Z' },
+            tests: [{ name: 'selftest::backup restores', suite: 'selftests', seconds: 612, was: 0.4, since: 'was' }, { name: 'selftest::vault unseals after a restart with every key it had before', file: 'tests/vault.sh', seconds: 41.2, was: 0, since: 'new' }],
+            steps: [{ what: 'running the self-tests', seconds: 1010, was: 160 }]
+        }
+    }
+    const put = (kind, extra) => {
+        const at = new Date()
+        const id = `${at.toISOString().replace(/[:.]/g, '-').replace(/-\d+Z$/, 'Z')}-1-${kind}`
+        fs.writeFileSync(path.join(runs, `${id}.json`), JSON.stringify({ id, kind, startedAt: at.toISOString(), result: 'passed', ...timed, ...extra }))
+    }
+    put('tier1', { tier: 1, branch: 'labelled', sha: git(laneDir('labelled'), 'rev-parse', 'HEAD'), worktree: laneDir('labelled'), narrowed: false, earned: 1 })
+    put('full', { why: 'after-land', label: 'every test', branch: 'main', sha: git(repo, 'rev-parse', 'HEAD'), worktree: repo })
+
+    const lineOf = (scope) => {
+        const facts = document.querySelector(scope)
+        return facts && [...facts.querySelectorAll('.state')].map((one) => `${one.textContent}${one.getAttribute('aria-expanded') ? ` [${one.getAttribute('aria-expanded')}]` : ''}`)
+    }
+    const laneLine = await page.until(`(() => { const said = (${lineOf})('li.lane[data-key="demo/labelled"] > .facts'); return said?.some((one) => /slower/.test(one)) ? said : null })`, [], { what: 'labelled\'s verification, slower than usual' })
+    assert.match(laneLine[0], /^Verified · check · 3 passed · just now \[false\]$/)
+    assert.equal(laneLine[1], '4.4× slower than usual [false]', 'beside its words, and opening the same details')
+    const mainLine = await page.until(`(() => { const said = (${lineOf})('li.main-full > .facts'); return said?.some((one) => /slower/.test(one)) ? said : null })`, [], { what: 'main\'s full suite, slower than usual' })
+    assert.deepEqual(mainLine, ['Full suite passed · every test · 3 passed · just now [false]', '4.4× slower than usual [false]'])
+
+    // Opened from its words: the slow-down against the usual run, the tests that grew, each step, the slowest tests.
+    const details = (scope) => {
+        const timings = document.querySelector(scope)
+        if (!timings) return null
+        return [...timings.querySelectorAll('.files-head, p, li')].map((one) => (one.localName === 'li'
+            ? `${one.querySelector('.secs').textContent} | ${one.querySelector('.timed-name').textContent}${one.title ? ` (${one.title})` : ''}` : one.textContent))
+    }
+    const said = [
+        'Tests that grew most',
+        '0.4s → 612s | selftest::backup restores (selftests)',
+        'new → 41s | selftest::vault unseals after a restart with every key it had before (tests/vault.sh)',
+        'It does not fail verifying. A busy machine slows it too: if the next run is as slow, it is the project.',
+        'Its steps', '90s | building', '160s → 1,010s | running the self-tests',
+        'Slowest tests', '612s | selftest::backup restores (selftests)', '41s | selftest::vault unseals after a restart with every key it had before (tests/vault.sh)', '3.1s | lint'
+    ]
+    await page.click(() => card('labelled').querySelector('.facts .slower'))
+    const laneDetails = await page.until(`() => (${details})('li.lane[data-key="demo/labelled"] > .timings.slow')`, [], { what: 'labelled\'s details, opened' })
+    assert.deepEqual(laneDetails, ['4.4× slower than usual: 1,100s, against 250s at the median of its last 10 passing runs', 'A usual run took 248s, on 11 Oct', ...said])
+    await page.click(() => document.querySelector('li.main-full .discloses'))
+    const mainDetails = await page.until(`() => (${details})('li.main-full > .timings.slow')`, [], { what: 'main\'s full suite\'s details, opened' })
+    assert.deepEqual(mainDetails.slice(2), said)
+    // Its words close them again.
+    await page.click(() => card('labelled').querySelector('.facts .discloses'))
+    await page.until(() => !card('labelled').querySelector('.timings'), [], { what: 'labelled\'s details closed' })
+
+    // In the narrowest side bar, as this machine draws it and as Linux does, the details open: nothing wider than it.
+    for (const wide of [false, true]) {
+        const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 900, wide })
+        try {
+            await thin.click(() => document.querySelector('li.lane[data-key="demo/labelled"] .facts .slower'))
+            await thin.click(() => document.querySelector('li.main-full .discloses'))
+            await thin.until(() => document.querySelectorAll('.timings.slow').length === 2, [], { what: 'both details open, at 170px' })
+            const out = await thin.run(() => {
+                const width = document.documentElement.clientWidth
+                const wider = [...document.querySelectorAll('body *')].filter((node) => node.getBoundingClientRect().right > width + 0.5 && node.checkVisibility())
+                    .map((node) => `${node.localName}.${String(node.className).trim().split(/\s+/).join('.')} "${node.textContent.trim().slice(0, 30)}"`)
+                return { scroll: document.documentElement.scrollWidth, width, wider: wider.slice(0, 6) }
+            })
+            assert.ok(out.scroll <= out.width && !out.wider.length, `at 170px${wide ? ', drawn wide' : ''}, ${out.scroll}px wide in a column of ${out.width}px: ${out.wider.join(', ')}`)
+        } finally {
+            await thin.close()
+        }
+    }
 })
 
 test('nothing on the page is wider than the column, down to the narrowest side bar: Home, a log and its landing table at 170px and up, drawn wide', { skip, timeout: 120_000 * SLOW }, () => nothingWider(browser, base, true))
