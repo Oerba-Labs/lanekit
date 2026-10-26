@@ -6,12 +6,16 @@
  * `lanes`; `lane nightly`, on main's newest commit in a scratch copy, recorded in the main checkout's runs and skipped
  * once that commit passed; its schedule, a LaunchAgent written to and removed from a scratch folder, or a crontab line
  * printed; what `lanes` says of main's full suite in each state; and a project without `gate.full`, for which nothing
- * reads differently.
+ * reads differently. And the owner's three of 26 Oct: `--install` and `--uninstall` ask "[y/N]" at a terminal (driven
+ * through a pseudo-terminal, python3's pty, where there is one) and refuse without one unless `--yes`; a lane's lanekit
+ * refused as the one a job names, and a version manager's node said plainly; and lands made while an after-land run is
+ * under way given one run more, on main's newest commit, which names them.
  *
  *     node --test
  *
  * Needs git and node; leaves nothing, and installs nothing: LaunchAgents go to a scratch folder, which launchd never
- * reads, and the scratch copies to a scratch cache.
+ * reads, and the scratch copies to a scratch cache. The schedule is installed from a copy of this lanekit in a scratch
+ * repository of its own (KITS), since the lanekit under test may be a lane's, which --install refuses.
  */
 
 import assert from 'node:assert/strict'
@@ -20,10 +24,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
+import { PassThrough } from 'node:stream'
 import { after, before, test } from 'node:test'
 
 import { loadConfig } from '../lib/config.mjs'
-import { agoSaid, cronLineFor, fullGreenFor, jobFor, laneFullSaid, mainFullLines, mainFullOf, plistFor, scratchFor } from '../lib/full.mjs'
+import {
+    agoSaid, askYes, cronLineFor, fullGreenFor, isYes, jobFor, kitRefusal, laneFullSaid, mainFullLines, mainFullOf, nodeManagerOf,
+    plistFor, scratchFor
+} from '../lib/full.mjs'
 import { lanes as lanesOf } from '../lib/lanes.mjs'
 import { planQueue, landBlockers } from '../lib/queue.mjs'
 import { slowdownLines, slowdownOf } from '../lib/runs.mjs'
@@ -49,6 +57,28 @@ const run = (script, cwd, args, extra = {}) => {
     return { code: done.status, out: plain(`${done.stdout}${done.stderr}`) }
 }
 const lane = (cwd, ...args) => run('lane.mjs', cwd, args)
+/** `lane` as the copy of this lanekit in `kit` runs it: the schedule's tests, installing from a lanekit that is no lane's. */
+const kitLane = (kit, cwd, args, extra = {}) => {
+    const done = spawnSync(process.execPath, [path.join(kit, 'dev', 'lane.mjs'), ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8' })
+    return { code: done.status, out: plain(`${done.stdout}${done.stderr}`) }
+}
+// Where python3 can give a process a pseudo-terminal, the question is asked and answered as a person would.
+const PTY = 'import os, pty, sys\nsys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))'
+const hasPty = spawnSync('python3', ['-c', 'import pty, os; os.waitstatus_to_exitcode'], { encoding: 'utf8' }).status === 0
+/** `lane` at a terminal: once it asks `[y/N]`, `answer` is typed and Enter pressed. */
+const atTerminal = (kit, cwd, args, answer, extra = {}) => new Promise((resolve, reject) => {
+    const child = spawn('python3', ['-c', PTY, process.execPath, path.join(kit, 'dev', 'lane.mjs'), ...args], { cwd, env: { ...env, ...extra }, stdio: ['pipe', 'pipe', 'pipe'] })
+    let out = ''
+    let asked = false
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`no end in 20s:\n${out}`)) }, 20000)
+    const heard = (chunk) => {
+        out += chunk
+        if (!asked && out.includes('[y/N] ')) { asked = true; child.stdin.write(`${answer}\r`) }
+    }
+    child.stdout.on('data', heard)
+    child.stderr.on('data', heard)
+    child.on('exit', (code) => { clearTimeout(timer); child.stdin.end(); resolve({ code, asked, out: out.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '') }) })
+})
 const verify = (cwd) => run('gate.mjs', cwd, [])
 const runsOf = (repo) => {
     const dir = path.join(repo, '.lanekit', 'runs')
@@ -94,10 +124,19 @@ const settled = async (repo, test, seconds = 30) => {
     }
 }
 
+/** A copy of this lanekit's code in a repository of its own, its main checkout, and a lane of it (a worktree). */
+const KITS = {}
 before(() => {
     scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lanekit-full-')))
     env.LANEKIT_CACHE = path.join(scratch, 'cache')
     env.LANEKIT_LAUNCH_AGENTS = path.join(scratch, 'LaunchAgents')
+    KITS.main = path.join(scratch, 'kits', 'lanekit')
+    for (const part of ['lib', 'dev', 'bin']) fs.cpSync(path.join(KIT, part), path.join(KITS.main, part), { recursive: true })
+    git(KITS.main, 'init', '-q', '-b', 'main')
+    git(KITS.main, 'add', '-A')
+    git(KITS.main, 'commit', '-qm', 'lanekit, copied')
+    KITS.lane = path.join(scratch, 'kits', 'lanekit-trying')
+    git(KITS.main, 'worktree', 'add', '-q', '-b', 'trying', KITS.lane)
 })
 after(() => { if (scratch) fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) })
 
@@ -311,6 +350,14 @@ test('after-land, through the MCP server: land returns before the suite ends, an
         server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })}\n`)
     })
     try {
+        // The agents may run the suite's land and see its result, but scheduling it is the person's (the owner, 26 Oct).
+        const listed = await new Promise((resolve) => {
+            const id = ++next
+            waiting.set(id, (answer) => resolve(answer.result.tools.map((one) => one.name)))
+            server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list' })}\n`)
+        })
+        assert.ok(listed.includes('land'), listed.join(' '))
+        assert.deepEqual(listed.filter((name) => /nightly|install|schedul/i.test(name)), [], 'no tool installs a nightly job')
         assert.equal((await tool('verify', { lane: 'one' })).isError, false)
         const before = await tool('lanes')
         assert.match(before.text, /Full suite \(the full suite, after each land\): no run on main yet; `lane nightly` runs one now\.\n/)
@@ -329,6 +376,56 @@ test('after-land, through the MCP server: land returns before the suite ends, an
     } finally {
         server.stdin.end()
     }
+})
+
+test('after-land: lands made while a run is under way get one run more, on main\'s newest commit, which names them; an older failure stays said first', async () => {
+    // The run on a's merge fails, slowly; any other passes, less slowly. Each says which commit it ran.
+    const repo = project('coalesce', { when: 'after-land', steps: [step('running everything',
+        'echo "ran $(git rev-parse HEAD)"; if [ "$(git log -1 --format=%s)" = "Merge branch \'a\'" ]; then sleep 4; exit 5; fi; sleep 3')] })
+    for (const name of ['a', 'b', 'c']) assert.equal(verify(laneWith(repo, name)).code, 0)
+    const fulls = () => runsOf(repo).filter((one) => one.kind === 'full')
+    const until = async (what, test, seconds = 20) => {
+        const end = Date.now() + seconds * 1000
+        while (!test()) {
+            if (Date.now() > end) assert.fail(`${what} in ${seconds}s: ${JSON.stringify(fulls().map((one) => [one.landed, one.result]))}`)
+            await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+    }
+
+    assert.equal(lane(repo, 'land', 'a').code, 0)
+    const shaA = git(repo, 'rev-parse', 'HEAD')
+    await until('a\'s run under way', () => fulls().some((one) => one.sha === shaA && one.result === 'running'))
+    const landedB = lane(repo, 'land', 'b')
+    assert.equal(landedB.code, 0, landedB.out)
+    const landedC = lane(repo, 'land', 'c')
+    assert.equal(landedC.code, 0, landedC.out)
+    const shaC = git(repo, 'rev-parse', 'HEAD')
+    assert.equal(fulls().length, 1, 'b and c queued no run of their own')
+
+    // While a's still runs: one line about main, the run to come said with it.
+    const during = mainFullLines(repoState(repo).fullSuite.main, 'main')
+    assert.deepEqual(during.length, 1, during.join('\n'))
+    assert.match(during[0], /^Full suite \(the full suite, after each land\): running on [0-9a-f]{7}, \d+ commits before main's newest since just now, after a landed; main's newest commit runs when it ends\.$/)
+
+    // a's fails, and the run of c's merge, standing for b's too, begins: the failure is still said first.
+    await until('c\'s run under way', () => fulls().some((one) => one.sha === shaC && one.result === 'running'))
+    const failedFirst = mainFullLines(repoState(repo).fullSuite.main, 'main')
+    assert.match(failedFirst[0], new RegExp(`^FULL SUITE FAILED on ${shaA.slice(0, 7)}, \\d+ commits before main's newest \\(after a landed, just now\\): "running everything" exited 5\\.`))
+    assert.equal(failedFirst.at(-1), `Full suite (the full suite, after each land): running on main at ${shaC.slice(0, 7)} since just now, after b and c landed.`)
+
+    const last = await settled(repo, (one) => one.kind === 'full' && one.sha === shaC)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const all = fulls()
+    assert.equal(all.length, 2, JSON.stringify(all.map((one) => [one.landed, one.sha])))
+    assert.deepEqual(all.map((one) => [one.sha, one.landed, one.coalesced ?? [], one.result]).reverse(), [[shaA, 'a', [], 'failed'], [shaC, 'c', ['b'], 'passed']])
+    assert.equal(last.why, 'after-land')
+    const logs = path.dirname(last.log)
+    const logged = fs.readdirSync(logs).map((name) => fs.readFileSync(path.join(logs, name), 'utf8')).join('\n')
+    assert.match(logged, /a full run is under way already \(process \d+, on [0-9a-f]{10}, after-land\): it runs main's newest commit when it ends, and this land's with it/, 'a land that found a run under way said so, and left it')
+    assert.match(fs.readFileSync(all.at(-1).log, 'utf8'), /main moved on while it ran: once more, on its newest commit/)
+    const settledLines = mainFullLines(repoState(repo).fullSuite.main, 'main')
+    assert.equal(settledLines.length, 1, settledLines.join('\n'))
+    assert.match(settledLines[0], new RegExp(`^Full suite \\(the full suite, after each land\\): passed on main at ${shaC.slice(0, 7)}, just now, in [\\d.]+s\\.$`))
 })
 
 // ---------------------------------------------------------------------------
@@ -467,29 +564,38 @@ test('a slow-down is reckoned for the full suite against its own runs, and said 
 // the schedule
 // ---------------------------------------------------------------------------
 
-test('lane nightly --install shows the LaunchAgent, then writes it to the folder named, loads nothing from a scratch folder, and --uninstall removes it', () => {
+test('lane nightly --install shows the LaunchAgent, refuses without a terminal, writes it with --yes to the folder named, loads nothing from a scratch folder, and --uninstall asks too', () => {
     const repo = project('scheduled', { when: 'nightly', at: '03:15', steps: [step('running everything', 'true')] })
     const agents = env.LANEKIT_LAUNCH_AGENTS
     const file = path.join(agents, 'dev.lanekit.nightly.scheduled.plist')
     const mac = { LANEKIT_PLATFORM: 'darwin' }
+    const install = (...args) => kitLane(KITS.main, repo, ['nightly', ...args], mac)
 
-    const dry = run('lane.mjs', repo, ['nightly', '--install', '--dry-run'], mac)
+    const dry = install('--install', '--dry-run')
     assert.equal(dry.code, 0, dry.out)
     assert.match(dry.out, new RegExp(`would write ${file.replaceAll('.', '\\.')}:\\n`))
     assert.match(dry.out, /<key>Hour<\/key>\n\s+<integer>3<\/integer>\n\s+<key>Minute<\/key>\n\s+<integer>15<\/integer>/)
+    assert.doesNotMatch(dry.out, /\[y\/N\]|--yes/, 'a dry run asks nothing')
     assert.equal(fs.existsSync(file), false, 'a dry run writes nothing')
 
-    const installed = run('lane.mjs', repo, ['nightly', '--install'], mac)
+    // An agent, a script: shown, and refused, saying why and what a person would do.
+    const unasked = install('--install')
+    assert.equal(unasked.code, 1, unasked.out)
+    assert.match(unasked.out, /writes .*dev\.lanekit\.nightly\.scheduled\.plist:\n/)
+    assert.match(unasked.out, /nothing was written: there is no terminal here to ask "Install it\? \[y\/N\]" at, and it is asked first\.\n\n {2}Run it yourself at a terminal; or, if the person it runs for has seen the above and said yes, add --yes\./)
+    assert.equal(fs.existsSync(file), false)
+
+    const installed = install('--install', '--yes')
     assert.equal(installed.code, 0, installed.out)
     assert.match(installed.out, /writes .*dev\.lanekit\.nightly\.scheduled\.plist:\n/)
     assert.match(installed.out, /It runs the full suite on main at 03:15 each night, in a scratch copy, as lane nightly does/)
     assert.match(installed.out, /not loaded: .*LaunchAgents is not ~\/Library\/LaunchAgents \(LANEKIT_LAUNCH_AGENTS names it\)/)
-    assert.doesNotMatch(installed.out, /launchctl bootstrap/)
+    assert.doesNotMatch(installed.out, /launchctl bootstrap|\[y\/N\]/)
     const plist = fs.readFileSync(file, 'utf8')
     assert.ok(installed.out.includes(plist.split('\n').map((line) => `    ${line}`).join('\n')), 'what it writes is what it showed')
     assert.match(plist, /<key>Label<\/key>\n\s+<string>dev\.lanekit\.nightly\.scheduled<\/string>/)
     assert.match(plist, new RegExp(`<key>WorkingDirectory</key>\\n\\s+<string>${repo.replaceAll('.', '\\.')}</string>`))
-    assert.ok(plist.includes(`<string>${path.join(KIT, 'dev', 'full.mjs')}</string>\n        <string>--why</string>\n        <string>nightly</string>`), plist)
+    assert.ok(plist.includes(`<string>${path.join(KITS.main, 'dev', 'full.mjs')}</string>\n        <string>--why</string>\n        <string>nightly</string>`), plist)
     const pathVar = /<key>PATH<\/key>\n\s+<string>([^<]*)<\/string>/.exec(plist)[1].split(':')
     const node = /<key>ProgramArguments<\/key>\n\s+<array>\n\s+<string>([^<]*)<\/string>/.exec(plist)[1]
     assert.equal(path.basename(node), 'node')
@@ -503,29 +609,129 @@ test('lane nightly --install shows the LaunchAgent, then writes it to the folder
     }
     assert.doesNotMatch(mainFullLines(mainFullOf([], { config: loadConfig(repo), mainRepo: repo, headSha: null, env: { ...env, ...mac } }), 'main').join('\n'), /no nightly job is installed/)
 
-    const removed = run('lane.mjs', repo, ['nightly', '--uninstall'], mac)
+    const kept = install('--uninstall')
+    assert.equal(kept.code, 1, kept.out)
+    assert.match(kept.out, /removes .*scheduled\.plist: no nightly run of scheduled's full suite on this Mac after that\.\n/)
+    assert.match(kept.out, /there is no terminal here to ask "Uninstall it\? \[y\/N\]" at/)
+    assert.ok(fs.existsSync(file), 'refused, so kept')
+    const removed = install('--uninstall', '--yes')
     assert.equal(removed.code, 0, removed.out)
     assert.match(removed.out, /removed .*dev\.lanekit\.nightly\.scheduled\.plist\n/)
     assert.doesNotMatch(removed.out, /unloaded/)
     assert.equal(fs.existsSync(file), false)
-    assert.match(run('lane.mjs', repo, ['nightly', '--uninstall'], mac).out, /nothing to remove: there is no .*scheduled\.plist/)
+    assert.match(install('--uninstall').out, /nothing to remove: there is no .*scheduled\.plist/)
+})
+
+test('at a terminal, --install shows the LaunchAgent and asks "Install it? [y/N]": only y or yes writes it; --uninstall asks the same', { skip: !hasPty && 'no python3 pty here to be a terminal' }, async () => {
+    const repo = project('asked', { when: 'nightly', at: '02:00', steps: [step('running everything', 'true')] })
+    const file = path.join(env.LANEKIT_LAUNCH_AGENTS, 'dev.lanekit.nightly.asked.plist')
+    const mac = { LANEKIT_PLATFORM: 'darwin' }
+    for (const answer of ['n', '', 'yep', 'no']) {
+        const said = await atTerminal(KITS.main, repo, ['nightly', '--install'], answer, mac)
+        assert.ok(said.asked, said.out)
+        assert.equal(said.code, 1, `${JSON.stringify(answer)}: ${said.out}`)
+        assert.match(said.out, /writes .*asked\.plist:\n[\s\S]*<\/plist>[\s\S]*\n {2}Install it\? \[y\/N\] /, `the question after what it writes: ${said.out.slice(-600)}`)
+        assert.match(said.out, /Not done: nothing was written\./)
+        assert.equal(fs.existsSync(file), false, `${JSON.stringify(answer)} is no`)
+    }
+    const yes = await atTerminal(KITS.main, repo, ['nightly', '--install'], 'Yes', mac)
+    assert.equal(yes.code, 0, yes.out)
+    assert.match(yes.out, /Install it\? \[y\/N\] Yes\n[\s\S]*wrote .*asked\.plist/)
+    assert.ok(fs.existsSync(file))
+    const no = await atTerminal(KITS.main, repo, ['nightly', '--uninstall'], 'N', mac)
+    assert.match(no.out, /Uninstall it\? \[y\/N\] N\n\n {2}Not done: nothing was written\./)
+    assert.ok(fs.existsSync(file))
+    const gone = await atTerminal(KITS.main, repo, ['nightly', '--uninstall'], 'y', mac)
+    assert.equal(gone.code, 0, gone.out)
+    assert.match(gone.out, /removed .*asked\.plist/)
+    assert.equal(fs.existsSync(file), false)
+})
+
+test('the question, answered: y or yes in any case is yes; anything else, and no answer at all, is no', async () => {
+    assert.deepEqual(['y', 'Y', 'yes', 'YES', ' yes ', 'n', 'N', '', 'no', 'yep', 'ye', 'y es', undefined].map(isYes),
+        [true, true, true, true, true, false, false, false, false, false, false, false, false])
+    const ask = async (typed, end = true) => {
+        const input = new PassThrough()
+        const output = new PassThrough()
+        let shown = ''
+        output.on('data', (chunk) => { shown += chunk })
+        const answer = askYes('Install it? [y/N] ', { input, output })
+        if (typed !== null) input.write(typed)
+        if (end) input.end()
+        return [await answer, shown]
+    }
+    assert.deepEqual(await ask('y\n'), [true, 'Install it? [y/N] '])
+    assert.equal((await ask('yes\n'))[0], true)
+    assert.equal((await ask('\n'))[0], false)
+    assert.equal((await ask('nope\n'))[0], false)
+    assert.equal((await ask(null))[0], false, 'input that ends unanswered')
+})
+
+test('a lane\'s lanekit is refused as the one a job names, and the main checkout\'s named instead; a version manager\'s node is said plainly', () => {
+    const repo = project('wrongkit', { when: 'nightly', at: '03:00', steps: [step('running everything', 'true')] })
+    const file = path.join(env.LANEKIT_LAUNCH_AGENTS, 'dev.lanekit.nightly.wrongkit.plist')
+    const mac = { LANEKIT_PLATFORM: 'darwin' }
+    const refused = kitLane(KITS.lane, repo, ['nightly', '--install', '--yes'], mac)
+    assert.equal(refused.code, 1, refused.out)
+    assert.match(refused.out, new RegExp(`refused: ${KITS.lane} is a worktree of ${KITS.main}, not its main checkout: a lane's, which sweep removes once it lands, and the job would run ${path.join(KITS.lane, 'dev', 'full.mjs')} each night\\.`))
+    assert.ok(refused.out.includes(`Install it from the main checkout's lanekit: node ${path.join(KITS.main, 'dev', 'lane.mjs')} nightly --install`), refused.out)
+    assert.equal(fs.existsSync(file), false)
+    assert.doesNotMatch(refused.out, /<plist/, 'refused before anything is shown as to be written')
+    // A dry run still shows it, and says it would be refused; a crontab line is refused the same.
+    const dry = kitLane(KITS.lane, repo, ['nightly', '--install', '--dry-run'], mac)
+    assert.equal(dry.code, 0, dry.out)
+    assert.match(dry.out, /would write .*wrongkit\.plist:/)
+    assert.match(dry.out, /Without --dry-run this is refused: .* is a worktree of /)
+    const cron = kitLane(KITS.lane, repo, ['nightly', '--install'], { LANEKIT_PLATFORM: 'linux' })
+    assert.equal(cron.code, 1, cron.out)
+    assert.match(cron.out, /refused: .* is a worktree of /)
+    assert.doesNotMatch(cron.out, /^3 0 \* \* \*/m)
+
+    assert.equal(kitRefusal(KITS.main), null, 'the main checkout is the one to install from')
+    assert.equal(kitRefusal(path.join(KITS.lane, 'lib')).instead, path.join(KITS.main, 'lib'), 'a folder in a lane: the same folder in main')
+    assert.equal(kitRefusal(scratch), null, 'a lanekit in no repository at all (a copy) is its own')
+    assert.match(kitRefusal(path.join(env.LANEKIT_CACHE, 'full', 'lanekit-1234abcd'), env).why, /is in lanekit's cache, a scratch copy that each full run checks out afresh/)
+
+    // nvm's node first on the PATH: named as it is, and said to break on a switch, with what then says so.
+    const nvm = path.join(scratch, 'home', '.nvm', 'versions', 'node', 'v22.23.2', 'bin')
+    fs.mkdirSync(nvm, { recursive: true })
+    fs.symlinkSync(process.execPath, path.join(nvm, 'node'))
+    const warned = kitLane(KITS.main, repo, ['nightly', '--install', '--yes'], { ...mac, PATH: `${nvm}${path.delimiter}${env.PATH}` })
+    assert.equal(warned.code, 0, warned.out)
+    assert.ok(warned.out.includes(`NOTE: the job runs ${path.join(nvm, 'node')}, nvm's node v22.23.2.\n  It breaks when nvm switches that version out or removes it: no night's run starts after that,\n  and lanes says FULL SUITE OVERDUE a day and a half later. lanekit picks no other node for you;`), warned.out)
+    assert.ok(fs.readFileSync(file, 'utf8').includes(`<string>${path.join(nvm, 'node')}</string>`), 'the node it found, not another chosen quietly')
+    const plainNode = path.join(scratch, 'usr-local', 'bin')
+    fs.mkdirSync(plainNode, { recursive: true })
+    fs.symlinkSync(process.execPath, path.join(plainNode, 'node'))
+    assert.doesNotMatch(kitLane(KITS.main, repo, ['nightly', '--install', '--dry-run'], { ...mac, PATH: `${plainNode}${path.delimiter}${env.PATH}` }).out, /NOTE: the job runs/, 'a node of no manager\'s is not remarked on')
+    assert.match(kitLane(KITS.main, repo, ['nightly', '--install'], { LANEKIT_PLATFORM: 'linux', PATH: `${nvm}${path.delimiter}${env.PATH}` }).out, /NOTE: the job runs .*nvm's node v22\.23\.2/, 'and beside a crontab line')
+    assert.deepEqual([
+        '/Users/a/.nvm/versions/node/v22.23.2/bin/node', '/Users/a/.local/share/fnm/node-versions/v20.1.0/installation/bin/node',
+        '/Users/a/.local/state/fnm_multishells/123_456/bin/node', '/Users/a/.volta/bin/node', '/Users/a/.asdf/installs/nodejs/22.1.0/bin/node',
+        '/Users/a/.asdf/shims/node', '/Users/a/.local/share/mise/installs/node/22/bin/node', '/opt/homebrew/bin/node', '/usr/local/bin/node'
+    ].map(nodeManagerOf), [
+        { manager: 'nvm', version: 'v22.23.2' }, { manager: 'fnm', version: 'v20.1.0' }, { manager: 'fnm', version: null },
+        { manager: 'volta', version: null }, { manager: 'asdf', version: '22.1.0' }, { manager: 'asdf', version: null },
+        { manager: 'mise', version: '22' }, null, null
+    ])
 })
 
 test('elsewhere --install prints a crontab line and edits nothing; a project whose full suite is not nightly has nothing to schedule', () => {
     const repo = project('cron', { when: 'nightly', at: '04:05', steps: [step('running everything', 'true')] })
     const linux = { LANEKIT_PLATFORM: 'linux' }
-    const said = run('lane.mjs', repo, ['nightly', '--install'], linux)
+    const said = kitLane(KITS.main, repo, ['nightly', '--install'], linux)
     assert.equal(said.code, 0, said.out)
     assert.match(said.out, /lanekit does not edit your crontab/)
+    assert.doesNotMatch(said.out, /\[y\/N\]/, 'nothing is written, so nothing is asked')
     const line = said.out.split('\n').find((one) => /^5 4 \* \* \* /.test(one))
     assert.ok(line, said.out)
-    assert.equal(line, cronLineFor(jobFor({ mainRepo: repo, config: loadConfig(repo), env })))
-    assert.match(line, new RegExp(`cd '${repo}' && mkdir -p '.*' && PATH='[^']*' '[^']*node' '${path.join(KIT, 'dev', 'full.mjs')}' '--why' 'nightly' '--log' '.*nightly\\.log' >> '.*nightly\\.log' 2>&1$`))
+    assert.equal(line, cronLineFor(jobFor({ mainRepo: repo, config: loadConfig(repo), env, kit: KITS.main })))
+    assert.match(line, new RegExp(`cd '${repo}' && mkdir -p '.*' && PATH='[^']*' '[^']*node' '${path.join(KITS.main, 'dev', 'full.mjs')}' '--why' 'nightly' '--log' '.*nightly\\.log' >> '.*nightly\\.log' 2>&1$`))
     assert.equal(fs.existsSync(path.join(env.LANEKIT_LAUNCH_AGENTS, 'dev.lanekit.nightly.cron.plist')), false)
-    assert.match(run('lane.mjs', repo, ['nightly', '--uninstall'], linux).out, /lanekit wrote no crontab line: remove the one/)
+    assert.match(kitLane(KITS.main, repo, ['nightly', '--uninstall'], linux).out, /lanekit wrote no crontab line: remove the one/)
 
     const after = project('nocron', { when: 'after-land', steps: [step('running everything', 'true')] })
-    const refused = run('lane.mjs', after, ['nightly', '--install'], { LANEKIT_PLATFORM: 'darwin' })
+    const refused = kitLane(KITS.main, after, ['nightly', '--install'], { LANEKIT_PLATFORM: 'darwin' })
     assert.equal(refused.code, 1)
     assert.match(refused.out, /gate\.full\.when is "after-land", so the full suite runs after each land: there is nothing to run at night/)
     // A plist names its paths escaped.

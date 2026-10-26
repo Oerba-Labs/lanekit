@@ -22,8 +22,8 @@ import path from 'node:path'
 
 import { configFor, loadConfig } from '../lib/config.mjs'
 import {
-    cronLineFor, fullLabelOf, fullOf, isRealLaunchAgents, jobFor, labelFor, mainFullLines, mainFullOf, platformOf, plistFor,
-    plistPathFor, startAfterLand
+    askYes, cronLineFor, fullLabelOf, fullOf, isRealLaunchAgents, jobFor, kitRefusal, labelFor, mainFullLines, mainFullOf,
+    nodeWarningLines, platformOf, plistFor, plistPathFor, startAfterLand
 } from '../lib/full.mjs'
 import { listRuns } from '../lib/runs.mjs'
 import { ghApiNow, pushRuleFrom, pushTargetOf } from '../lib/github.mjs'
@@ -615,15 +615,38 @@ const land = (config, name, options) => {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether the person said yes to what was just shown: asked at a terminal, "[y/N]", where only y or yes is a yes; given
+ * already by --yes; and with neither, refused, saying why, for nothing here can answer. A no writes nothing and exits 1:
+ * what was asked for did not happen.
+ */
+const agreed = async (question, options) => {
+    if (options.yes) return true
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        fail(`nothing was written: there is no terminal here to ask "${question} [y/N]" at, and it is asked first.\n\n` +
+            '  Run it yourself at a terminal; or, if the person it runs for has seen the above and said yes, add --yes.')
+    }
+    if (await askYes(`  ${question} [y/N] `)) return true
+    console.log('\n  Not done: nothing was written.\n')
+    process.exitCode = 1
+    return false
+}
+
+/**
  * The full suite on main now (lib/full.mjs, dev/full.mjs), or its nightly schedule installed or taken away.
  *
- * NOTHING IS INSTALLED UNASKED. `--install` is the asking, and it shows what it writes before it writes it; `--dry-run`
- * shows it and writes nothing. On a Mac it is a LaunchAgent, loaded with launchctl, in the person's own LaunchAgents
- * folder (LANEKIT_LAUNCH_AGENTS names another, which launchd does not read, so nothing is loaded from there: the tests'
- * scratch folder). Elsewhere it is a crontab line, printed for the person to add: a crontab is theirs to edit, and one
- * edited by a tool is one nobody remembers the lines of.
+ * NOTHING IS INSTALLED UNASKED. `--install` shows what it writes, then asks "Install it? [y/N]" and writes only on a
+ * yes (the owner, 26 Oct 2026): a LaunchAgent runs every night for months, under the person's login, so the person says
+ * so having seen it, not an agent tidying up a task. Without a terminal to ask at (an agent, a script) it refuses, and
+ * says so, unless `--yes` says the person has seen it already. `--uninstall` asks the same. `--dry-run` shows it and
+ * writes nothing, as before. The MCP server has no tool for either, and is meant not to.
+ *
+ * On a Mac it is a LaunchAgent, loaded with launchctl, in the person's own LaunchAgents folder (LANEKIT_LAUNCH_AGENTS
+ * names another, which launchd does not read, so nothing is loaded from there: the tests' scratch folder). Elsewhere it
+ * is a crontab line, printed for the person to add: a crontab is theirs to edit, and one edited by a tool is one nobody
+ * remembers the lines of. Either names this lanekit by its path, so a lane's lanekit is refused (kitRefusal), and either
+ * names a node, which is said plainly when a version manager's (nodeWarningLines).
  */
-const nightly = (here, options) => {
+const nightly = async (here, options) => {
     // Main's config, wherever it is asked from: the schedule and the runs are main's.
     const mainRepo = mainRepoFrom(process.cwd())
     const config = mainRepo === here.checkout ? here : loadConfig(mainRepo)
@@ -650,6 +673,8 @@ const nightly = (here, options) => {
             log(`would unload ${labelFor(config.slug)} and remove ${file}`)
             return
         }
+        console.log(`\n  removes ${file}${isRealLaunchAgents() ? `, and unloads ${labelFor(config.slug)} (launchctl bootout)` : ''}: no nightly run of ${config.name ?? config.slug}'s full suite on this Mac after that.\n`)
+        if (!(await agreed('Uninstall it?', options))) return
         if (isRealLaunchAgents()) spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${labelFor(config.slug)}`], { encoding: 'utf8' })
         fs.rmSync(file, { force: true })
         log(`removed ${file}${isRealLaunchAgents() ? `, and unloaded ${labelFor(config.slug)}` : ''}`)
@@ -662,10 +687,22 @@ const nightly = (here, options) => {
             '  Make it "nightly", with an "at", to schedule it.')
     }
     const job = jobFor({ mainRepo, config })
+    // A lane's lanekit, named by the job, goes when the lane is swept, and the job with it: refused, the right one named.
+    const refusal = kitRefusal(job.kit)
+    const refusedSaid = refusal && `${refusal.why}, and the job would run ${path.join(job.kit, 'dev', 'full.mjs')} each night.` +
+        `\n\n  Install it from ${refusal.instead ? `the main checkout's lanekit: node ${path.join(refusal.instead, 'dev', 'lane.mjs')} nightly --install` : 'a lanekit of your own (the shim looks at ../lanekit, then ~/.lanekit)'}` +
+        `${refusal.instead ? `\n  (or the project's shim, ./<project> lane nightly --install, which finds ../lanekit before ~/.lanekit)` : ''}.`
+    if (refusal && !options.dryRun) fail(`refused: ${refusedSaid}`)
+    const warned = () => {
+        const lines = nodeWarningLines(job.node)
+        if (lines.length) console.log(`${lines.map((line) => `  ${YELLOW}${line}${OFF}`).join('\n')}\n`)
+        if (refusal) console.log(`  ${YELLOW}Without --dry-run this is refused: ${refusedSaid}${OFF}\n`)
+    }
     if (!mac) {
         console.log(`\n  On this machine the nightly run is a crontab line, and lanekit does not edit your crontab.`)
         console.log(`  Add this with crontab -e (${String(job.hour).padStart(2, '0')}:${String(job.minute).padStart(2, '0')} local time, each night):\n`)
         console.log(`${cronLineFor(job)}\n`)
+        warned()
         return
     }
     const plist = plistFor(job)
@@ -675,7 +712,9 @@ const nightly = (here, options) => {
     console.log(`  writing to ${job.log}.`)
     if (isRealLaunchAgents()) console.log(`  Then it loads it: launchctl bootstrap gui/${process.getuid()} ${file}`)
     console.log('')
+    warned()
     if (options.dryRun) return
+    if (!(await agreed('Install it?', options))) return
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.mkdirSync(path.dirname(job.log), { recursive: true })
     const replacing = fs.existsSync(file)
@@ -1409,7 +1448,7 @@ const main = () => {
         process.exit(ran.status ?? 1)
     }
     if (!command || !(command in COMMANDS)) {
-        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|nightly|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|review|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--pr <number>] [--approve|--request-changes|--comment] [--install|--uninstall] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
+        console.error(`\n  usage: lane <init|adopt|new|list|sweep|queue|land|nightly|rebase|push|pr|merge|pull|commit|uncommit|discard|resolve|aside|resume|drop|review|web> [name] [--base <ref>] [--carry [--from <lane>] [--after <commit>]] [--pr <number>] [--approve|--request-changes|--comment] [--install|--uninstall [--yes]] [--existing] [--no-provision] [--no-seed] [--no-sweep] [--force] [--dry-run] [--continue|--abort] [--onto <commit>] [--force-with-lease] [--main] [--draft] [--ready] [--push] [--reviewer <login,…>] [-m <message>] [--amend|--reword] [-- <file>…]\n`)
         process.exit(2)
     }
 
@@ -1419,6 +1458,8 @@ const main = () => {
         install: argv.includes('--install'),
         // lane nightly --uninstall: its schedule taken away (--install, above, writes it).
         uninstall: argv.includes('--uninstall'),
+        // lane nightly --install / --uninstall without the question: the person has said yes already.
+        yes: argv.includes('--yes'),
         existing: argv.includes('--existing'),
         seed: !argv.includes('--no-seed'),
         dryRun: argv.includes('--dry-run'),

@@ -557,7 +557,8 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ./<project> verify               in a lane: is this branch ready to merge? (gate, its old name, too)
 ./<project> lane land <name>     in main: merge a lane that is verified, then sweep it
 ./<project> lane nightly         run the full suite (gate.full) on main's newest commit, in a scratch copy;
-                                 --force again on a commit that passed; --install / --uninstall its nightly job
+                                 --force again on a commit that passed; --install / --uninstall its nightly job,
+                                 asked [y/N] at a terminal (--yes where there is none)
 ./<project> lane rebase <name>   replay a lane onto main as it is now; --continue or --abort after a conflict
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased,
                                  never over somebody else's commits there unless --force
@@ -702,15 +703,35 @@ say, and those not already passed with the same inputs. Then nothing runs everyt
   lane lands only once a passing full run names its commit, from its worktree, as a passing tier run must. One
   `verify` does both; `VERIFIED` says both passed. A verification of a commit whose full run passed already runs only
   the tier again. `lanes`, `lane queue <name>` and a refused land say which of the two is missing.
-- **`after-land`**: once `land` has merged, it starts the full steps on the commit it made and returns. They run by
+- **`after-land`**: once `land` has merged, it starts the full steps on main's newest commit and returns. They run by
   themselves in a scratch copy of main (never in the main checkout), and their result is recorded as main's. A failure
-  undoes nothing: `lanes` says it first, before any lane, until a run on main passes.
+  undoes nothing: `lanes` says it first, before any lane, until a run on main passes. Only main's newest commit is
+  tested (the owner, 26 Oct): a land made while a run is under way starts none of its own, and when that run ends, if
+  main has moved, it runs once more on main's newest, naming the lands it stands for (`after b and c landed`). So
+  three lands in quick succession make two runs at most, the last on the newest commit, and one run at most is ever
+  waiting. While one runs behind main, `lanes` says main's newest runs when it ends; nothing is recorded for that run
+  until it begins, so a failure on an older commit is still said first.
 - **`nightly`**: `lane nightly` runs the full steps on main's newest commit in a scratch copy, and says so and stops
   when that commit has passed already (`--force` runs it again). `lane nightly --install` schedules it at `at`, local
-  time: on a Mac it shows the LaunchAgent it writes to `~/Library/LaunchAgents/dev.lanekit.nightly.<slug>.plist`, then
-  writes and loads it (`--dry-run` only shows it); elsewhere it prints a crontab line to add with `crontab -e`, since
-  lanekit edits no crontab. `--uninstall` takes the LaunchAgent away. Nothing is scheduled unless you ask: `init` and
-  `adopt` never do it. `lanes` says when the last run is more than 36 hours old, and when this Mac has no job.
+  time: on a Mac it shows the LaunchAgent it would write to `~/Library/LaunchAgents/dev.lanekit.nightly.<slug>.plist`,
+  then asks `Install it? [y/N]`, and only `y` or `yes` writes and loads it (`--dry-run` only shows it). Without a
+  terminal to ask at (an agent, a script) it refuses and says so, unless `--yes` says the person has seen it and said
+  yes. `--uninstall` takes the LaunchAgent away, asking the same way. Elsewhere `--install` prints a crontab line to add
+  with `crontab -e`, since lanekit edits no crontab. Nothing is scheduled unless you ask: `init` and `adopt` never do
+  it, and the agents' MCP tools cannot. `lanes` says when the last run is more than 36 hours old, and when this Mac has
+  no job.
+
+The job names the lanekit that installed it, by its path, and the node it found on the PATH:
+
+- **A lane's lanekit is refused.** A lanekit worktree that is not its main checkout (`node ../lanekit-<lane>/dev/lane.mjs
+  nightly --install`) goes when that lane lands and is swept, and the job with it; so does a lanekit inside some lane,
+  and one in the full suite's scratch copy is checked out afresh by each run. `--install` refuses it and names the main
+  checkout's lanekit to install from instead, which is the one the shim runs (`../lanekit`, then `~/.lanekit`).
+- **A version manager's node is said plainly.** Where `node` on the PATH is nvm's (`~/.nvm/versions/node/v22.23.2/...`),
+  or fnm's, volta's, asdf's, mise's or nodenv's, the job runs that exact file, and stops running when that version is
+  switched out or removed; `--install` says so, and that `lanes` will then say `FULL SUITE OVERDUE`. It does not pick
+  another node itself, since lanekit is tested on node 22 and another may be newer: put the one you want first on the
+  PATH and install again.
 
 Left out, nothing runs and nothing reads differently. A full run is a record of its own in `.lanekit/runs`, kind
 `full`, with what a tier's run keeps: each step's seconds, a failing step's last lines, what the tests' JUnit in
@@ -722,6 +743,7 @@ Full suite (every selftest, nightly at 03:00): passed on main at 4e1c2a9, 6 hour
 Full suite (every selftest, nightly at 03:00): running on main at 4e1c2a9 since 5 minutes ago.
 Full suite (every selftest, nightly at 03:00): no run on main yet; `lane nightly` runs one now.
 FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run began 2 days ago; …
+Full suite (every selftest, after each land): running on 9b0e3d1, 4 commits before main's newest since 2 minutes ago, after a landed; main's newest commit runs when it ends.
 ```
 
 The page says main's on a line under main's newest commit (*Full suite failed · every selftest · 410 passed, 2 failed ·
@@ -733,7 +755,7 @@ The scratch copy is a `git clone --shared` of the main checkout (it borrows main
 lanekit's cache folder (`~/Library/Caches/lanekit/full/`, `~/.cache/lanekit/full/`, or `LANEKIT_CACHE`), checked out at
 the commit and cleaned with `git clean -ffdx` before each run, then given `lane.copyOnCreate` and `lane.linkOnCreate`
 as a lane is. It is not a worktree, so it is never listed as a lane. One run uses it at a time: a land while one is
-under way waits its turn, and `lane nightly` leaves it be. Each run's output is in a log beside it, which `lanes`
+under way leaves it to run main's newest commit next, and `lane nightly` leaves it be. Each run's output is in a log beside it, which `lanes`
 names when a run failed. The steps come from the commit's own `lane.config.json`.
 
 ## The config
