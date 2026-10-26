@@ -889,7 +889,10 @@ const gateBlockOf = (lane) => {
     if (!(lane.ahead > 0)) return 'Nothing committed yet to verify'
     return null
 }
-/** A land needs a lane gated green on its newest commit, first among those it collides with, and a main ready for it. */
+/** The full suite, by the project's name for it where it has one: "The full suite (every selftest)". */
+const fullSuiteName = (repo) => `The full suite${repo.fullSuite?.label && repo.fullSuite.label !== 'the full suite' ? ` (${repo.fullSuite.label})` : ''}`
+/** A land needs a lane gated green on its newest commit, first among those it collides with, and a main ready for it;
+    where the project runs its full suite before a land, that passed on the commit too. */
 const landBlockOf = (repo, lane) => {
     const base = repo.integrationBranch
     if (lane.operation) return `Finish its ${lane.operation} first`
@@ -901,7 +904,15 @@ const landBlockOf = (repo, lane) => {
     const queue = lane.queue
     switch (queue?.verdict) {
         case 'land now': return null
-        case 'gate now': return lane.gate?.current && lane.gate.result === 'failed' ? 'Verification failed on this commit: fix it, commit, and verify it again' : 'Verify it first: a land needs its newest commit verified'
+        case 'gate now':
+            if (lane.gate?.current && lane.gate.result === 'failed') return 'Verification failed on this commit: fix it, commit, and verify it again'
+            // Verified, and the full suite still to pass on this commit: said as that, not as a verification missing.
+            if (queue.fullGreen === false && lane.gate?.current && lane.gate.result === 'passed' && !lane.gate.narrowed) {
+                return lane.full?.current && lane.full.result === 'failed'
+                    ? `${fullSuiteName(repo)} failed on this commit: fix it, commit, and verify it again`
+                    : `${fullSuiteName(repo)} has not passed on this commit: a land needs it, and Verify runs it after the tier`
+            }
+            return 'Verify it first: a land needs its newest commit verified'
         case 'hold the gate': return `Wait for ${(queue.collisions ?? []).map((collision) => collision.lane).join(' and ') || 'another lane'} to land first: they change the same files`
         case 'rebase first': return `Rebase it first: it no longer merges cleanly with ${base}`
         case 'commit first': return 'Commit first: a land takes commits, and uncommitted changes are in none'
@@ -921,8 +932,10 @@ const pullBlockOf = (repo) => {
 /** What a gate's tests said, where they wrote JUnit: " · 1,617 passed, 2 failed", for a gate of the commit there now. */
 const testsSaidOf = (gate) => (gate?.current && gate.tests?.said ? ` · ${gate.tests.said}` : '')
 
-/** A lane's last gate, where there is one, its tier by its label. None is not said: the lane's state says what it needs instead. */
-const gateOf = (repo, lane) => {
+/** A lane's last gate, where there is one, its tier by its label. None is not said: the lane's state says what it needs
+    instead. `open`: the key its details are kept open under, where it kept where its time went: then a click on it, or
+    Enter, opens them under the lane. */
+const gateOf = (repo, lane, open = null) => {
     const gate = lane.gate
     if (!gate) return null
     const when = gate.at ? ` · ${ago(gate.at)}` : ''
@@ -935,7 +948,174 @@ const gateOf = (repo, lane) => {
     else if (gate.current) node = state('risk', `Verification failed · ${tier}${tests}${when}`, 'small')
     else node = state('quiet', `Verification failed on an older commit${when}`, 'small')
     node.title = [`Tier ${gate.tier}`, exactly(gate.at), gate.current ? gate.tests?.unread : null].filter(Boolean).join('\n')
+    return open && hasTimings(gate) ? discloses(node, open, 'where its time went') : node
+}
+
+// ---------------------------------------------------------------------------
+// where a verification's time went, and a slow-down (lib/runs.mjs keeps both with a run, from 25 Oct 2026)
+// ---------------------------------------------------------------------------
+
+/** Seconds as the gate says them: 0.4s and 9.5s under ten, then whole, 12s and 1,100s. */
+const secondsSaid = (seconds) => {
+    const tenths = Math.round(seconds * 10) / 10
+    return tenths < 10 ? `${tenths.toFixed(1)}s` : `${Math.round(seconds).toLocaleString('en-US')}s`
+}
+/** "4.4×", "44×": how many times as long a run took as its kind's usual runs did. */
+const timesSaid = (ratio) => `${ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1)}×`
+/** "0.4s → 612s", "at most 0.2s → 300s", "new → 120s": a test's time in the usual run, and in this one, as the gate says it. */
+const grownSaid = (test) =>
+    `${test.since === 'new' ? 'new' : `${test.since === 'at most' ? 'at most ' : ''}${secondsSaid(test.was)}`} → ${secondsSaid(test.seconds)}`
+/** "4.4× slower than usual", on a verification's line beside its words. */
+const slowerSaid = (slowdown) => `${slowdown.ratio ? timesSaid(slowdown.ratio) : 'Much'} slower than usual`
+/** "11 Oct": the day a usual run was, as the gate says it. */
+const daySaid = (ms) => (ms ? new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null)
+/** Whether a run kept anything of where its time went: its steps' seconds, its slowest tests, a slow-down. */
+const hasTimings = (run) => Boolean(run?.steps?.length || run?.tests?.slowest?.length || run?.slowdown)
+
+/**
+ * A verification's words that open its details under them, and close them: a click, or Enter or Space, in a browser
+ * and in the editor alike, kept open by `key` as a lane's commits are. Said as the words that open something in the
+ * editor are, underlined with dots.
+ */
+const discloses = (node, key, what) => {
+    const open = expanded.has(key)
+    node.classList.add('opens', 'discloses')
+    node.setAttribute('role', 'button')
+    node.setAttribute('aria-expanded', String(open))
+    node.tabIndex = 0
+    node.title = [node.title, `${open ? 'Hide' : 'Show'} ${what}`].filter(Boolean).join('\n')
+    node.addEventListener('click', (event) => { event.stopPropagation(); toggle(key) })
+    node.addEventListener('keydown', (event) => {
+        if (event.target === node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.stopPropagation(); toggle(key) }
+    })
     return node
+}
+
+/** "4.4× slower than usual", beside a run's words where it took at least twice its kind's usual time; opens its details. */
+const slowMark = (run, open) => {
+    const slowdown = run?.slowdown
+    if (!slowdown) return null
+    const node = state('warn', slowerSaid(slowdown), 'small slower')
+    node.title = [`This took ${secondsSaid(slowdown.seconds)}${Number.isFinite(slowdown.median) ? `; its last ${plural(slowdown.runs ?? 0, 'passing run')} took ${secondsSaid(slowdown.median)} at the median` : ''}`,
+        'It does not fail verifying: a busy machine slows it too'].join('\n')
+    return open ? discloses(node, open, 'what grew') : node
+}
+
+/** One timed thing a row: its seconds (or the usual run's and this one's), then what it is, which wraps under them where
+    the column is narrow. */
+const timedList = (rows) => el('ul', { class: 'timed' }, rows.map(({ secs, name, title }) =>
+    el('li', { title: title || null }, el('span', { class: 'secs', text: secs }), el('span', { class: 'timed-name', text: name }))))
+const whereOf = (test) => test.file || test.suite || null
+
+/**
+ * Where a run's time went, under its line once it is opened: a slow-down first, where it showed one (how much slower,
+ * against what, the usual run's time and day, the tests that grew most, and that it fails nothing); then each step's
+ * seconds, a step that grew with the usual run's beside it; then its slowest tests.
+ */
+const timingsOf = (run) => {
+    const slowdown = run.slowdown
+    const grown = new Map((slowdown?.steps ?? []).map((step) => [step.what, step]))
+    const slowest = (run.tests?.slowest ?? []).slice(0, 5)
+    const usual = slowdown?.usual
+    return el('div', { class: `timings${slowdown ? ' slow' : ''}` },
+        slowdown ? [
+            el('div', { class: 'files-head slow-head', text: `${slowerSaid(slowdown)}: ${secondsSaid(slowdown.seconds)}` +
+                `${Number.isFinite(slowdown.median) ? `, against ${secondsSaid(slowdown.median)} at the median of its last ${plural(slowdown.runs ?? 0, 'passing run')}` : ''}` }),
+            usual && Number.isFinite(usual.seconds)
+                ? el('p', { class: 'usual', text: `A usual run took ${secondsSaid(usual.seconds)}${usual.at ? `, on ${daySaid(usual.at)}` : ''}`, title: usual.at ? exactly(usual.at) : null })
+                : null,
+            slowdown.tests?.length ? [
+                el('div', { class: 'files-head', text: 'Tests that grew most' }),
+                timedList(slowdown.tests.map((test) => ({ secs: grownSaid(test), name: test.name, title: whereOf(test) })))
+            ] : null,
+            el('p', { class: 'muted', text: 'It does not fail verifying. A busy machine slows it too: if the next run is as slow, it is the project.' })
+        ] : null,
+        run.steps?.length ? [
+            el('div', { class: 'files-head', text: run.steps.length === 1 ? 'Its step' : 'Its steps' }),
+            timedList(run.steps.map((step) => {
+                const was = grown.get(step.what)
+                return { secs: was ? `${secondsSaid(was.was)} → ${secondsSaid(step.seconds)}` : secondsSaid(step.seconds), name: step.what }
+            }))
+        ] : null,
+        slowest.length ? [
+            el('div', { class: 'files-head', text: 'Slowest tests' }),
+            timedList(slowest.map((test) => ({ secs: secondsSaid(test.seconds), name: test.name, title: whereOf(test) })))
+        ] : null)
+}
+
+// ---------------------------------------------------------------------------
+// the full suite (gate.full, lib/full.mjs): main's last run of it, or a lane's before a land
+// ---------------------------------------------------------------------------
+
+/** What the project calls its full suite, after "Full suite", where it names it ("every selftest"); nothing where not. */
+const fullLabelOf = (repo) => (repo.fullSuite?.label && repo.fullSuite.label !== 'the full suite' ? ` · ${repo.fullSuite.label}` : '')
+/** "nightly at 02:00", "after each land", "before each land". */
+const fullWhenOf = (repo) => {
+    const when = repo.fullSuite?.when
+    return when === 'nightly' ? `nightly at ${repo.fullSuite.at}` : when === 'after-land' ? 'after each land' : when === 'before-land' ? 'before each land' : ''
+}
+/** A full run's words: what it said, the project's name for it, its tests' counts, how long ago. */
+const fullWordsOf = (repo, run, verb) => `Full suite ${verb}${fullLabelOf(repo)}${run.tests?.said ? ` · ${run.tests.said}` : ''}${run.at ? ` · ${ago(run.at)}` : ''}`
+/** A full run's title: when it runs, when this one began, on which commit, how long it took, and its output's file. */
+const fullTitleOf = (repo, run) => [`${repo.fullSuite?.label ?? 'The full suite'}, ${fullWhenOf(repo)}`, exactly(run.at),
+    run.short ? `On ${run.short}${run.why === 'after-land' && run.landed ? `, after ${run.landed} landed` : ''}` : null,
+    Number.isFinite(run.seconds) && run.result !== 'running' ? `It took ${secondsSaid(run.seconds)}` : null,
+    run.log ? `Its output: ${run.log}` : null].filter(Boolean).join('\n')
+
+/**
+ * Main's full suite, where the project runs it on main (nightly, after-land), on a line under main's newest commit:
+ * how its newest run went, a failure first; one under way; one that stopped; none yet; overdue; and where this Mac has
+ * no nightly job to run it. Its details, opened from its words, are its failure's steps and last lines and where its
+ * time went. Null for a project without one, which reads as it always has.
+ */
+const mainFullRow = (repo) => {
+    const shown = repo.fullSuite?.main
+    if (!shown) return null
+    const base = repo.integrationBranch
+    const key = `${repo.id}:main-full`
+    const { last, running, stopped } = shown
+    const onWhich = (run) => (!run || run.current || run.behind === 0 ? null
+        : el('span', { class: 'wraps', text: run.behind ? `on ${run.short}, ${plural(run.behind, 'commit')} before ${base}'s newest` : `on ${run.short}` }))
+    const words = []
+    const openable = last && (hasTimings(last) || (last.result === 'failed' && last.failures?.length))
+    if (last) {
+        const node = state(last.result === 'failed' ? 'risk' : 'done', fullWordsOf(repo, last, last.result), 'small')
+        node.title = fullTitleOf(repo, last)
+        words.push(keyed(openable ? discloses(node, key, last.result === 'failed' ? 'why it failed' : 'where its time went') : node, `${key}:last`, true),
+            onWhich(last), slowMark(last, openable ? key : null))
+    }
+    if (stopped) words.push(Object.assign(state('warn', `Full suite stopped before it finished · ${ago(stopped.at)}`, 'small'),
+        { title: `Its process is gone. lane nightly runs it again on ${base} now\n${fullTitleOf(repo, stopped)}` }))
+    if (running) words.push(Object.assign(state('info', `Full suite running · since ${ago(running.at)}`, 'small'), { title: fullTitleOf(repo, running) }), onWhich(running))
+    if (!last && !running && !stopped) words.push(Object.assign(state('quiet', `No full suite run on ${base} yet`, 'small'), { title: `${repo.fullSuite.label}, ${fullWhenOf(repo)}: lane nightly runs one now` }))
+    else if (shown.overdue) words.push(Object.assign(state('warn', `Overdue: it runs ${fullWhenOf(repo)}`, 'small'), { title: 'No run has begun for a day and a half: is this machine asleep at that hour, or its job gone? lane nightly runs it now' }))
+    if (shown.installed === false) words.push(Object.assign(state('warn', 'No nightly job on this machine', 'small'), { title: 'Nothing runs it at night here: lane nightly --install shows what it writes, then writes it' }))
+    return el('li', { class: 'main-full', 'data-key': `${repo.id}/:full-suite`, 'data-anim': key, 'data-anim-kids': true },
+        el('div', { class: 'facts' }, words),
+        openable && expanded.has(key) ? [
+            last.result === 'failed' ? failureBlock(repo, null, last, 'Full suite') : null,
+            hasTimings(last) ? timingsOf(last) : null
+        ] : null)
+}
+
+/**
+ * A lane's full suite, where the project runs it before each land (before-land): said under its verification, as a
+ * state of its own (the owner, 26 Oct 2026), since a land needs both. Nothing for a lane whose tier has not passed on
+ * this commit yet: verifying runs the full suite only after it.
+ */
+const laneFullOf = (repo, lane, open = null) => {
+    if (!('full' in lane) || lane.kind !== 'working' || lane.review) return null
+    const full = lane.full
+    if (!full?.current) {
+        if (!(lane.gate?.current && lane.gate.result === 'passed')) return null
+        const node = state('quiet', full ? `Full suite ${full.result === 'failed' ? 'failed' : 'passed'} on an older commit` : 'Full suite not run on this commit', 'small')
+        node.title = 'A land needs it passed on this commit: Verify runs it, after the tier'
+        return node
+    }
+    const [tone, verb] = { passed: ['done', 'passed'], failed: ['risk', 'failed'], running: ['info', 'running'] }[full.result] ?? ['warn', 'stopped before it finished']
+    const node = state(tone, fullWordsOf(repo, full, verb), 'small')
+    node.title = fullTitleOf(repo, full)
+    return open && hasTimings(full) ? discloses(node, open, 'where its time went') : node
 }
 
 const pushedOf = (lane) => {
@@ -1221,9 +1401,11 @@ const liveOf = (repo, lane) => {
 // A file and a line in a tool's output: src/app.js:12, ./web/x.ts:3:7, /work/repo-lane/y.py:40.
 const FILE_AT = /((?:\.{1,2}\/|\/)?(?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z][\w]*):(\d+)(?::(\d+))?/g
 
-/** A failed step's last lines; in the editor each file reference opens at its line. */
+/** A failed step's last lines; in the editor each file reference in a lane's opens at its line. A run on main ran in a
+    scratch copy of it, so its lines are words only. */
 const tailOf = (repo, lane, text) => {
     const pre = el('pre', { class: 'tail' })
+    if (!lane) { pre.textContent = String(text ?? '') + '\n'; return pre }
     for (const line of String(text ?? '').split('\n')) {
         let from = 0
         for (const match of line.matchAll(FILE_AT)) {
@@ -1250,21 +1432,28 @@ const failingOf = (tests) => {
     }
 }
 
-/** Why the lane's gate on this commit failed: the tests that did not pass, where they wrote JUnit; then each failing
-    step, and its last lines. */
-const failureOf = (repo, lane) => {
-    const gate = lane.gate
-    if (!gate || gate.result !== 'failed' || !gate.current || !gate.failures?.length) return null
-    const failing = failingOf(gate.tests)
+/** Why a run failed: the tests that did not pass, where they wrote JUnit; then each failing step, and its last lines.
+    `whose`, before each step, where it is not the lane's verification: "Full suite". */
+const failureBlock = (repo, lane, run, whose = null) => {
+    const failing = failingOf(run.tests)
     return el('div', { class: 'failure' },
         failing ? [
             el('div', { class: 'files-head', text: failing.head }),
             el('ul', { class: 'failing' }, [...failing.names, failing.more].filter(Boolean).map((text) => el('li', { text })))
         ] : null,
-        gate.failures.flatMap((failure) => [
-            el('div', { class: 'files-head', text: `${failure.what} failed${failure.status !== null && failure.status !== undefined ? ` (exit ${failure.status})` : ''}` }),
+        (run.failures ?? []).flatMap((failure) => [
+            el('div', { class: 'files-head', text: `${whose ? `${whose}: ` : ''}${failure.what} failed${failure.status !== null && failure.status !== undefined ? ` (exit ${failure.status})` : ''}` }),
             failure.tail ? tailOf(repo, lane, failure.tail) : null
         ]))
+}
+/** Why the lane's verification on this commit failed; and its full suite's, where it runs before a land. */
+const failureOf = (repo, lane) => {
+    const gate = lane.gate
+    const full = lane.full
+    return [
+        gate?.result === 'failed' && gate.current && gate.failures?.length ? failureBlock(repo, lane, gate) : null,
+        full?.result === 'failed' && full.current && full.failures?.length && !lane.review ? failureBlock(repo, lane, full, 'Full suite') : null
+    ].filter(Boolean)
 }
 
 /** A new lane's name, typed in the row of the commit it will start from. Enter makes it; Escape leaves it. */
@@ -2477,7 +2666,11 @@ const laneCard = (repo, lane, forked = true) => {
             () => readHistory(repo, 'fork', `fork:${lane.name}`, lane)),
         lane.dirty && lane.operation ? uncommittedOf(repo, lane.path, lane.name, lane.dirty) : null,
         merged && lane.sinceMerge === null && lane.pull?.head ? el('span', { text: `#${lane.pull.number}'s commit is not in its history now: what it merged cannot be told apart` }) : null,
-        lane.pending ? null : keyed(gateOf(repo, lane), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier} ${testsSaidOf(gate)}`),
+        lane.pending ? null : keyed(gateOf(repo, lane, `${key}:timings`), `${key}:gate`, gate && `${gate.result} ${gate.current} ${gate.narrowed} ${gate.tier} ${testsSaidOf(gate)}`),
+        // Much slower than its tier's usual runs, beside it; and, where a land needs it too, the full suite's own.
+        lane.pending || !gate?.current ? null : keyed(slowMark(gate, `${key}:timings`), `${key}:slower`, true),
+        lane.pending ? null : keyed(laneFullOf(repo, lane, `${key}:full-timings`), `${key}:full`, true),
+        lane.pending || !lane.full?.current ? null : keyed(slowMark(lane.full, `${key}:full-timings`), `${key}:full-slower`, true),
         lane.pending ? null : keyed(pushedOf(lane), `${key}:pushed`, true),
         stack0(lane) ? null : keyed(badgesOf(repo, lane), `${key}:badges`, true),
         keyed(serverOf(lane), `${key}:serving`))
@@ -2577,6 +2770,9 @@ const laneCard = (repo, lane, forked = true) => {
         liveOf(repo, lane),
         detail && tone === 'risk' ? el('p', { class: 'why', text: detail }) : null,
         failureOf(repo, lane),
+        // Where its time went, opened from its verification's words.
+        !lane.pending && expanded.has(`${key}:timings`) && hasTimings(gate) ? timingsOf(gate) : null,
+        !lane.pending && expanded.has(`${key}:full-timings`) && lane.full?.current && hasTimings(lane.full) ? timingsOf(lane.full) : null,
         lane.operation && (lane.conflicts?.length || conflictButtons.length)
             ? el('div', { class: 'files conflicts' },
                 el('div', { class: 'conflicts-head' },
@@ -2853,6 +3049,8 @@ const logOf = (repo) => {
         if (index === 0) rows.push(mainChangesRow(repo))
         rows.push(commitRow(repo, commit, `${index === 0 ? 'tip' : ''}${index === root ? ' root' : ''}`, index === 0 ? repo.integrationBranch : null))
         rows.push(inlineDetails(repo, commit))
+        // Main's full suite, where the project runs it on main: under main's newest commit, whichever it ran on.
+        if (index === 0) rows.push(mainFullRow(repo))
     })
     if (spine.length < repo.spine.length) {
         rows.push(el('li', { class: 'older', text: `${plural(repo.spine.length - spine.length, 'older commit')} of ${repo.integrationBranch}: Show in an Editor Tab has them` }))
@@ -3043,7 +3241,8 @@ const landingRow = (repo, lane, item = null) => {
     },
         el('th', { scope: 'row', 'data-label': 'Lane' }, name, wantsBadge(repo.id, lane.name)),
         cell('Needs', state(tone, word, 'small'), why ? el('div', { class: 'landing-why', text: why }) : null),
-        cell('Verified', gateOf(repo, lane) ?? el('span', { class: 'muted', text: 'Not yet' })),
+        cell('Verified', gateOf(repo, lane) ?? el('span', { class: 'muted', text: 'Not yet' }),
+            lane.gate?.current ? slowMark(lane.gate) : null, laneFullOf(repo, lane), lane.full?.current ? slowMark(lane.full) : null),
         cell('Changes', changes.length ? changes.map((part) => el('div', {}, part)) : none()),
         cell('Collides with', collisions.length ? collisions.map((collision) => el('div', { class: 'landing-collision', title: `${lane.name} and ${collision.lane} both change:\n${collision.paths.join('\n')}` },
             el('span', { class: 'queue-name', 'data-hue': hueName(repo, collision.lane), text: collision.lane }),
@@ -3275,21 +3474,31 @@ window.addEventListener('resize', () => {
 })
 
 /**
- * What waits on you in the repository shown, in one line under the switcher: an agent that needs you, a gate that
- * failed, a lane ready to land, a pull request waiting on your review. Each opens what it names. Nothing while nothing
+ * What waits on you in the repository shown, in one line under the switcher: main's full suite failed, an agent that
+ * needs you, a gate that failed (a lane's full suite too), a lane ready to land, a pull request waiting on your review. Each opens what it names. Nothing while nothing
  * waits, and nothing at Home, whose cards say it for every repository.
  */
+/** Main's full suite shown, its row in view and what it said opened under it: from the strip. */
+const showMainFull = (repo) => {
+    const key = `${repo.id}:main-full`
+    if (!expanded.has(key)) { expanded.add(key); keep({ expanded: [...expanded] }) }
+    draw(true)
+    focusLane(repo.id, ':full-suite')
+}
 /** What waits on you in a repository, each [tone, words, key, what opens it]: the strip's, and the title's count. */
 const waitingIn = (repo) => {
     if (!repo || repo.error) return []
     const items = []
     const lanes = repo.lanes.filter((lane) => (lane.kind === 'working' || lane.kind === 'fresh') && !lane.aside)
     const open = (lane) => () => focusLane(repo.id, lane.name)
+    // Main's full suite failed: first, as `lanes` says it first, until a run on main passes; it opens main's row, and why.
+    if (repo.fullSuite?.main?.last?.result === 'failed') items.push(['risk', `Full suite failed on ${repo.integrationBranch}`, `${repo.id}:full-failed`, () => showMainFull(repo)])
     for (const lane of lanes) {
         const words = wantsWords(repo.id, lane.name)
         if (words) items.push(['warn', `${words} in ${lane.name}`, `${repo.id}/${lane.name}:needs`, open(lane)])
     }
     for (const lane of lanes) if (lane.gate?.current && lane.gate.result === 'failed') items.push(['risk', `${lane.name} failed verification`, `${repo.id}/${lane.name}:failed`, open(lane)])
+    for (const lane of lanes) if (lane.full?.current && lane.full.result === 'failed' && !lane.review) items.push(['risk', `${lane.name} failed the full suite`, `${repo.id}/${lane.name}:full-failed`, open(lane)])
     for (const lane of lanes) if (lane.queue?.verdict === 'land now' && !lane.review) items.push(['done', `${lane.name} ready to land`, `${repo.id}/${lane.name}:ready`, open(lane)])
     const mine = repo.github?.slug ? (current.reviews ?? []).filter((review) => review.repo === repo.github.slug) : []
     for (const review of mine) items.push(['warn', `#${review.number} waits on your review`, `${repo.id}:review:${review.number}`, safeHref(review.url)])
@@ -3411,6 +3620,7 @@ const mainWords = (repo) => {
     if (!main.onIntegration) words.push(state('warn', `Main checkout on ${main.branch}`, 'small'))
     if (main.operation) words.push(state('risk', `Main checkout part-way through a ${main.operation}`, 'small'))
     if (main.dirty) words.push(state('warn', `${main.dirty} uncommitted in the main checkout`, 'small'))
+    if (repo.fullSuite?.main?.last?.result === 'failed') words.push(state('risk', 'Full suite failed', 'small'))
     const newest = repo.spine?.[0]
     if (newest?.at) words.push(el('span', { text: `${base} moved ${ago(newest.at)}`, title: `${newest.subject} · ${exactly(newest.at)}` }))
     return words

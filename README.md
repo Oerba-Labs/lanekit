@@ -677,6 +677,10 @@ timed, and as *at most* the tenth's time where it kept ten. It never fails a ver
 the ten, slow is what is usual, and it is not said again. lanekit's own `./check` writes `lanekit.xml` into
 `$LAB_RESULTS` when it is set, and runs `node --test` exactly as before when it is not.
 
+The page says it too: *4.4× slower than usual* beside the verification's words, a lane's or a full suite's, and either
+opens under it how much slower, the usual run's time and day, the tests that grew most, each step's seconds and the
+slowest tests (any verification's, slow or not).
+
 ## The full suite: `gate.full`
 
 Verifying runs the tier a change earns, and a project can make that tier cheap: run only the tests a change touches,
@@ -719,6 +723,11 @@ Full suite (every selftest, nightly at 03:00): running on main at 4e1c2a9 since 
 Full suite (every selftest, nightly at 03:00): no run on main yet; `lane nightly` runs one now.
 FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run began 2 days ago; …
 ```
+
+The page says main's on a line under main's newest commit (*Full suite failed · every selftest · 410 passed, 2 failed ·
+6 h ago*), a failure first in the line of what waits on you and on Home's card, and opens its failing tests and last
+lines from its words. Where it runs before a land, a lane's full suite is a state of its own under its verification,
+and Land, held, says *the full suite has not passed on this commit*.
 
 The scratch copy is a `git clone --shared` of the main checkout (it borrows main's objects, so it costs little), in
 lanekit's cache folder (`~/Library/Caches/lanekit/full/`, `~/.cache/lanekit/full/`, or `LANEKIT_CACHE`), checked out at

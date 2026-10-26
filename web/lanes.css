@@ -191,6 +191,7 @@ html:not([data-compact]) .pane > * { max-width: 1080px; }
 /* A sentence of a state (a refusal, an error) wraps; a short one keeps its line. */
 .facts > .state { white-space: normal; align-items: baseline; }
 .facts > .state::before { align-self: center; }
+.facts > .wraps { white-space: normal; overflow-wrap: anywhere; }
 
 .btn:focus-visible, .name-lane input:focus-visible, .commit-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -301,7 +302,7 @@ html[data-compact] .subject { max-width: none; }
 /* Folded to its name: a hollow mark, and its files, commits and facts out of the way; what waits on you (its agents, a
    question asked in it) stays. */
 .lane.folded > .lane-head > .fold::before { border-radius: 50%; }
-.lane.folded > :is(.changes, .stack, .facts, .collide, .live, .why, .failure, .files.conflicts) { display: none; }
+.lane.folded > :is(.changes, .stack, .facts, .collide, .live, .why, .failure, .timings, .files.conflicts) { display: none; }
 .lane.folded { padding-bottom: 14px; }
 .lane > .lane-head + .agents:empty + .facts:empty { margin: 0; }
 .lane > .changes, .lane > .stack { margin-top: 8px; }
@@ -690,6 +691,28 @@ html[data-compact] .landing-lane > td:has(> .muted:only-child), html[data-compac
 .failure .failing { margin: 4px 0 8px; padding-left: 18px; font-family: var(--mono); font-size: var(--s11); line-height: 1.45; word-break: break-word; }
 .failure .failing:last-child { margin-bottom: 0; }
 .tail .ref.opens { text-decoration: underline; text-underline-offset: 2px; color: var(--accent); }
+/* Where a verification's time went, opened from its words: a slow-down first, on a wash of its tone, then each step's
+   seconds and the slowest tests, a time and what it is to a row, what it is going under the time where the column is
+   too narrow for both. */
+.timings { margin: 6px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--soft); font-size: var(--s12); }
+.timings.slow { background: var(--warn-wash); }
+.timings .files-head { font-family: var(--sans); font-weight: 600; color: var(--ink); margin: 0 0 2px; white-space: normal; overflow-wrap: anywhere; }
+.timings .slow-head { color: var(--warn); }
+.timings p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.timings p.muted { color: var(--muted); }
+.timings p:last-child, .timings .timed:last-child { margin-bottom: 0; }
+.timed { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 2px; }
+.timed li { display: flex; flex-wrap: wrap; gap: 0 10px; min-width: 0; }
+.timed .secs { flex: none; max-width: 100%; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+html[data-compact] .timings { padding: 6px 8px; }
+html[data-compact] .timed .secs { white-space: normal; overflow-wrap: anywhere; }
+.timed .timed-name { flex: 1 1 12em; min-width: 0; font-family: var(--mono); font-size: var(--s11); line-height: 1.6; overflow-wrap: anywhere; }
+/* A verification's words that open its details: dotted, as a state that opens something in the editor is. */
+.state.discloses { padding: 0 4px; margin: 0 -4px; text-decoration: underline dotted; text-underline-offset: 3px; }
+/* Main's full suite, under main's newest commit: a line of facts, set in as a commit's words are, and its details. */
+.log > li.main-full { position: relative; padding: 0 0 6px calc(var(--spine) + 20px); min-width: 0; }
+.log > li.main-full > .facts { margin: 0; gap: 2px 14px; font-size: var(--s12); }
+html[data-surface="sidebar"] .log > li.main-full { padding-left: calc(var(--spine) + 16px); }
 .files .files-head { font-family: var(--sans); font-weight: 600; color: var(--warn); margin-bottom: 4px; white-space: normal; }
 
 .confirm {
