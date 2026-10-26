@@ -3,7 +3,9 @@
  * own, on files in the shapes pytest, `node --test` and go-junit-report write, several at once, none, malformed ones
  * and huge ones; then the gate itself on scratch repositories, giving its steps the folder, emptying its own and
  * leaving the environment's alone, saying the counts and the tests that failed, and changing nothing for a project
- * that writes no JUnit; and what the service, the page's state and the MCP server's gate tool are told.
+ * that writes no JUnit; where the time went (each step's seconds, the slowest tests, and a gate that has got much slower
+ * than its recent runs); lanekit's own ./check writing JUnit only where it is asked to; and what the service, the page's
+ * state and the MCP server's gate tool are told.
  *
  *     node --test
  *
@@ -18,7 +20,8 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { after, before, test } from 'node:test'
 
-import { countsSaid, LIMITS, parseJUnit, prepareResults, readResults, resultsFolderFor, testsLines, testsShown } from '../lib/results.mjs'
+import { countsSaid, grownSaid, LIMITS, parseJUnit, prepareResults, readResults, resultsFolderFor, SLOWEST, slowestLines, testsGrown, testsLines, testsShown } from '../lib/results.mjs'
+import { SLOWDOWN, slowdownLines, slowdownOf } from '../lib/runs.mjs'
 import { createService } from '../lib/service.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
@@ -295,16 +298,189 @@ test('a folder of its own is emptied first; one somebody else named keeps every 
 })
 
 // ---------------------------------------------------------------------------
+// where the time went
+// ---------------------------------------------------------------------------
+
+/** A self-test runner's JUnit, as homelab's ./check is to write it: suites, a suite in a suite, a file, and two tests
+    without a time that is one. */
+const TIMED = `<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+	<testsuite name="selftests" time="40.5">
+		<testcase name="backup restores" classname="selftest" time="31.25"/>
+		<testcase name="dns answers" classname="selftest" time="0.4"/>
+		<testsuite name="vault">
+			<testcase name="unseals" classname="selftest" time="8.0004"/>
+		</testsuite>
+		<testcase name="no time" classname="selftest"/>
+		<testcase name="a time that is not one" classname="selftest" time="soon"/>
+	</testsuite>
+	<testcase name="lint" file="tools/lint.sh" time="1.5"/>
+</testsuites>
+`
+
+test('each test\'s time, file and suite are read, and the slowest are kept, slowest first, bounded', () => {
+    const parsed = parseJUnit(TIMED)
+    assert.deepEqual(parsed.cases.map(({ name, seconds, file, suite }) => [name, seconds, file, suite]), [
+        ['selftest::backup restores', 31.25, undefined, 'selftests'],
+        ['selftest::dns answers', 0.4, undefined, 'selftests'],
+        ['selftest::unseals', 8, undefined, 'vault'],
+        ['selftest::no time', null, undefined, 'selftests'],
+        ['selftest::a time that is not one', null, undefined, 'selftests'],
+        ['lint', 1.5, 'tools/lint.sh', undefined]
+    ], 'the innermost suite, and none outside every suite')
+    assert.equal(parseJUnit(NODE).cases[4].suite, 'scores')
+
+    const dir = folder('timed')
+    put(dir, 'selftests.xml', TIMED)
+    const tests = readResults(dir)
+    const slowest = [
+        { name: 'selftest::backup restores', suite: 'selftests', seconds: 31.25 },
+        { name: 'selftest::unseals', suite: 'vault', seconds: 8 },
+        { name: 'lint', file: 'tools/lint.sh', seconds: 1.5 },
+        { name: 'selftest::dns answers', suite: 'selftests', seconds: 0.4 }
+    ]
+    assert.deepEqual(tests.slowest, slowest, 'fewer than the bound: every test with a time, and none without one')
+    assert.deepEqual(testsShown(tests).slowest, slowest, 'and the page, the editor and an agent are given them')
+
+    const bulk = folder('timed-bulk')
+    const cases = Array.from({ length: 30 }, (_, i) => `<testcase name="t${i}" time="${i % 15}"/>`).join('')
+    put(bulk, 'bulk.xml', `<testsuite>${cases}</testsuite>`)
+    const kept = readResults(bulk).slowest
+    assert.equal(kept.length, SLOWEST)
+    assert.deepEqual(kept.map((test) => test.name), ['t14', 't29', 't13', 't28', 't12', 't27', 't11', 't26', 't10', 't25'], 'of two as slow, the one read first')
+})
+
+test('the gate names the slowest few with their seconds and where they are; a quick suite, or one without times, names none', () => {
+    const dir = folder('timed-said')
+    put(dir, 'selftests.xml', TIMED)
+    assert.deepEqual(slowestLines(readResults(dir)), [
+        'slowest tests:',
+        '   31s  selftest::backup restores  (selftests)',
+        '  8.0s  selftest::unseals  (vault)',
+        '  1.5s  lint  (tools/lint.sh)',
+        '  0.4s  selftest::dns answers  (selftests)'
+    ])
+    const quick = folder('timed-quick')
+    put(quick, 'pytest.xml', PYTEST)
+    assert.deepEqual(slowestLines(readResults(quick)), [], 'its slowest took 0.003s')
+    assert.deepEqual(slowestLines(testsShown({ files: 1, total: 1, passed: 1 })), [], 'a run recorded before times were kept')
+    assert.deepEqual(slowestLines(null), [])
+})
+
+test('which tests grew: exactly where the earlier run kept the test, at least where it kept a full list without it, new where it kept every test', () => {
+    const then = { slowest: [{ name: 'backup', suite: 'selftests', seconds: 5 }, { name: 'dns', suite: 'selftests', seconds: 1 }] }
+    const now = {
+        slowest: [
+            { name: 'restore', suite: 'selftests', seconds: 50 },
+            { name: 'backup', suite: 'selftests', seconds: 20 },
+            { name: 'backup', suite: 'other', seconds: 6 },
+            { name: 'dns', suite: 'selftests', seconds: 1.5 }
+        ]
+    }
+    const grown = testsGrown(now, then)
+    assert.deepEqual(grown, [
+        { name: 'restore', suite: 'selftests', seconds: 50, was: 0, since: 'new' },
+        { name: 'backup', suite: 'selftests', seconds: 20, was: 5, since: 'was' },
+        { name: 'backup', suite: 'other', seconds: 6, was: 0, since: 'new' }
+    ], 'most grown first; a test is its name in its suite; dns grew by under a second')
+    assert.deepEqual(grown.map(grownSaid), ['new → 50s', '5.0s → 20s', 'new → 6.0s'])
+
+    const full = { slowest: Array.from({ length: SLOWEST }, (_, i) => ({ name: `t${i}`, seconds: SLOWEST - i })) }
+    const after = testsGrown({ slowest: [{ name: 'creeping', seconds: 30 }, { name: 't0', seconds: 10 }] }, full)
+    assert.deepEqual(after, [{ name: 'creeping', seconds: 30, was: 1, since: 'at most' }], 't0 took as long as before')
+    assert.equal(grownSaid(after[0]), 'at most 1.0s → 30s')
+
+    const six = { slowest: Array.from({ length: 6 }, (_, i) => ({ name: `n${i}`, seconds: 10 + i })) }
+    assert.equal(testsGrown(six, { slowest: [{ name: 'other', seconds: 1 }] }).length, 5, 'at most five are named')
+    assert.deepEqual(testsGrown(now, null), [])
+    assert.deepEqual(testsGrown({ slowest: [] }, then), [])
+})
+
+/** A passing run of tier 1 that took `seconds`, as a record holds it, `days` days into October. */
+const pastRun = (days, seconds, extra = {}) => ({
+    id: `2026-10-${String(days).padStart(2, '0')}T12-00-00Z-1-tier1`, kind: 'tier1', tier: 1, result: 'passed',
+    startedAt: `2026-10-${String(days).padStart(2, '0')}T12:00:00.000Z`, durationSeconds: seconds, ...extra
+})
+
+test('a slow-down is a passing run twice the median of its tier\'s last ten passing runs, with five at least to go on', () => {
+    const usual = [25, 24, 26, 25, 27].map((seconds, i) => pastRun(20 - i, seconds))
+    const now = (seconds, extra = {}) => ({ ...pastRun(25, seconds), id: 'now', ...extra })
+    assert.equal(slowdownOf(now(50), usual.slice(0, 4)), null, 'four runs are too few to say what is usual')
+    assert.equal(slowdownOf(now(49), usual), null, 'under twice the median')
+    const twice = slowdownOf(now(50), usual)
+    assert.deepEqual({ ...twice, usual: twice.usual.id }, { seconds: 50, median: 25, runs: 5, ratio: 2, usual: usual[0].id, tests: [], steps: [] },
+        'the usual run is the newest of those at the median')
+    assert.equal(slowdownOf(now(500, { result: 'failed' }), usual), null, 'a failing run is said already')
+    assert.equal(slowdownOf(now(5), [1, 1, 1, 1, 1].map((seconds, i) => pastRun(20 - i, seconds))), null, 'a quick gate is let off: four seconds more is noise')
+    assert.ok(slowdownOf(now(6), [1, 1, 1, 1, 1].map((seconds, i) => pastRun(20 - i, seconds))), 'five seconds more is not')
+
+    // Other tiers and failing runs are not compared with, and only the newest ten that are; the median of an even number
+    // is between the middle two.
+    const mixed = [
+        pastRun(24, 300, { kind: 'tier2', tier: 2 }), pastRun(23, 300, { result: 'failed' }),
+        ...[10, 10, 10, 10, 10, 30, 30, 30, 30, 30].map((seconds, i) => pastRun(22 - i, seconds)),
+        ...[900, 900, 900].map((seconds, i) => pastRun(5 - i, seconds))
+    ]
+    const compared = slowdownOf(now(45), mixed)
+    assert.deepEqual([compared.median, compared.runs], [20, 10])
+    assert.equal(slowdownOf(now(39), mixed), null)
+
+    // Once the slow runs are most of the ten, slow is what is usual and it is not said again.
+    const slowNow = [...[1100, 1100, 1100, 1100, 1100, 1100].map((seconds, i) => pastRun(24 - i, seconds)), ...usual]
+    assert.equal(slowdownOf(now(1100), slowNow), null)
+    assert.equal(slowdownOf(now(1100), slowNow.slice(4)).median, 26, 'two slow runs in: still said')
+    assert.equal(slowdownOf({ ...now(60), id: usual[0].id }, usual), null, 'a run is never compared with itself')
+})
+
+test('a slow-down names the tests that grew most and the steps, against the usual run, and says it does not fail', () => {
+    // homelab's, as it went: about 25s on 11 Oct, about 1,100s on 25 Oct.
+    const before = { files: 1, total: 3, passed: 3, slowest: [{ name: 'selftest::dns', suite: 'selftests', seconds: 12 }, { name: 'selftest::backup', suite: 'selftests', seconds: 0.4 }] }
+    const steps = (lint, tests) => [{ what: 'linting', seconds: lint }, { what: 'running the self-tests', seconds: tests }]
+    const history = [
+        pastRun(24, 26),   // no JUnit then: not the run the tests are compared with
+        ...[25, 24, 27, 25].map((seconds, i) => pastRun(23 - i, seconds, { tests: before, steps: steps(2, seconds - 2) })),
+        pastRun(11, 25, { tests: before, steps: steps(2, 23) })
+    ]
+    const record = {
+        ...pastRun(25, 1100), id: 'now', steps: steps(2.4, 1097.6),
+        tests: { files: 1, total: 4, passed: 4, slowest: [{ name: 'selftest::backup', suite: 'selftests', seconds: 612 }, { name: 'selftest::restore', suite: 'selftests', seconds: 450 }, { name: 'selftest::dns', suite: 'selftests', seconds: 12.5 }] }
+    }
+    const slowdown = slowdownOf(record, history)
+    assert.equal(slowdown.usual.id, history[1].id, 'nearest the median of those with times: 25s, the newest of three')
+    assert.deepEqual(slowdown.steps, [{ what: 'running the self-tests', seconds: 1097.6, was: 23 }], 'linting grew by under a second')
+    assert.deepEqual(slowdown.tests.map((test) => [test.name, test.since, test.was]), [['selftest::backup', 'was', 0.4], ['selftest::restore', 'new', 0]])
+    assert.deepEqual(slowdownLines(slowdown, 1), [
+        'slower than usual: this took 1,100s, 44 times the 25s that tier 1\'s last 6 passing runs here took at the median',
+        '  steps that grew most, against a usual run (25s, 23 Oct):',
+        '    23s → 1,098s  running the self-tests',
+        '  tests that grew most:',
+        '    0.4s → 612s  selftest::backup  (selftests)',
+        '    new → 450s   selftest::restore  (selftests)',
+        '  This does not fail verifying. A busy machine slows it too: if the next run is as slow, it is the project.'
+    ])
+    // One step is the whole run: naming it says nothing the first line did not.
+    assert.deepEqual(slowdownOf({ ...record, steps: [{ what: 'running ./check', seconds: 1100 }] }, history).steps, [])
+    assert.deepEqual(slowdownLines(null, 1), [])
+    assert.deepEqual(Object.keys(SLOWDOWN), ['ratio', 'recent', 'least', 'seconds'])
+})
+
+// ---------------------------------------------------------------------------
 // the gate
 // ---------------------------------------------------------------------------
 
-/** A repository with lanes whose one gate step is `script`, run by sh in the checkout, and a lane of it with a commit. */
+/**
+ * A repository with lanes whose one gate step is `script`, run by sh in the checkout, and a lane of it with a commit;
+ * `script` may be several steps instead, as `{ what: script }`.
+ */
 const project = (name, script, { ignore = '.env\n.lanekit/\n', parent = 'work' } = {}) => {
+    const steps = typeof script === 'string'
+        ? [{ what: 'running the tests', command: 'sh', args: ['-c', script] }]
+        : Object.entries(script).map(([what, one]) => ({ what, command: 'sh', args: ['-c', one] }))
     const repo = path.join(scratch, parent, name)
     fs.mkdirSync(repo, { recursive: true })
     fs.writeFileSync(path.join(repo, 'lane.config.json'), JSON.stringify({
         name, slug: name, integrationBranch: 'main', roots: {},
-        gate: { sides: {}, seam: [], generated: [], tiers: { 1: { label: 'the tests', steps: [{ what: 'running the tests', command: 'sh', args: ['-c', script] }] } } },
+        gate: { sides: {}, seam: [], generated: [], tiers: { 1: { label: 'the tests', steps } } },
         lane: { portBase: 19801, portCeiling: 19899, copyOnCreate: [], linkOnCreate: [], env: { file: '.env', portKey: 'PORT', perLane: {} }, makeDirs: [], seed: [], provision: [] }
     }))
     fs.writeFileSync(path.join(repo, '.gitignore'), ignore)
@@ -386,7 +562,10 @@ test('a project that writes no JUnit is reported exactly as before: no word of t
     assert.match(lines[step + 5], /VERIFIED/)
     const record = newestRun(repo)
     assert.equal('tests' in record, false)
-    assert.deepEqual(Object.keys(record), ['id', 'kind', 'tier', 'branch', 'sha', 'worktree', 'result', 'narrowed', 'earned', 'why', 'files', 'startedAt', 'durationSeconds', 'failures'])
+    // As before but for each step's seconds, which every run keeps since 25 Oct 2026.
+    assert.deepEqual(Object.keys(record), ['id', 'kind', 'tier', 'branch', 'sha', 'worktree', 'result', 'narrowed', 'earned', 'why', 'files', 'startedAt', 'durationSeconds', 'steps', 'failures'])
+    assert.deepEqual(record.steps.map((step) => step.what), ['running the tests'])
+    assert.ok(Number.isFinite(record.steps[0].seconds))
 })
 
 test('malformed JUnit is said once and never fails a gate whose steps passed', () => {
@@ -419,6 +598,75 @@ test('a .lanekit that is a link is not followed: the gate empties only a folder 
     const run = gate(lane)
     assert.match(run.out, /LAB_RESULTS is .*\/\.git\/worktrees\/linked-work\/lanekit-results\n/)
     assert.deepEqual(fs.readdirSync(path.join(elsewhere, 'results')), ['keep.txt'])
+})
+
+test('a gate keeps each step\'s seconds, says them where there are several, and names the slowest tests', () => {
+    put(scratch, 'fixtures/selftests.xml', TIMED)
+    const { repo, lane } = project('stepped', { building: 'sleep 1', 'running the self-tests': `cp '${path.join(scratch, 'fixtures/selftests.xml')}' "$LAB_RESULTS/selftests.xml"` })
+    const run = gate(lane)
+    assert.equal(run.code, 0, run.out)
+    assert.match(run.out, /\[verify +\d+s\] the steps took \d\.\ds building, \d\.\ds running the self-tests\n/)
+    assert.match(run.out, /\[verify +\d+s\] tests: 6 passed\n\[verify +\d+s\] slowest tests:\n {3}31s {2}selftest::backup restores {2}\(selftests\)\n {2}8\.0s {2}selftest::unseals {2}\(vault\)\n/)
+    assert.doesNotMatch(run.out, /slower than usual/, 'no runs before it to be slower than')
+    const record = newestRun(repo)
+    assert.deepEqual(record.steps.map((step) => step.what), ['building', 'running the self-tests'])
+    assert.ok(record.steps[0].seconds >= 1 && record.steps[0].seconds < record.durationSeconds + 1, JSON.stringify(record.steps))
+    assert.equal(record.tests.slowest[0].name, 'selftest::backup restores')
+    assert.equal('slowdown' in record, false)
+})
+
+test('a gate much slower than its tier\'s recent passing runs says so, names what grew, keeps it with the run, and still passes', () => {
+    put(scratch, 'fixtures/selftests.xml', TIMED)
+    const { repo, lane } = project('slowed', { building: 'true', 'running the self-tests': `sleep 7; cp '${path.join(scratch, 'fixtures/selftests.xml')}' "$LAB_RESULTS/selftests.xml"` })
+    // Five quick runs before it, as other lanes' gates would have left them; dated long ago, so they sort before it.
+    const runs = path.join(repo, '.lanekit', 'runs')
+    fs.mkdirSync(runs, { recursive: true })
+    for (let day = 1; day <= 5; day++) {
+        const id = `2000-01-0${day}T12-00-00Z-1-tier1`
+        fs.writeFileSync(path.join(runs, `${id}.json`), JSON.stringify({
+            id, kind: 'tier1', tier: 1, branch: 'earlier', result: 'passed', startedAt: `2000-01-0${day}T12:00:00.000Z`, durationSeconds: 1,
+            steps: [{ what: 'building', seconds: 0.1 }, { what: 'running the self-tests', seconds: 0.6 }],
+            tests: { files: 1, total: 4, passed: 4, slowest: [{ name: 'selftest::backup restores', suite: 'selftests', seconds: 0.4 }, { name: 'lint', file: 'tools/lint.sh', seconds: 0.3 }] }
+        }))
+    }
+    const run = gate(lane)
+    assert.equal(run.code, 0, run.out)
+    assert.match(run.out, /\[verify +\d+s\] slower than usual: this took [\d.]+s, [\d.]+ times the 1\.0s that tier 1's last 5 passing runs here took at the median\n/)
+    assert.match(run.out, / {2}steps that grew most, against a usual run \(1\.0s, 5 Jan\):\n {4}0\.6s → \d\.\ds {2}running the self-tests\n/)
+    assert.match(run.out, / {2}tests that grew most:\n {4}0\.4s → 31s {3}selftest::backup restores {2}\(selftests\)\n {4}new → 8\.0s {3}selftest::unseals {2}\(vault\)\n {4}0\.3s → 1\.5s {2}lint {2}\(tools\/lint\.sh\)\n/,
+        'unseals is new: the usual run kept fewer than ten, so every test it timed')
+    assert.match(run.out, / {2}This does not fail verifying\..*\n\[verify +\d+s\] recording the result…\n/)
+    assert.match(run.out, /VERIFIED/)
+    const { slowdown } = newestRun(repo)
+    assert.deepEqual([slowdown.median, slowdown.runs, slowdown.usual.id], [1, 5, '2000-01-05T12-00-00Z-1-tier1'])
+    assert.ok(slowdown.seconds >= 7 && slowdown.ratio >= 7, JSON.stringify(slowdown))
+    assert.deepEqual(slowdown.tests.map((test) => [test.name, test.since]), [['selftest::backup restores', 'was'], ['selftest::unseals', 'new'], ['lint', 'was']])
+    assert.deepEqual(slowdown.steps.map((step) => step.what), ['running the self-tests'])
+})
+
+test('lanekit\'s ./check runs node --test as before without LAB_RESULTS, and with it writes JUnit there too, hiding it from the tests', () => {
+    const kit = folder('check-kit')
+    fs.copyFileSync(path.join(KIT, 'check'), path.join(kit, 'check'))
+    put(kit, 'test/alone.test.mjs', `import assert from 'node:assert/strict'
+import { test } from 'node:test'
+test('the tests are not given the folder', () => { assert.equal(process.env.LAB_RESULTS, undefined) })
+`)
+    // A node --test of its own, not a child of this one's.
+    const clean = { ...env }
+    delete clean.NODE_TEST_CONTEXT
+    const said = (out) => out.replace(/duration_ms:? [\d.]+/g, 'duration_ms N')
+    const direct = spawnSync(process.execPath, ['--test'], { cwd: kit, env: clean, encoding: 'utf8' })
+    const before = spawnSync(path.join(kit, 'check'), [], { cwd: scratch, env: clean, encoding: 'utf8' })
+    assert.equal(before.status, 0, before.stdout + before.stderr)
+    assert.equal(said(before.stdout), said(direct.stdout), 'exactly node --test\'s own output')
+    assert.deepEqual(fs.readdirSync(kit).sort(), ['check', 'test'])
+
+    const named = spawnSync(path.join(kit, 'check'), [], { cwd: scratch, env: { ...clean, LAB_RESULTS: 'check-results' }, encoding: 'utf8' })
+    assert.equal(named.status, 0, named.stdout + named.stderr)
+    assert.equal(said(named.stdout), said(direct.stdout), 'the console output is as it was: TAP, into a pipe')
+    const tests = readResults(path.join(scratch, 'check-results'))
+    assert.equal(countsSaid(tests), '1 passed', 'a relative LAB_RESULTS is taken from where ./check was run')
+    assert.deepEqual(fs.readdirSync(path.join(scratch, 'check-results')), ['lanekit.xml'])
 })
 
 // ---------------------------------------------------------------------------
