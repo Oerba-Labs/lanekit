@@ -1,0 +1,461 @@
+// What the page's end-to-end tests (test/e2e-*.test.mjs) share: the scratch repositories they begin from, `lane web`
+// serving them, and Chrome driven over the DevTools protocol (node's own WebSocket: no dependency), as a person drives
+// the page, pointer and keyboard. Once as a browser shows it, once as the editor does, with a stand-in for the extension
+// that answers from the same server and writes down what the page asked it to open. GitHub is lanekit's stand-in for gh
+// (test/fake-gh).
+//
+// SPLIT (25 Oct 2026). These were one file of 27 tests run one after another against one Chrome, and at 194 s it was
+// the whole of ./check's wait: every other file was done in 25. Now each file of them loads this, and so has its own
+// scratch folder, repositories, server and Chrome, begun as this begins them; `node --test` runs the files side by side.
+// A test leans only on what this makes and on the tests before it in its own file, never on another file's.
+//
+// No extension, so `node --test` does not take it for a test (its default patterns run any .js, .cjs or .mjs under
+// test/), as test/fake-gh has none. CommonJS, so every node 22 imports it: a file with no extension is read as ES
+// module syntax only by a node that detects that (22.7 on). A file that loads it, loads it before lanekit's modules,
+// and so has the stand-in for gh first on the PATH, as they read the PATH as they load.
+'use strict'
+
+const assert = require('node:assert/strict')
+const { execFileSync, spawn, spawnSync } = require('node:child_process')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+
+const KIT = path.resolve(__dirname, '..')
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// How long to wait for what should come first, raced against it: a timer that holds nothing open, so a file done with
+// its tests ends then, not five seconds later when the last tab's or Chrome's own wait runs out. Once per file, and
+// there are four.
+const orAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref())
+
+const chromeAt = () => {
+    const named = (name) => { const found = spawnSync('which', [name], { encoding: 'utf8' }); return found.status === 0 ? found.stdout.trim() : null }
+    return [process.env.LANEKIT_CHROME, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ...['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'].map(named)].find((candidate) => candidate && fs.existsSync(candidate)) ?? null
+}
+const CHROME = chromeAt()
+// A CI runner is slower than a desk, and runs every test file at once on few cores: everything waits longer there.
+const SLOW = process.env.CI ? 3 : 1
+const skip = !CHROME ? 'no Chrome or Chromium here (LANEKIT_CHROME names one)' : typeof WebSocket !== 'function' ? 'this node has no WebSocket (node 22 or newer has)' : false
+
+const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lanekit-e2e-')))
+const work = path.join(scratch, 'work')
+const repo = path.join(work, 'demo')
+const origin = path.join(scratch, 'origin.git')
+const other = path.join(scratch, 'other')
+const bin = path.join(scratch, 'bin')
+const ghState = path.join(scratch, 'gh-state.json')
+// The stand-in for gh first on the PATH, in this process too, before lanekit's modules load: they read the PATH then.
+Object.assign(process.env, { PATH: `${bin}${path.delimiter}${process.env.PATH}`, FAKE_GH_STATE: ghState })
+const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
+    GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    LANEKIT_PORTS: '',
+    // The agents' reports, and the rest of lanekit's state, in the scratch folder: never the person's own.
+    XDG_STATE_HOME: path.join(scratch, 'state')
+}
+Object.assign(process.env, env)
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const lane = (...args) => execFileSync(process.execPath, [path.join(KIT, 'dev', 'lane.mjs'), ...args], { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+const write = (cwd, file, text) => fs.writeFileSync(path.join(cwd, file), text)
+const commit = (cwd, file, text, message) => { write(cwd, file, text); git(cwd, 'add', '-A'); git(cwd, 'commit', '-qm', message) }
+const laneDir = (name) => path.join(work, `demo-${name}`)
+const status = (cwd) => execFileSync('git', ['status', '--porcelain'], { cwd, env, encoding: 'utf8' }).split('\n').filter(Boolean).sort()
+
+// ---------------------------------------------------------------------------
+// Chrome, over the DevTools protocol
+// ---------------------------------------------------------------------------
+
+const launch = async () => {
+    const profile = fs.mkdtempSync(path.join(scratch, 'chrome-'))
+    const child = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+        '--disable-gpu', '--disable-extensions', '--disable-background-networking', '--disable-component-update', '--disable-sync',
+        '--use-mock-keychain', '--password-store=basic', '--window-size=1400,1000',
+        // A CI runner on Linux gives Chrome no user namespaces for its sandbox; the page it opens is our own, on the loopback.
+        ...(process.env.CI && process.platform === 'linux' ? ['--no-sandbox'] : []), 'about:blank'], { stdio: 'ignore' })
+    const portFile = path.join(profile, 'DevToolsActivePort')
+    let lines = []
+    for (let i = 0; i < 300 && !lines[1]; i++) {
+        await sleep(50)
+        if (fs.existsSync(portFile)) lines = fs.readFileSync(portFile, 'utf8').split('\n')
+    }
+    if (!lines[1]) { child.kill(); throw new Error('Chrome did not say where its DevTools listen') }
+    const socket = new WebSocket(`ws://127.0.0.1:${lines[0]}${lines[1]}`)
+    await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }) })
+    let sequence = 0
+    const waiting = new Map()
+    socket.addEventListener('message', (event) => {
+        const message = JSON.parse(event.data)
+        const asked = message.id && waiting.get(message.id)
+        if (!asked) return
+        waiting.delete(message.id)
+        if (message.error) asked.reject(new Error(`${message.error.message}${message.error.data ? `: ${message.error.data}` : ''}`)); else asked.resolve(message.result)
+    })
+    // Every ask answered or refused in time: a Chrome that stops answering is said, with what it was asked, rather
+    // than left to the test's own timeout, which says nothing of where it stood.
+    const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+        const id = ++sequence
+        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Chrome did not answer ${method} in 20 s`)) }, 20_000)
+        waiting.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value) }, reject: (error) => { clearTimeout(timer); reject(error) } })
+        socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+    })
+    const gone = new Promise((resolve) => child.once('exit', resolve))
+    // Closed as Chrome closes itself, so it is done writing its profile before the scratch folder goes; killed
+    // outright only if it has not gone a few seconds later.
+    const close = async () => {
+        await Promise.race([send('Browser.close').catch(() => null), orAfter(5000)])
+        try { socket.close() } catch { /* gone */ }
+        await Promise.race([gone, orAfter(5000)])
+        if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await Promise.race([gone, orAfter(2000)]) }
+    }
+    return { send, close }
+}
+
+/**
+ * The extension, as far as the page knows it: acquireVsCodeApi, answering the page's asks from the same server a browser
+ * asks, telling the page the state every second as the extension does when anything changes, and writing down each
+ * thing the page asks to open (a diff, a terminal) in window.__opened, where the editor would open it.
+ */
+const EDITOR = `
+window.__opened = []
+window.acquireVsCodeApi = () => {
+    let kept = { only: 'demo' }
+    const asJson = (response) => response.json()
+    const post = (path, body) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-lanes': '1' }, body: JSON.stringify(body) })
+    const methods = {
+        state: () => fetch('api/state', { cache: 'no-store' }).then(asJson),
+        press: async (body) => { const response = await post('api/jobs', body); return { status: response.status, body: await response.json() } },
+        job: ({ id, from }) => fetch('api/jobs/' + id + '?from=' + from).then((response) => (response.ok ? response.json() : null)),
+        cancel: ({ id }) => fetch('api/jobs/' + id + '/cancel', { method: 'POST', headers: { 'x-lanes': '1' } }).then((response) => response.ok),
+        commit: ({ repo, sha }) => fetch('api/commit?repo=' + encodeURIComponent(repo) + '&sha=' + sha).then(asJson),
+        history: ({ repo, way, lane }) => post('api/history', { repo, way, lane }).then(asJson),
+        open: (params) => { window.__opened.push(params); return {} },
+        copy: () => true,
+        tab: () => true
+    }
+    let reading = false
+    setInterval(async () => {
+        if (reading) return
+        reading = true
+        try { window.postMessage({ type: 'state', state: await methods.state() }, '*') } catch {} finally { reading = false }
+    }, 1000)
+    return {
+        postMessage: (message) => {
+            if (message?.type !== 'request') return
+            Promise.resolve().then(() => methods[message.method](message.params ?? {}))
+                .then((value) => window.postMessage({ type: 'reply', id: message.id, ok: true, value }, '*'),
+                    (error) => window.postMessage({ type: 'reply', id: message.id, ok: false, error: String(error) }, '*'))
+        },
+        setState: (value) => { kept = value },
+        getState: () => kept
+    }
+}`
+
+/**
+ * The page as the narrowest of the machines that run these tests draws it: a scrollbar that takes its 15px of the
+ * window rather than floating over the page, as CI's do and a Mac's need not (where a 170px window was 155px of page),
+ * and a sans as wide as Linux's (Verdana where there is one, else DejaVu Sans, which CI's Linux draws by default).
+ * And, as `open` emulates touch for it, no hover, as Linux's headless Chrome has none: what shows on hover is always out.
+ */
+const WIDE = `addEventListener('DOMContentLoaded', () => {
+    const style = document.createElement('style')
+    style.textContent = ':root { --sans: Verdana, "DejaVu Sans", sans-serif !important } ::-webkit-scrollbar { width: 15px; height: 15px } ::-webkit-scrollbar-thumb { background: #999 }'
+    document.head.append(style)
+})`
+
+/**
+ * A tab on `url`, and what a test does with it: run a function in the page, wait for one to be true, point, click, type.
+ * `still`: a machine that asks for less motion. Without it, one that does not, whatever the machine running the tests
+ * says: CI's macOS runners ask for less motion, and Chrome follows them. `wide`: the page drawn as WIDE says.
+ */
+const open = async (browser, url, { editor = false, still = false, wide = false, width = 1400, height = 1000 } = {}) => {
+    const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' })
+    const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true })
+    const send = (method, params) => browser.send(method, params, sessionId)
+    await send('Page.enable')
+    await send('Runtime.enable')
+    await send('Page.setBypassCSP', { enabled: true })
+    /** The window's size: 1400 by 1000 unless a test asks for less, as a narrow window is. */
+    const resize = (w, h) => send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false })
+    await resize(width, height)
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: still ? 'reduce' : 'no-preference' }] })
+    if (wide) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+    if (editor) await send('Page.addScriptToEvaluateOnNewDocument', { source: EDITOR })
+    if (wide) await send('Page.addScriptToEvaluateOnNewDocument', { source: WIDE })
+    await send('Page.navigate', { url })
+    // Each function is run with the finders below in its scope.
+    const run = async (fn, ...args) => {
+        const result = await send('Runtime.evaluate', { expression: `(() => { ${FINDERS} return (${fn})(...${JSON.stringify(args)}) })()`, awaitPromise: true, returnByValue: true })
+        if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
+        return result.result.value
+    }
+    const until = async (fn, args = [], { timeout = 30_000 * SLOW, what = String(fn).slice(0, 160) } = {}) => {
+        const by = Date.now() + timeout
+        let last
+        for (let i = 0; Date.now() < by; i++) {
+            try { last = await run(fn, ...args); if (last) return last } catch (error) { last = error.message }
+            // Asked again now and then rather than at the page's own pace (every four seconds in a browser).
+            if (i % 6 === 5) await run(() => (typeof refresh === 'function' ? refresh() : null)).catch(() => {})
+            await sleep(150)
+        }
+        const shown = await run(() => `${location.href}: ${document.body?.innerText.replace(/\s+/g, ' ').slice(0, 600)}`).catch((error) => error.message)
+        // And what LaneKit ran meanwhile, the newest's output's end with it: where a press went wrong, it says why.
+        const ran = await run(async () => {
+            const jobs = (await (await fetch('api/state', { cache: 'no-store' })).json()).jobs ?? []
+            const newest = jobs[0] ? await (await fetch(`api/jobs/${jobs[0].id}`)).json() : null
+            return `${jobs.slice(0, 4).map((job) => `${job.verb}${job.lane ? ` ${job.lane}` : ''} ${job.state}${job.code === null ? '' : ` (exit ${job.code})`}`).join(', ') || 'nothing'}` +
+                (newest ? `; the newest printed: ${String(newest.output).slice(-800)}` : '')
+        }).catch((error) => error.message)
+        throw new Error(`waited ${timeout} ms for ${what}; last said ${JSON.stringify(last)}; the page showed ${shown}; LaneKit ran ${ran}`)
+    }
+    /** The pointer onto the middle of what `find` finds in the page (a function there that returns an element), once the
+        page has stopped moving: a person points at a thing where it comes to rest, not where it is sliding from. */
+    const pointAt = async (find, ...args) => {
+        const at = await until(`(...args) => { if (document.getAnimations().some((one) => /^motion-/.test(one.id))) return null;
+            const node = (${find})(...args); if (!node) return null; node.scrollIntoView({ block: 'center' });
+            const box = node.getBoundingClientRect(); return box.width && box.height ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null }`, args, { what: `${find}` })
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
+        return at
+    }
+    // The pointer goes to it first, as a person's would (what shows only under the pointer shows), and then it is
+    // clicked as it is found at that moment: a page that redrew in between (an answer from GitHub coming in, and a
+    // line drawn above) would otherwise take the press somewhere else. Its click bubbles as a person's does.
+    const click = async (find, ...args) => {
+        await pointAt(find, ...args)
+        await until(`(...args) => { const node = (${find})(...args); if (!node) return false; node.click(); return true }`, args, { what: `${find}, clicked` })
+    }
+    const type = (text) => send('Input.insertText', { text })
+    /** A key pressed and let go, as a keyboard sends it: Tab (with Shift), j, the arrows. */
+    const KEY_CODES = { Tab: 9, Enter: 13, ' ': 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }
+    const key = async (name, { shift = false } = {}) => {
+        const vk = KEY_CODES[name] ?? name.toUpperCase().charCodeAt(0)
+        const code = name.length === 1 && name !== ' ' ? `Key${name.toUpperCase()}` : name === ' ' ? 'Space' : name
+        const text = name.length === 1 ? name : undefined
+        for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: name, code, windowsVirtualKeyCode: vk, modifiers: shift ? 8 : 0, ...(type === 'keyDown' && text ? { text } : {}) })
+        await sleep(40)
+    }
+    // Closing a tab never holds a test past what it found: a failure's own words are what it reports.
+    const close = () => Promise.race([browser.send('Target.closeTarget', { targetId }).catch(() => null), orAfter(5000)])
+    return { run, until, pointAt, click, type, key, close, resize }
+}
+
+// Finders, run in the page: each is a function there. A test file imports them too, though they only ever run in the
+// page, so the functions it hands the page name something it has.
+const card = (name) => document.querySelector(`li.lane[data-key="demo/${name}"]`)
+const buttonIn = (selector, label) => [...(document.querySelector(selector)?.querySelectorAll('button') ?? [])]
+    .find((button) => (button.getAttribute('aria-label') || button.textContent).trim().startsWith(label))
+const laneButton = (name, label) => [...(document.querySelector(`li.lane[data-key="demo/${name}"]`)?.querySelectorAll('button') ?? [])]
+    .find((button) => (button.getAttribute('aria-label') || button.textContent).trim().startsWith(label))
+/** The finders above, put in the scope of every function a test runs in the page. */
+const FINDERS = `const card = ${card}; const buttonIn = ${buttonIn}; const laneButton = ${laneButton};`
+
+/**
+ * What the page animates from now on, written down as each starts (window.__motion): its id, what it is on (its key, the
+ * lane it is in, whether it is the copy of something that went, inert and with nothing of the thing itself to find), its
+ * words, its transforms, and whether it slides or scales anything rather than only fading it. Run in the page.
+ */
+const RECORD = () => {
+    if (!window.__recording) {
+        window.__recording = true
+        const animate = Element.prototype.animate
+        Element.prototype.animate = function (keyframes, options) {
+            const frames = Array.isArray(keyframes) ? keyframes : [keyframes]
+            window.__motion?.push({
+                id: options?.id ?? '', key: this.dataset?.anim ?? null, lane: this.closest?.('li.lane')?.dataset.key ?? null,
+                leaving: this.matches?.('.leaving') ?? false, inert: this.inert === true,
+                findable: Boolean(this.matches?.('.leaving') && this.querySelector('[data-key], [data-anim], [tabindex], [id]')),
+                text: this.textContent.replace(/\s+/g, ' ').trim().slice(0, 240),
+                // Which of a repository's kept parts it is, when it is one: its log, its landing table, what settled.
+                part: this.parentElement?.matches?.('section.repo') ? (this.matches('ol.log') ? 'log' : this.dataset.anim?.split(':').pop() ?? null) : null,
+                transforms: frames.map((frame) => frame.transform).filter((transform) => transform && transform !== 'none'),
+                moves: frames.some((frame) => (frame.transform && frame.transform !== 'none') || frame.scale)
+            })
+            return animate.call(this, keyframes, options)
+        }
+    }
+    window.__motion = []
+    return true
+}
+/** The page at rest: nothing of its own motion under way (its loops, a pulse or a spinner, go on). */
+const atRest = () => !document.getAnimations().some((one) => /^motion-/.test(one.id))
+
+// ---------------------------------------------------------------------------
+// the repositories, the server and the browser
+// ---------------------------------------------------------------------------
+
+let browser, server
+
+/**
+ * Everything a file's tests begin from, made afresh for each file in its own scratch folder: two repositories under
+ * work/, one with four lanes and an origin, and #8 waiting on this person's review; the server on them; Chrome; and a
+ * tab on demo, its four lanes drawn. What a file's tests make of them after is that file's own.
+ */
+const begin = async () => {
+    fs.mkdirSync(bin)
+    fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(KIT, 'test', 'fake-gh')}" "$@"\n`, { mode: 0o755 })
+    git(scratch, 'init', '-q', '--bare', '-b', 'main', origin)
+    const config = (portBase) => JSON.stringify({
+        name: 'Demo', slug: 'demo', integrationBranch: 'main', roots: {},
+        gate: { sides: {}, seam: [], generated: [], tiers: { 1: { label: 'check', steps: [{ what: 'the checks', command: 'true', args: [] }] } } },
+        lane: { portBase, portCeiling: portBase + 98, copyOnCreate: [], linkOnCreate: [], env: { file: '.env', portKey: 'PORT', perLane: {} }, makeDirs: [], seed: [], provision: [] }
+    })
+    fs.mkdirSync(repo, { recursive: true })
+    write(repo, 'lane.config.json', config(19201))
+    write(repo, '.gitignore', '.env\n.lanekit/\n')
+    write(repo, 'app.txt', 'one\ntwo\nthree\n')
+    git(repo, 'init', '-q', '-b', 'main')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'Begin')
+    // Named as GitHub names it, sent to the bare repository here.
+    git(repo, 'remote', 'add', 'origin', 'git@github.com:acme/demo.git')
+    git(repo, 'config', `url.${origin}.insteadOf`, 'git@github.com:acme/demo.git')
+    git(repo, 'push', '-q', '-u', 'origin', 'main')
+    git(scratch, 'clone', '-q', origin, other)
+
+    // A second repository with lanes set up and none made.
+    const quiet = path.join(work, 'quiet')
+    fs.mkdirSync(quiet)
+    write(quiet, 'lane.config.json', config(19301).replace('"Demo"', '"Quiet"').replace('"demo"', '"quiet"'))
+    write(quiet, 'readme.txt', 'quiet\n')
+    git(quiet, 'init', '-q', '-b', 'main')
+    git(quiet, 'add', '-A')
+    git(quiet, 'commit', '-qm', 'Begin quietly')
+
+    // feature: a commit, and two files not committed. ready: a commit, not gated yet.
+    lane('new', 'feature')
+    commit(laneDir('feature'), 'feature.txt', 'feature\n', 'Start the feature')
+    write(laneDir('feature'), 'feature.txt', 'feature, better\n')
+    write(laneDir('feature'), 'notes.txt', 'notes\n')
+    lane('new', 'ready')
+    commit(laneDir('ready'), 'ready.txt', 'ready\n', 'Make it ready')
+    // shared: pushed, so somebody else can push to it.
+    lane('new', 'shared')
+    commit(laneDir('shared'), 'shared.txt', 'shared\n', 'Share it')
+    lane('push', 'shared')
+    // shipped: its pull request merged on GitHub (squashed there), and work carried on in it after.
+    lane('new', 'shipped')
+    commit(laneDir('shipped'), 'shipped.txt', 'shipped\n', 'Ship it')
+    const shippedAt = git(laneDir('shipped'), 'rev-parse', 'HEAD')
+    commit(laneDir('shipped'), 'after.txt', 'after\n', 'After the merge')
+    write(laneDir('shipped'), 'wip.txt', 'wip\n')
+    // Kim's pull request from a fork (#8), which asks this person for a review: its head where GitHub keeps one.
+    git(other, 'switch', '-q', '--detach', 'origin/main')
+    commit(other, 'count.txt', 'one, two, three\n', 'Teach it to count')
+    git(other, 'push', '-q', 'origin', 'HEAD:refs/pull/8/head')
+    git(other, 'switch', '-q', 'main')
+    fs.writeFileSync(ghState, JSON.stringify({
+        owner: 'acme', name: 'demo', origin, repo: { mergeCommitAllowed: true }, me: 'reviewer',
+        prs: [
+            { number: 4, title: 'Ship it', state: 'MERGED', isDraft: false, headRefName: 'shipped', headRefOid: shippedAt, url: 'https://github.com/acme/demo/pull/4' },
+            { number: 8, title: 'Teach it to count', state: 'OPEN', isDraft: false, headRefName: 'contrib', isCrossRepository: true, author: { login: 'kim' }, baseRefName: 'main', url: 'https://github.com/acme/demo/pull/8' }
+        ],
+        search: [{ number: 8, title: 'Teach it to count', url: 'https://github.com/acme/demo/pull/8', repository: { name: 'demo', nameWithOwner: 'acme/demo' }, author: { login: 'kim' }, updatedAt: '2026-10-03T20:00:00Z', isDraft: false }]
+    }))
+
+    const { startServer } = await import('../dev/web.mjs')
+    const started = await startServer({ scan: work, port: 0 })
+    server = started.server
+    const base = `http://127.0.0.1:${started.port}/`
+    browser = await launch()
+    const page = await open(browser, `${base}?repo=demo`)
+    await page.until((() => card('feature') && card('ready') && card('shared') && card('shipped')), [], { what: 'the four lanes drawn' })
+    return { browser, base, page }
+}
+
+/** Chrome closed, the server stopped, and the scratch folder gone: run after a file's tests, whether begin was or not. */
+const end = async () => {
+    await browser?.close()
+    server?.close()
+    // A scratch folder that will not go is said, and left to the system's own temporary folder: never a failure of
+    // what was tested.
+    try { fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) } catch (error) { console.error(`left ${scratch}: ${error.message}`) }
+}
+
+// ---------------------------------------------------------------------------
+// the narrowest side bar, a half at a time
+// ---------------------------------------------------------------------------
+
+/**
+ * Nothing on the page wider than the column, Home, a log and its landing table at 170px and up: as this machine draws
+ * the page, or (`wide`) as the narrowest machine running these tests does, as WIDE says. Both, since a Mac's floating
+ * scrollbar and its letters passed what CI's Linux and macOS did not.
+ *
+ * One test of both until 25 Oct 2026, the afternoon's last, and at 64 s the longest by far: each half is a test of its
+ * own now, in a file of its own, so the two run side by side, their words and what they ask as they were (the half
+ * drawn wide is named so). What the whole saw at the end of the afternoon is shared between them: each comes after
+ * tests that leave a lane ready to land (so Land next is there), and e2e-narrow's after a review lane, e2e-narrow-wide's
+ * after a merge on main, Landed.
+ */
+const nothingWider = async (browser, base, wide) => {
+    // A long lane name, with work uncommitted in it, beside main's tags: what was wider than a narrow column before.
+    lane('new', 'a-rather-long-lane-name')
+    write(laneDir('a-rather-long-lane-name'), 'long.txt', 'long\n')
+    // What sticks out past the window's right edge, and by how much.
+    const wider = () => {
+        const width = document.documentElement.clientWidth
+        const out = [...document.querySelectorAll('body *')]
+            .filter((node) => node.getBoundingClientRect().right > width + 0.5 && node.checkVisibility())
+            .map((node) => `${node.localName}.${String(node.className).trim().split(/\s+/).join('.')} "${node.textContent.trim().slice(0, 30)}" by ${Math.round(node.getBoundingClientRect().right - width)}px`)
+        return { scroll: document.documentElement.scrollWidth, width, out: out.slice(0, 6) }
+    }
+    try {
+        const drawn = wide ? ', drawn wide' : ''
+        const thin = await open(browser, `${base}?repo=demo`, { width: 170, height: 900, wide })
+        try {
+            // Drawn wide, it has no hover either, as Linux's headless Chrome has not: every row's buttons are out.
+            if (wide) assert.ok(await thin.run(() => matchMedia('(hover: none)').matches), 'no hover, drawn wide')
+            for (const width of [170, 200, 240, 320]) {
+                // Something run, so the command bar is there with its Output, as it is once anything has been pressed;
+                // at each width, as the bar goes two minutes after the last press, which a slow machine gets to.
+                await thin.until(() => current?.repos?.length)
+                await thin.run(() => press({ repo: current.repos[0].id, verb: 'fetch' }))
+                await thin.until(() => document.querySelector('#cmdbar:not([hidden]) .btn.with-icon'), [], { what: 'the command bar\'s Output' })
+                await thin.resize(width, 900)
+                for (const view of ['Home', 'Log', 'Landing']) {
+                    if (view === 'Home') await thin.run(() => { location.search = '' })
+                    if (view === 'Log') await thin.run(() => { location.search = '?repo=demo' })
+                    if (view === 'Home') await thin.until(() => document.querySelectorAll('.home-card').length >= 2, [], { what: 'Home\'s cards' })
+                    else await thin.until(() => document.querySelector('.lane[data-key$="/a-rather-long-lane-name"]'), [], { what: 'the long lane in the log' })
+                    if (view === 'Landing') {
+                        await thin.click(() => [...document.querySelectorAll('.view-tab')].find((tab) => /^Landing/.test(tab.textContent)))
+                        await thin.until(() => document.querySelector('.landing-table:not([hidden]) .landing-lane'), [], { what: 'the landing table' })
+                    }
+                    const said = await thin.run(wider)
+                    assert.ok(said.scroll <= said.width, `${view} at ${width}px${drawn} is ${said.scroll}px wide, its column ${said.width}px: ${said.out.join(', ')}`)
+                    // And not by squeezing the command bar's Output a letter to a line.
+                    const output = await thin.run(() => {
+                        const label = document.querySelector('#cmdbar .btn.with-icon .label')
+                        return label ? { height: label.getBoundingClientRect().height, size: parseFloat(getComputedStyle(label).fontSize) } : null
+                    })
+                    assert.ok(output && output.height < output.size * 2, `${view} at ${width}px${drawn}: the command bar's Output ${output ? `is ${output.height}px tall` : 'is not there'}`)
+                    // Nor Land next's words, which go two to a line at most.
+                    const next = await thin.run(() => {
+                        const label = document.querySelector('.views-row > .btn .label')
+                        return label ? { height: label.getBoundingClientRect().height, size: parseFloat(getComputedStyle(label).fontSize) } : null
+                    })
+                    assert.ok(!next || next.height < next.size * 4, `${view} at ${width}px${drawn}: Land next is ${next?.height}px tall`)
+                    if (view !== 'Log') continue
+                    // A commit's age stays on its words' line, wherever the two go.
+                    const apart = await thin.run(() => [...document.querySelectorAll('li.commit')].filter((row) => {
+                        const words = row.querySelector('.subject')?.getBoundingClientRect(), when = row.querySelector('.when')?.getBoundingClientRect()
+                        return words && when && when.width && Math.abs(words.bottom - when.bottom) > 4
+                    }).map((row) => row.querySelector('.subject').textContent))
+                    assert.deepEqual(apart, [], `at ${width}px${drawn}, a commit's age on a line of its own`)
+                }
+            }
+        } finally {
+            await thin.close()
+        }
+    } finally {
+        fs.rmSync(path.join(laneDir('a-rather-long-lane-name'), 'long.txt'))
+        lane('drop', 'a-rather-long-lane-name')
+    }
+}
+
+module.exports = {
+    KIT, sleep, SLOW, skip, scratch, work, repo, origin, other, ghState, env,
+    git, lane, write, commit, laneDir, status,
+    launch, open, card, buttonIn, laneButton, RECORD, atRest,
+    begin, end, nothingWider
+}
