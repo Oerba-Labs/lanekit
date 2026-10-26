@@ -31,14 +31,20 @@
  * slowest tests where their JUnit has times; a passing run much slower than
  * this tier's recent ones says so (lib/runs.mjs, slowdownOf), and never fails
  * for it.
+ *
+ * THE FULL SUITE, WHERE IT COMES BEFORE A LAND. A project whose `gate.full`
+ * says `before-land` has its full steps run here too, after a tier that
+ * passed, and recorded as a run of their own (lib/full.mjs); VERIFIED then
+ * means both passed. Every other project's verifying is as it was.
  */
 
-import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
-import { prepareResults, readResults, resultsFolderFor, secondsSaid, slowestLines, testsLines } from '../lib/results.mjs'
+import { fullGreenFor, fullLabelOf, fullOf, fullRecordOf } from '../lib/full.mjs'
 import { listRuns, mintRunId, recordRun, slowdownLines, slowdownOf } from '../lib/runs.mjs'
+import { expanderFor, runSteps } from '../lib/steps.mjs'
 import { tierFor } from '../lib/tiers.mjs'
 
 const DIM = '\x1b[2m'
@@ -181,10 +187,7 @@ const matching = (prefixes) => files.filter((file) => prefixes.some((prefix) => 
 // Declared here, above its first use: a generator's command is expanded the same way a
 // step's is, so that a project can point either at a script of its own (`{repo}/tools/…`)
 // rather than at a program that happens to be installed on the machine running the gate.
-const expand = (value) => value
-    .replace(/\{repo\}/g, REPO)
-    .replace(/\{app\}/g, path.join(REPO, config.roots.app ?? ''))
-    .replace(/\{server\}/g, path.join(REPO, config.roots.server ?? ''))
+const expand = expanderFor(REPO, config)
 
 const staleArtifacts = []
 for (const artifact of config.gate?.generated ?? []) {
@@ -257,79 +260,41 @@ log(`tier ${chosen}: ${plan.label}`)
 // 6. run it
 // ---------------------------------------------------------------------------
 
-/**
- * A step, run with its output shown as it comes, and the last lines of it kept.
- *
- * THE TAIL IS WRITTEN DOWN WITH A FAILURE, so a page can show why a gate failed — the step and
- * its last lines, with the file names in them — after the output itself is gone. At a terminal
- * the step writes to it directly, colours and all, and the person reads it there.
- */
-const TAIL_LINES = 40
-// eslint-disable-next-line no-control-regex
-const plain = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-const runStep = (step, env) => new Promise((resolve) => {
-    const cwd = step.cwd ? path.join(REPO, step.cwd) : REPO
-    const command = expand(step.command)
-    const args = (step.args ?? []).map(expand)
-    if (process.stdout.isTTY) {
-        const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' })
-        resolve({ status: result.status ?? -1, tail: '' })
-        return
-    }
-    let tail = ''
-    let settled = false
-    const keep = (chunk, to) => {
-        to.write(chunk)
-        tail = (tail + chunk.toString('utf8')).split('\n').slice(-(TAIL_LINES + 1)).join('\n')
-    }
-    const child = spawn(command, args, { cwd, env, stdio: ['inherit', 'pipe', 'pipe'] })
-    child.stdout.on('data', (chunk) => keep(chunk, process.stdout))
-    child.stderr.on('data', (chunk) => keep(chunk, process.stderr))
-    const end = (status, note) => { if (settled) return; settled = true; resolve({ status, tail: plain(note ?? tail).trimEnd() }) }
-    child.on('error', (error) => end(-1, `could not start ${command}: ${error.message}`))
-    child.on('close', (code) => end(code ?? -1))
-})
+// The steps, as lib/steps.mjs runs them (verifying's own runner until the full suite needed one too, 26 Oct 2026): each
+// with its output shown and its seconds kept, a failing one's last lines written down, every step run after a failure
+// too, and what the tests' JUnit in LAB_RESULTS said, counted and shown.
+const { steps, failures, tests } = await runSteps(plan.steps, { repo: REPO, config, log })
+const tierEnded = Date.now()
 
 /**
- * Where the steps may leave JUnit XML: the folder the environment names as LAB_RESULTS, else one of this checkout's
- * own, emptied first, so what is counted afterwards is this run's. Nothing here can fail the gate: a folder that cannot
- * be made is said, and the steps run as they would have.
+ * THE FULL SUITE, BEFORE A LAND (the owner, 26 Oct 2026). A project whose lane.config.json has `gate.full` with `when:
+ * "before-land"` lands a lane only once a passing full run names its commit, from its worktree, as a passing tier run
+ * must (lib/queue.mjs, landBlockers). So verifying runs it too, here, after the tier and only when the tier passed: a
+ * person should never need a second command they could forget. Not for a narrowed run (--fast, a lower --tier), which
+ * certifies nothing anyway; not again for a commit whose full run here passed already. Its record is a run of its own,
+ * kind `full`, so the tier's record means what it always has.
  */
-let results = null
-let before = null
-try {
-    results = resultsFolderFor(REPO)
-    before = prepareResults(results)
-} catch (error) {
-    log(`${YELLOW}could not ready a folder for the tests' JUnit: ${error.message}${OFF}`)
-}
-const stepEnv = results ? { ...process.env, LAB_RESULTS: results.dir } : process.env
-
-// Each step's own seconds, to the tenth: with several steps, which of them a slow gate spent its time in.
-const failures = []
-const steps = []
-for (const step of plan.steps ?? []) {
-    log(`${step.what}…`)
-    const began = Date.now()
-    const { status, tail } = await runStep(step, stepEnv)
-    steps.push({ what: step.what, seconds: Math.round((Date.now() - began) / 100) / 10 })
-    if (status !== 0) failures.push({ what: step.what, status, tail })
-}
-if (steps.length > 1) log(`the steps took ${steps.map((step) => `${secondsSaid(step.seconds)} ${step.what}`).join(', ')}`)
-
-let tests = null
-try {
-    if (results) tests = readResults(results.dir, { before })
-} catch (error) {
-    log(`${YELLOW}could not read the tests' JUnit in ${results.dir}: ${error.message}${OFF}`)
-}
-if (tests) {
-    const [first, ...rest] = testsLines(tests)
-    log(first)
-    for (const line of rest) console.log(/^ {2}(failed|errored) /.test(line) ? line.replace(/^( {2})(\w+)/, `$1${RED}$2${OFF}`) : line)
-    const [slowest, ...slow] = slowestLines(tests)
-    if (slowest) log(slowest)
-    for (const line of slow) console.log(line)
+const full = fullOf(config)
+let fullRun = null
+if (full?.when === 'before-land') {
+    if (short) {
+        log(`the full suite (${fullLabelOf(full)}) is not run: a narrowed run certifies nothing, and a land needs both`)
+    } else if (failures.length) {
+        log(`the full suite (${fullLabelOf(full)}) is not run: tier ${chosen} failed first`)
+    } else {
+        const already = fullGreenFor({ branch, sha, worktree: REPO }, REPO)
+        if (already) {
+            log(`the full suite (${fullLabelOf(full)}) passed on ${sha.slice(0, 10)} already, ${already.startedAt}: not run again`)
+        } else {
+            log(`full suite: ${fullLabelOf(full)}`)
+            const begun = Date.now()
+            const ran = await runSteps(full.steps, { repo: REPO, config, log })
+            fullRun = fullRecordOf({
+                why: 'before-land', full, branch, sha, worktree: REPO, began: begun,
+                ended: Date.now(), ...ran
+            })
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,31 +315,37 @@ const record = {
     why,
     files: files.length,
     startedAt: new Date(started).toISOString(),
-    durationSeconds: Math.round((Date.now() - started) / 1000),
+    // Up to the end of the tier's steps: a full suite run after them (before-land) keeps its own time in its own record.
+    durationSeconds: Math.round((tierEnded - started) / 1000),
     steps,
     failures,
     // What the tests' JUnit said, where they wrote any: a run without it is recorded as it always was.
     ...(tests ? { tests } : {})
 }
 
-// Much slower than this tier's recent passing runs here: said, and kept with the run, and never a failure, so nothing
-// in working it out may fail the gate either.
-try {
-    const slowdown = slowdownOf(record, listRuns(REPO))
-    if (slowdown) {
-        record.slowdown = slowdown
-        const [first, ...rest] = slowdownLines(slowdown, chosen)
+// Much slower than this kind's recent passing runs here (a tier's, or the full suite's): said, and kept with the run, and
+// never a failure, so nothing in working it out may fail the gate either.
+const noteSlowdown = (run, whose) => {
+    try {
+        const slowdown = slowdownOf(run, listRuns(REPO))
+        if (!slowdown) return
+        run.slowdown = slowdown
+        const [first, ...rest] = slowdownLines(slowdown, whose)
         log(`${YELLOW}${first}${OFF}`)
         for (const line of rest) console.log(line)
+    } catch (error) {
+        log(`${YELLOW}could not compare this run's time with the runs before it: ${error.message}${OFF}`)
     }
-} catch (error) {
-    log(`${YELLOW}could not compare this run's time with the runs before it: ${error.message}${OFF}`)
 }
+noteSlowdown(record, chosen)
+if (fullRun) noteSlowdown(fullRun, 'the full suite')
 
 log('recording the result…')
 const recordFile = recordRun(record, REPO)
+const fullFile = fullRun ? recordRun(fullRun, REPO) : null
+const fullPassed = !fullRun || fullRun.result === 'passed'
 
-if (options.json) console.log(JSON.stringify({ ...record, certifies: passed && !short }, null, 2))
+if (options.json) console.log(JSON.stringify({ ...record, certifies: passed && !short && fullPassed, ...(fullRun ? { full: fullRun } : {}) }, null, 2))
 
 if (!passed) {
     console.error(`\n${RED}[verify] ${failures.map((f) => f.what).join(', ')} failed${OFF}\n`)
@@ -390,7 +361,17 @@ if (short) {
     process.exit(0)
 }
 
-banner('VERIFIED', GREEN, `${branch}  ·  tier ${chosen} green on ${sha.slice(0, 10)}  ·  ${elapsed()}`)
+if (!fullPassed) {
+    console.error(`\n${RED}[verify] the full suite failed: ${fullRun.failures.map((f) => f.what).join(', ')}${OFF}\n`)
+    banner('FAILED', RED, `${branch}  ·  tier ${chosen} green, the full suite (${fullLabelOf(full)}) failed  ·  ${elapsed()}`)
+    console.log(`  run  → ${path.relative(REPO, fullFile)}`)
+    console.log(`  ${base} takes a lane here only once the full suite passes on its commit (gate.full, before-land).\n`)
+    process.exit(1)
+}
+
+const alsoFull = full?.when === 'before-land' ? ` and the full suite (${fullLabelOf(full)})` : ''
+banner('VERIFIED', GREEN, `${branch}  ·  tier ${chosen}${alsoFull} green on ${sha.slice(0, 10)}  ·  ${elapsed()}`)
 console.log(`  run  → ${path.relative(REPO, recordFile)}`)
+if (fullFile) console.log(`  full → ${path.relative(REPO, fullFile)}`)
 console.log(`\n  ${DIM}Nothing has been merged. From a checkout of ${base}:${OFF}`)
 console.log(`    git merge --no-ff ${branch}\n`)

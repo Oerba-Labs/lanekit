@@ -24,6 +24,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 
 import { PACKAGE_ROOT } from '../lib/config.mjs'
+import { laneFullSaid, mainFullLines } from '../lib/full.mjs'
 import { testsLines } from '../lib/results.mjs'
 import { createService } from '../lib/service.mjs'
 import { findRepos } from '../lib/state.mjs'
@@ -119,6 +120,8 @@ const laneWords = (repo, lane) => {
     if (lane.upstream) facts.push(lane.upstream.ahead || lane.upstream.behind ? `${lane.upstream.name}: ${lane.upstream.ahead} here not there, ${lane.upstream.behind} there not here${lane.upstream.foreign ? ` (${lane.upstream.foreign} of somebody else's)` : ''}` : `pushed to ${lane.upstream.name}`)
     else if (lane.kind === 'working' && !lane.review) facts.push('not pushed')
     if (lane.gate) facts.push(`${lane.gate.result === 'passed' ? 'verified' : 'verification failed'} with ${repo.tiers?.[lane.gate.tier] ?? `tier ${lane.gate.tier}`}${lane.gate.current ? '' : ', on an older commit'}`)
+    // Where a land needs the full suite passed on the lane's commit too (gate.full, before-land): whether it has.
+    if ('full' in lane && lane.kind === 'working' && !lane.review) facts.push(laneFullSaid(lane.full, repo.fullSuite?.label ?? 'the full suite'))
     if (lane.pull) facts.push(`#${lane.pull.number} ${lane.pull.draft && lane.pull.state === 'OPEN' ? 'draft' : String(lane.pull.state).toLowerCase()}${lane.pull.review ? `, ${lane.pull.review.toLowerCase().replaceAll('_', ' ')}` : ''}${lane.pull.checks && lane.pull.checks !== 'none' ? `, checks ${lane.pull.checks}` : ''}`)
     if (lane.sinceMerge) facts.push(`${lane.sinceMerge} commit${lane.sinceMerge === 1 ? '' : 's'} made since it was merged`)
     if (facts.length) out.push(`  ${facts.join('; ')}`)
@@ -139,6 +142,8 @@ const repoWords = (repo) => {
             `${up ? `, ${up.ahead} ahead and ${up.behind} behind ${up.name}` : ', no upstream'}`,
         main.dirty ? `The main checkout has ${main.dirty} uncommitted file${main.dirty === 1 ? '' : 's'}: ${(main.changes ?? []).slice(0, 12).map((change) => change.path).join(', ')} (new_lane with carry moves them into a lane; a land and a pull wait until it is clean)` : null,
         main.onIntegration === false ? `The main checkout is on ${main.branch}, not ${repo.integrationBranch}.` : null,
+        // Main's full suite, where it runs on main (nightly, after-land): a failure first and loud, before any lane.
+        ...mainFullLines(repo.fullSuite?.main, repo.integrationBranch),
         '',
         live.length ? 'Lanes:' : 'No lanes yet: new_lane makes one.',
         ...live.map((lane) => laneWords(repo, lane)),
@@ -158,7 +163,7 @@ const schema = (properties, required = []) => ({ type: 'object', properties: { .
 const TOOLS = [
     {
         name: 'lanes',
-        description: 'Every lane of the repository and what each needs: its state (ready to land, needs verifying, reviewing a pull request…), its commits, uncommitted files, gate, pull request, collisions, and the landing order; and the main checkout. Read this first, and again after anything changes.',
+        description: 'Every lane of the repository and what each needs: its state (ready to land, needs verifying, reviewing a pull request…), its commits, uncommitted files, gate, pull request, collisions, and the landing order; and the main checkout, with how main\'s last full suite run went where the project has one. Read this first, and again after anything changes.',
         inputSchema: schema({}), annotations: { title: 'Lanes', readOnlyHint: true, openWorldHint: false },
         run: async (held) => done(repoWords(await stateOf(held)))
     },

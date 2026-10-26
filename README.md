@@ -556,6 +556,8 @@ code --install-extension ~/.lanekit/vscode/lanekit-<version>.vsix
 ./<project> lane queue [name]    which lane should land next, and which would collide
 ./<project> verify               in a lane: is this branch ready to merge? (gate, its old name, too)
 ./<project> lane land <name>     in main: merge a lane that is verified, then sweep it
+./<project> lane nightly         run the full suite (gate.full) on main's newest commit, in a scratch copy;
+                                 --force again on a commit that passed; --install / --uninstall its nightly job
 ./<project> lane rebase <name>   replay a lane onto main as it is now; --continue or --abort after a conflict
 ./<project> lane push <name>     send a lane's branch to origin; --force-with-lease once it was rebased,
                                  never over somebody else's commits there unless --force
@@ -588,7 +590,7 @@ branch; from a fork, GitHub's copy of its head; never with `--base`, `--existing
 `--install` to build the lane's own copies of what would otherwise be shared, `--no-seed` to
 skip filling what it must own, and `--no-provision` to make the folder and stop. `verify` takes
 `--fast` (tier 1 whatever the change earns; it says `INCOMPLETE` rather than `VERIFIED`),
-`--tier <n>` and `--json`. `land` and `sweep` take `--dry-run`.
+`--tier <n>` and `--json`. `land` and `sweep` take `--dry-run`, and so does `lane nightly --install`.
 
 ## What the tests said: `$LAB_RESULTS`
 
@@ -675,6 +677,56 @@ timed, and as *at most* the tenth's time where it kept ten. It never fails a ver
 the ten, slow is what is usual, and it is not said again. lanekit's own `./check` writes `lanekit.xml` into
 `$LAB_RESULTS` when it is set, and runs `node --test` exactly as before when it is not.
 
+## The full suite: `gate.full`
+
+Verifying runs the tier a change earns, and a project can make that tier cheap: run only the tests a change touches,
+say, and those not already passed with the same inputs. Then nothing runs everything, unless the project says when.
+`gate.full` says what the full suite is and when it runs (the owner, 26 Oct 2026):
+
+```json
+"gate": {
+  "full": {
+    "when": "nightly",
+    "at": "03:00",
+    "label": "every selftest",
+    "steps": [{ "what": "running ./check --all --tier 2", "command": "{repo}/check", "args": ["--all", "--tier", "2"] }]
+  }
+}
+```
+
+- **`before-land`**: verifying runs the full steps too, in the lane, after its tier and only when the tier passed, and a
+  lane lands only once a passing full run names its commit, from its worktree, as a passing tier run must. One
+  `verify` does both; `VERIFIED` says both passed. A verification of a commit whose full run passed already runs only
+  the tier again. `lanes`, `lane queue <name>` and a refused land say which of the two is missing.
+- **`after-land`**: once `land` has merged, it starts the full steps on the commit it made and returns. They run by
+  themselves in a scratch copy of main (never in the main checkout), and their result is recorded as main's. A failure
+  undoes nothing: `lanes` says it first, before any lane, until a run on main passes.
+- **`nightly`**: `lane nightly` runs the full steps on main's newest commit in a scratch copy, and says so and stops
+  when that commit has passed already (`--force` runs it again). `lane nightly --install` schedules it at `at`, local
+  time: on a Mac it shows the LaunchAgent it writes to `~/Library/LaunchAgents/dev.lanekit.nightly.<slug>.plist`, then
+  writes and loads it (`--dry-run` only shows it); elsewhere it prints a crontab line to add with `crontab -e`, since
+  lanekit edits no crontab. `--uninstall` takes the LaunchAgent away. Nothing is scheduled unless you ask: `init` and
+  `adopt` never do it. `lanes` says when the last run is more than 36 hours old, and when this Mac has no job.
+
+Left out, nothing runs and nothing reads differently. A full run is a record of its own in `.lanekit/runs`, kind
+`full`, with what a tier's run keeps: each step's seconds, a failing step's last lines, what the tests' JUnit in
+`$LAB_RESULTS` said, and a slow-down against the full suite's own recent runs. `lanes` (and `lane list`) say main's:
+
+```
+FULL SUITE FAILED on main at 4e1c2a9 (nightly, 6 hours ago): "running ./check --all --tier 2" exited 1. Tests: 410 passed, 2 failed; failed selftest::backup. main is not known to pass every selftest: fix it in a lane; `lane nightly` runs it again on main now.
+Full suite (every selftest, nightly at 03:00): passed on main at 4e1c2a9, 6 hours ago, in 840s (412 passed).
+Full suite (every selftest, nightly at 03:00): running on main at 4e1c2a9 since 5 minutes ago.
+Full suite (every selftest, nightly at 03:00): no run on main yet; `lane nightly` runs one now.
+FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run began 2 days ago; …
+```
+
+The scratch copy is a `git clone --shared` of the main checkout (it borrows main's objects, so it costs little), in
+lanekit's cache folder (`~/Library/Caches/lanekit/full/`, `~/.cache/lanekit/full/`, or `LANEKIT_CACHE`), checked out at
+the commit and cleaned with `git clean -ffdx` before each run, then given `lane.copyOnCreate` and `lane.linkOnCreate`
+as a lane is. It is not a worktree, so it is never listed as a lane. One run uses it at a time: a land while one is
+under way waits its turn, and `lane nightly` leaves it be. Each run's output is in a log beside it, which `lanes`
+names when a run failed. The steps come from the commit's own `lane.config.json`.
+
 ## The config
 
 `lane.config.json`, at the root of the repository, holds everything that differs between
@@ -720,6 +772,7 @@ to its front end might say:
 | `roots` | the project's directories, used as `{server}` and `{app}` in verifying's steps; refused if one names nothing |
 | `gate.tiers` | what verifying runs. Tier 1 is every change; tier 2 is earned by a change to `gate.sides.app` or to `gate.seam`, the files one side shares with the other |
 | `gate.generated` | committed files a generator owns: regenerated and compared, so a stale one is caught |
+| `gate.full` | optional: the full suite, and when it runs: `when` is `nightly` (with `at`, `"HH:MM"` local time), `after-land` or `before-land`; `label` names it; `steps` as a tier's. Left out, nothing runs it ([the full suite](#the-full-suite-gatefull)) |
 | `verify` | the same as `gate`, by its new name: either is read, never both. `init` and `adopt` write `gate`, which a lanekit older than this one reads too |
 | `lane.portBase`, `portCeiling` | the window a lane's port comes from. A machine can take a share of it with `LANEKIT_PORTS="<slug>=<first>-<last>"`, which narrows it and never widens it |
 | `lane.staleAfterDays` | optional: after how many days with nothing done in it a lane is called quiet; fourteen when left out |
