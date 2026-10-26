@@ -1,5 +1,5 @@
 # lanekit's tests, on every push to main and every pull request, on Linux and macOS: the page driven in Chrome
-# included (test/e2e.test.mjs).
+# included (test/e2e-*.test.mjs).
 #
 # STABLE. The editor's own copy of lanekit (vscode/updates.js) follows the branch `stable`, which only this moves,
 # and only forward: to each commit of main whose tests passed on both. An editor that keeps itself up to date is

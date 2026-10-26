@@ -747,9 +747,9 @@ expensive.
 
 ## Contributing
 
-`node --test` runs the tests, on scratch repositories; `test/e2e.test.mjs` drives the page itself in
-a headless Chrome over the DevTools protocol, and is skipped where there is none (`LANEKIT_CHROME`
-names one). [docs/use-cases.md](docs/use-cases.md) lists what LaneKit is for and the tests that show
+`node --test` runs the tests, on scratch repositories; `test/e2e-*.test.mjs` drive the page itself
+in a headless Chrome over the DevTools protocol, a Chrome to each file so the files run side by side,
+and are skipped where there is none (`LANEKIT_CHROME` names one). [docs/use-cases.md](docs/use-cases.md) lists what LaneKit is for and the tests that show
 each works. lanekit is plain JavaScript with no dependencies and no build step, and is kept that way.
 
 A push to main runs the tests on Linux and macOS ([test.yml](.github/workflows/test.yml)) and, when
