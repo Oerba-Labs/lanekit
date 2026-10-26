@@ -23,6 +23,7 @@ import { after, before, test } from 'node:test'
 import { countsSaid, grownSaid, LIMITS, parseJUnit, prepareResults, readResults, resultsFolderFor, SLOWEST, slowestLines, testsGrown, testsLines, testsShown } from '../lib/results.mjs'
 import { SLOWDOWN, slowdownLines, slowdownOf } from '../lib/runs.mjs'
 import { createService } from '../lib/service.mjs'
+import { repoState } from '../lib/state.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const env = {
@@ -741,4 +742,37 @@ test('the MCP server\'s gate tool says the counts and the tests that did not pas
     } finally {
         server.stdin.end()
     }
+})
+
+test('the page\'s state has a verification\'s steps and its slow-down with the lane\'s gate, in a shape it can draw; none for a run from before', () => {
+    const { repo, lane } = project('timed', 'true', { parent: 'timed' })
+    const runs = path.join(repo, '.lanekit', 'runs')
+    fs.mkdirSync(runs, { recursive: true })
+    const sha = git(lane, 'rev-parse', 'HEAD')
+    const record = (id, extra) => fs.writeFileSync(path.join(runs, `${id}.json`), JSON.stringify({
+        id, kind: 'tier1', tier: 1, branch: 'work', sha, worktree: lane, result: 'passed', narrowed: false, earned: 1,
+        startedAt: '2026-10-25T12:00:00.000Z', durationSeconds: 1100, failures: [], ...extra
+    }))
+    record('2026-10-25T12-00-00Z-1-tier1', {})
+    const before = repoState(repo).lanes.find((one) => one.name === 'work').gate
+    assert.equal(before.result, 'passed')
+    assert.equal('steps' in before, false, 'a run from before reads as it always has')
+    assert.equal('slowdown' in before, false)
+    record('2026-10-25T12-00-01Z-1-tier1', {
+        steps: [{ what: 'building', seconds: 90 }, { what: 'running the self-tests', seconds: 1010 }],
+        tests: { files: 1, total: 4, passed: 4, failed: 0, errored: 0, skipped: 0, failing: [], slowest: [{ name: 'selftest::backup', suite: 'selftests', seconds: 612 }] },
+        slowdown: {
+            seconds: 1100, median: 250, runs: 10, ratio: 4.4, usual: { id: 'usual', seconds: 248, startedAt: '2026-10-11T03:00:00.000Z' },
+            tests: [{ name: 'selftest::backup', suite: 'selftests', seconds: 612, was: 0.4, since: 'was' }, { name: 'selftest::vault', seconds: 41, was: 0, since: 'new' }],
+            steps: [{ what: 'running the self-tests', seconds: 1010, was: 160 }]
+        }
+    })
+    const gate = repoState(repo).lanes.find((one) => one.name === 'work').gate
+    assert.deepEqual(gate.steps, [{ what: 'building', seconds: 90 }, { what: 'running the self-tests', seconds: 1010 }])
+    assert.deepEqual(gate.tests.slowest, [{ name: 'selftest::backup', suite: 'selftests', seconds: 612 }])
+    assert.deepEqual(gate.slowdown, {
+        seconds: 1100, median: 250, runs: 10, ratio: 4.4, usual: { id: 'usual', seconds: 248, at: Date.parse('2026-10-11T03:00:00.000Z') },
+        steps: [{ what: 'running the self-tests', seconds: 1010, was: 160 }],
+        tests: [{ name: 'selftest::backup', suite: 'selftests', seconds: 612, was: 0.4, since: 'was' }, { name: 'selftest::vault', seconds: 41, was: 0, since: 'new' }]
+    })
 })
