@@ -2,5 +2,22 @@
 # What the gate runs: lanekit's tests, all of them, as CI runs them (.github/workflows/test.yml). It runs
 # in the checkout it is in, so a lane's gate tests that lane's code. The page's end-to-end tests drive
 # Chrome headless; the rest make scratch repositories and take whatever port is free.
+#
+# JUNIT WHERE IT IS ASKED FOR (25 Oct 2026). With LAB_RESULTS set, as the gate sets it, node's junit reporter writes
+# lanekit.xml there beside the usual console output, so lanekit's gate counts its tests, keeps the slowest, and can say
+# which grew when it slows down (lib/results.mjs, lib/runs.mjs). Without it, node --test runs exactly as before.
+#
+# The console reporter is the one node 22 (CI's) picks itself: spec at a terminal, TAP into a pipe, as the gate's is.
+# LAB_RESULTS is taken out of the tests' own environment: they run gates of scratch repositories, which would otherwise
+# be handed this folder as theirs and read lanekit.xml, half written, as their own tests'.
+if [ -z "$LAB_RESULTS" ]; then
+    cd "$(dirname "$0")" || exit 1
+    exec node --test
+fi
+case $LAB_RESULTS in /*) results=$LAB_RESULTS ;; *) results=$PWD/$LAB_RESULTS ;; esac
+unset LAB_RESULTS
 cd "$(dirname "$0")" || exit 1
-exec node --test
+mkdir -p "$results" || exit 1
+if [ -t 1 ]; then shown=spec; else shown=tap; fi
+exec node --test --test-reporter="$shown" --test-reporter-destination=stdout \
+    --test-reporter=junit --test-reporter-destination="$results/lanekit.xml"

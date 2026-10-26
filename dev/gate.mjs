@@ -26,14 +26,19 @@
  * WHAT THE TESTS SAID. Its steps are given `LAB_RESULTS`, a folder for JUnit
  * XML (lib/results.mjs), and what the tests write there is counted and kept
  * with the run. The steps' exit codes alone decide the result.
+ *
+ * WHERE THE TIME WENT. Each step's seconds are kept with the run, and the
+ * slowest tests where their JUnit has times; a passing run much slower than
+ * this tier's recent ones says so (lib/runs.mjs, slowdownOf), and never fails
+ * for it.
  */
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 import { configFor } from '../lib/config.mjs'
-import { prepareResults, readResults, resultsFolderFor, testsLines } from '../lib/results.mjs'
-import { mintRunId, recordRun } from '../lib/runs.mjs'
+import { prepareResults, readResults, resultsFolderFor, secondsSaid, slowestLines, testsLines } from '../lib/results.mjs'
+import { listRuns, mintRunId, recordRun, slowdownLines, slowdownOf } from '../lib/runs.mjs'
 import { tierFor } from '../lib/tiers.mjs'
 
 const DIM = '\x1b[2m'
@@ -300,12 +305,17 @@ try {
 }
 const stepEnv = results ? { ...process.env, LAB_RESULTS: results.dir } : process.env
 
+// Each step's own seconds, to the tenth: with several steps, which of them a slow gate spent its time in.
 const failures = []
+const steps = []
 for (const step of plan.steps ?? []) {
     log(`${step.what}…`)
+    const began = Date.now()
     const { status, tail } = await runStep(step, stepEnv)
+    steps.push({ what: step.what, seconds: Math.round((Date.now() - began) / 100) / 10 })
     if (status !== 0) failures.push({ what: step.what, status, tail })
 }
+if (steps.length > 1) log(`the steps took ${steps.map((step) => `${secondsSaid(step.seconds)} ${step.what}`).join(', ')}`)
 
 let tests = null
 try {
@@ -317,13 +327,15 @@ if (tests) {
     const [first, ...rest] = testsLines(tests)
     log(first)
     for (const line of rest) console.log(/^ {2}(failed|errored) /.test(line) ? line.replace(/^( {2})(\w+)/, `$1${RED}$2${OFF}`) : line)
+    const [slowest, ...slow] = slowestLines(tests)
+    if (slowest) log(slowest)
+    for (const line of slow) console.log(line)
 }
 
 // ---------------------------------------------------------------------------
 // 7. write it down, then say what happened
 // ---------------------------------------------------------------------------
 
-log('recording the result…')
 const passed = failures.length === 0
 const record = {
     id: mintRunId(`tier${chosen}`),
@@ -339,10 +351,27 @@ const record = {
     files: files.length,
     startedAt: new Date(started).toISOString(),
     durationSeconds: Math.round((Date.now() - started) / 1000),
+    steps,
     failures,
     // What the tests' JUnit said, where they wrote any: a run without it is recorded as it always was.
     ...(tests ? { tests } : {})
 }
+
+// Much slower than this tier's recent passing runs here: said, and kept with the run, and never a failure, so nothing
+// in working it out may fail the gate either.
+try {
+    const slowdown = slowdownOf(record, listRuns(REPO))
+    if (slowdown) {
+        record.slowdown = slowdown
+        const [first, ...rest] = slowdownLines(slowdown, chosen)
+        log(`${YELLOW}${first}${OFF}`)
+        for (const line of rest) console.log(line)
+    }
+} catch (error) {
+    log(`${YELLOW}could not compare this run's time with the runs before it: ${error.message}${OFF}`)
+}
+
+log('recording the result…')
 const recordFile = recordRun(record, REPO)
 
 if (options.json) console.log(JSON.stringify({ ...record, certifies: passed && !short }, null, 2))

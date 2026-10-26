@@ -652,6 +652,29 @@ tests: 2 passed, 1 failed, 1 skipped.*); and first in the answer of the agents' 
 reads JUnit itself, with no XML library, so it still has no dependencies. Anything else that runs the
 same `./check` with `LAB_RESULTS` set, a CI job say, can read the same files.
 
+### Where the time goes
+
+Every run keeps each step's seconds (`steps` in its record), and, where the tests' JUnit gives each a `time`, the ten
+slowest (`tests.slowest`: name, file or suite where the JUnit says, seconds). Verifying names the five slowest when the
+slowest took a second or more, and says each step's seconds where there are several.
+
+A passing run that took at least twice the median of its tier's last ten passing runs in the repository (every lane's,
+with five at least to go on, and five seconds longer at least) says so, and keeps it with the run (`slowdown`):
+
+```
+[verify 1100s] slower than usual: this took 1,100s, 44 times the 25s that tier 1's last 10 passing runs here took at the median
+  tests that grew most, against a usual run (25s, 11 Oct):
+    0.4s → 612s  selftest::backup  (selftests)
+    new → 450s   selftest::restore  (selftests)
+  This does not fail verifying. A busy machine slows it too: if the next run is as slow, it is the project.
+```
+
+It is compared with one usual run, the one nearest the median, and names the steps and tests whose time grew most. Only
+the slowest ten are kept, so a test that was not among them then is said as *new* where that run kept every test it
+timed, and as *at most* the tenth's time where it kept ten. It never fails a verification; once slow runs are most of
+the ten, slow is what is usual, and it is not said again. lanekit's own `./check` writes `lanekit.xml` into
+`$LAB_RESULTS` when it is set, and runs `node --test` exactly as before when it is not.
+
 ## The config
 
 `lane.config.json`, at the root of the repository, holds everything that differs between
