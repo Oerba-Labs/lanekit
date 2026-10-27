@@ -732,6 +732,9 @@ The job names the lanekit that installed it, by its path, and the node it found 
   switched out or removed; `--install` says so, and that `lanes` will then say `FULL SUITE OVERDUE`. It does not pick
   another node itself, since lanekit is tested on node 22 and another may be newer: put the one you want first on the
   PATH and install again.
+- **Its PATH is yours, in your order.** The job carries the PATH `--install` ran with, so every program a step calls is
+  the one your shell finds; node's and git's folders are added after it only where it lacks them. Put first, git's
+  `/usr/bin` once made a Mac's job run Apple's python3 3.9 ahead of Homebrew's (27 Oct).
 
 Left out, nothing runs and nothing reads differently. A full run is a record of its own in `.lanekit/runs`, kind
 `full`, with what a tier's run keeps: each step's seconds, a failing step's last lines, what the tests' JUnit in

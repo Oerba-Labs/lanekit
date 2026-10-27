@@ -737,3 +737,25 @@ test('elsewhere --install prints a crontab line and edits nothing; a project who
     // A plist names its paths escaped.
     assert.match(plistFor({ label: 'l', hour: 3, minute: 0, pathVar: '/a&b', log: '/l', mainRepo: '/w/<x>', args: ['n'] }), /<string>\/w\/&lt;x&gt;<\/string>[\s\S]*<string>\/a&amp;b<\/string>/)
 })
+
+test('the job\'s PATH is the installer\'s in its order: git\'s or node\'s folder never moves ahead of one before it', () => {
+    // As on a Mac: git in /usr/bin, a newer python3 in Homebrew's folder before it. Put first, git's folder made the
+    // job's python3 Apple's 3.9, and homelab's first night failed six selftests that pass (27 Oct).
+    const bins = fs.mkdtempSync(path.join(scratch, 'order-'))
+    const dir = (name, programs) => {
+        const at = path.join(bins, name)
+        fs.mkdirSync(at)
+        for (const program of programs) fs.writeFileSync(path.join(at, program), '#!/bin/sh\n', { mode: 0o755 })
+        return at
+    }
+    const brew = dir('brew', ['python3'])
+    const system = dir('system', ['git', 'python3'])
+    const nvm = dir('nvm', ['node'])
+    const config = { slug: 'order', gate: { full: { when: 'nightly', at: '03:00', steps: [step('running everything', 'true')] } } }
+    const job = jobFor({ mainRepo: scratch, config, env: { PATH: [nvm, brew, system].join(':') } })
+    assert.deepEqual(job.pathVar.split(':').slice(0, 3), [nvm, brew, system], job.pathVar)
+    // A node not on the PATH at all still has its folder there, after the installer's.
+    const elsewhere = dir('elsewhere', ['node'])
+    const without = jobFor({ mainRepo: scratch, config, env: { PATH: [brew, system].join(':') }, node: path.join(elsewhere, 'node') })
+    assert.deepEqual(without.pathVar.split(':').slice(0, 3), [brew, system, elsewhere], without.pathVar)
+})
