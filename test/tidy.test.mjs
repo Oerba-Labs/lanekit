@@ -302,3 +302,16 @@ test('a repository\'s agents menu lists those that need you first, then those at
     assert.deepEqual(groups[2].agents.map((one) => one.key), ['ready', 'done'])
     assert.deepEqual(agentGroupsOf([agent('runs', 'running', 1)]).map((group) => group.id), ['working'], 'a group with nobody in it is left out')
 })
+
+test('new --dry-run says what it would do and makes no worktree, branch or environment file', () => {
+    const before = git(repo, 'worktree', 'list')
+    const looked = lane('new', 'imagined', '--dry-run')
+    assert.equal(looked.code, 0, looked.out)
+    assert.match(looked.out, /would create the worktree .*demo-imagined on a new branch "imagined" from main/)
+    assert.match(looked.out, /would write .*demo-imagined.*\.env with PORT = \d+/)
+    assert.match(looked.out, /dry run: nothing was created/)
+    assert.equal(git(repo, 'worktree', 'list'), before, 'no new worktree')
+    assert.ok(!fs.existsSync(laneDir('imagined')), 'no folder')
+    assert.ok(!gitOk(repo, 'rev-parse', '--verify', 'refs/heads/imagined'), 'no branch')
+    assert.equal(lane('new', 'imagined', '--carry', '--dry-run').code, 1, 'a carry cannot be looked at without being done')
+})

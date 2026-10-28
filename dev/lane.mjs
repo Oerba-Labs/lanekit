@@ -110,6 +110,31 @@ const fetchReview = (config, mainRepo, name, options) => {
     return { number: Number(number), title: pr.title, author, head: pr.headRefName, sameRepo: !pr.isCrossRepository, remote }
 }
 
+/**
+ * `lane new <name> --dry-run`: what making the lane would do, in the order it does it, and nothing done. Nothing is
+ * written, copied, linked, run or created, not the worktree, the branch, the environment file or a seed step; the port
+ * named is the one the next lane would take now.
+ */
+const describeCreate = (config, { mainRepo, laneDir, name, base, existing, options }) => {
+    const port = nextFreePort(config, mainRepo)
+    const vars = { lane: laneDir, main: mainRepo, port, name }
+    log(`would create the worktree ${laneDir} on ${existing ? `the branch "${name}" as it is` : `a new branch "${name}" from ${base}`}`)
+    const copy = config.lane.copyOnCreate ?? []
+    if (copy.length) log(`would copy ${copy.join(', ')} from the main checkout, where they exist`)
+    const link = config.lane.linkOnCreate ?? []
+    if (link.length && !options.install) log(`would link ${link.join(', ')} from the main checkout, where they exist`)
+    log(`would write ${path.join(laneDir, config.lane.env.file)} with ${config.lane.env.portKey} = ${port}`)
+    for (const [key, template] of Object.entries(config.lane.env.perLane ?? {})) log(`  and ${key} = ${expand(template, vars)}`)
+    for (const template of config.lane.makeDirs ?? []) log(`would make the folder ${expand(template, vars)}`)
+    const steps = []
+    if (options.provision && options.seed) steps.push(...(config.lane.seed ?? []).map((step) => ['seed', step]))
+    if (!options.provision) log('would skip provisioning (--no-provision)')
+    else if (options.install || !link.length) steps.push(...(config.lane.provision ?? []).map((step) => ['provision', step]))
+    for (const [kind, step] of steps) log(`would ${kind}: ${step.what} (${expand(step.command, vars)} ${(step.args ?? []).map((arg) => expand(arg, vars)).join(' ')})`.replace(/ \)$/, ')'))
+    log('dry run: nothing was created')
+    return null
+}
+
 const create = (config, name, options) => {
     const mainRepo = mainRepoFrom(process.cwd())
     const laneDir = laneDirFor(mainRepo, name)
@@ -121,6 +146,8 @@ const create = (config, name, options) => {
             '  digits and dashes, starting with a letter or digit.')
     }
     if (fs.existsSync(laneDir)) fail(`${laneDir} already exists.`)
+    // --pr fetches a branch before anything else and --carry moves work: neither can be looked at without being done.
+    if (options.dryRun && options.pr) fail('lane new --dry-run does not look at --pr: fetching the pull request is the first thing it does.')
     // A pull request to review (--pr <n>): its head fetched into a branch of the lane's own first, as gh pr checkout
     // fetches it, and then made a lane of as it is.
     const review = options.pr ? fetchReview(config, mainRepo, name, options) : null
@@ -143,6 +170,8 @@ const create = (config, name, options) => {
     if (dirty) {
         log(`${mainRepo} has uncommitted changes; they stay there — this lane branches from ${base} (lane new ${name} --carry takes them with it)`)
     }
+
+    if (options.dryRun) return describeCreate(config, { mainRepo, laneDir, name, base, existing, options })
 
     if (review) {
         log(`creating ${path.basename(laneDir)} on "${name}", #${review.number} as its author pushed it`)
@@ -1505,6 +1534,7 @@ const main = () => {
     // A review lane is named for its pull request unless a name is given.
     if (command === 'new' && !name && options.pr) return create(config, `review-${options.pr}`, options)
     if (command === 'new' && !name) fail('lane new needs a name.')
+    if (command === 'new' && options.carry && options.dryRun) fail('lane new --carry --dry-run is not offered: carrying moves work, and cannot be looked at without being done.')
     if (command === 'new' && options.carry) return carry(config, name, options)
     if (command === 'new' && (options.from || options.after)) fail('--from and --after go with --carry: lane new <name> --carry --from <lane>.')
     if (command === 'new') return create(config, name, options)
