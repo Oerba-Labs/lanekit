@@ -786,6 +786,7 @@ const sweep = (config, only, options) => {
     }
 
     let swept = 0
+    let skipped = 0
     for (const lane of candidates) {
         const branch = lane.branch ?? lane.name
         const contained = gitQuiet(
@@ -793,6 +794,26 @@ const sweep = (config, only, options) => {
         if (!contained.ok) {
             if (only) fail(`${lane.name} is not contained in ${config.integrationBranch} — it has not landed.`)
             continue
+        }
+        // A sweep with no name is a sweep of everything contained, and "contained" includes a lane made and not yet
+        // committed to, whose uncommitted work `worktree remove --force` would take with it. So it leaves alone a lane
+        // with changes, and one whose commit is still on the integration branch's first-parent line with nothing of
+        // its own (lib/state.mjs's 'fresh', against 'landed', a commit that came in by a merge). A name is a person
+        // saying which lane, as the Lanes page does for a landed one.
+        if (!only) {
+            const dirty = changesOf(lane.path, config, { limit: Infinity }).length
+            if (dirty) {
+                log(`${lane.name}: skipped — ${dirty} uncommitted ${dirty === 1 ? 'change' : 'changes'} would be lost; commit or discard them, or name the lane`)
+                skipped++
+                continue
+            }
+            const head = gitQuiet(['rev-parse', 'HEAD'], lane.path)
+            const line = gitQuiet(['rev-list', '--first-parent', '--max-count=500', config.integrationBranch], mainRepo)
+            if (head.ok && line.ok && line.out.split('\n').includes(head.out.trim())) {
+                log(`${lane.name}: skipped — made, but nothing of its own committed yet (it has not landed); lane drop ${lane.name} puts it away`)
+                skipped++
+                continue
+            }
         }
         if (isUnder(here, lane.path)) {
             fail(`${lane.name} is the lane you are standing in.\n\n` +
@@ -827,7 +848,11 @@ const sweep = (config, only, options) => {
         swept++
     }
 
-    if (!swept) console.log(`\n  nothing to sweep — no lane is contained in ${config.integrationBranch}\n`)
+    if (!swept) {
+        console.log(skipped
+            ? `\n  nothing swept — ${skipped} contained in ${config.integrationBranch} but left in place, as said above\n`
+            : `\n  nothing to sweep — no lane is contained in ${config.integrationBranch}\n`)
+    }
 }
 
 // ---------------------------------------------------------------------------

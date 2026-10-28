@@ -315,3 +315,28 @@ test('new --dry-run says what it would do and makes no worktree, branch or envir
     assert.ok(!gitOk(repo, 'rev-parse', '--verify', 'refs/heads/imagined'), 'no branch')
     assert.equal(lane('new', 'imagined', '--carry', '--dry-run').code, 1, 'a carry cannot be looked at without being done')
 })
+
+test('sweep with no name leaves a lane with uncommitted changes, and one with nothing of its own yet, and still sweeps a landed one', () => {
+    const first = lane('new', 'unsaved')
+    assert.equal(first.code, 0, first.out)
+    write(laneDir('unsaved'), 'draft.txt', 'not committed yet\n')
+    const second = lane('new', 'untouched')
+    assert.equal(second.code, 0, second.out)
+    const third = lane('new', 'done')
+    assert.equal(third.code, 0, third.out)
+    commit(laneDir('done'), 'done.txt', 'done\n', 'Something finished')
+    git(repo, 'merge', '--no-ff', '-q', '-m', 'Merge done', 'done')
+
+    const swept = lane('sweep')
+    assert.equal(swept.code, 0, swept.out)
+    assert.match(swept.out, /unsaved: skipped — 1 uncommitted change/)
+    assert.match(swept.out, /untouched: skipped — made, but nothing of its own/)
+    assert.match(swept.out, /removed done/)
+    assert.ok(fs.existsSync(laneDir('unsaved')), 'the lane with changes is still there')
+    assert.equal(fs.readFileSync(path.join(laneDir('unsaved'), 'draft.txt'), 'utf8'), 'not committed yet\n', 'with its changes')
+    assert.ok(fs.existsSync(laneDir('untouched')), 'and the one made but not committed to')
+    assert.ok(!fs.existsSync(laneDir('done')), 'the landed one is gone')
+    assert.ok(gitOk(repo, 'rev-parse', '--verify', 'refs/heads/done'), 'its branch kept')
+
+    lane('drop', 'unsaved', '--force'); lane('drop', 'untouched')
+})
