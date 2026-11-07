@@ -9,7 +9,9 @@
  * reads differently. And the owner's three of 26 Oct: `--install` and `--uninstall` ask "[y/N]" at a terminal (driven
  * through a pseudo-terminal, python3's pty, where there is one) and refuse without one unless `--yes`; a lane's lanekit
  * refused as the one a job names, and a version manager's node said plainly; and lands made while an after-land run is
- * under way given one run more, on main's newest commit, which names them.
+ * under way given one run more, on main's newest commit, which names them. And a run the machine slept through (lib/sleep.mjs;
+ * a Mac's sleep count rose while it ran): void, not failed, and not a baseline; the nightly's one more attempt; the machine
+ * held awake by caffeinate (a stand-in program here) on a Mac only; simulated with LANEKIT_SLEEP_COUNT_FILE, a file a step bumps.
  *
  *     node --test
  *
@@ -29,12 +31,13 @@ import { after, before, test } from 'node:test'
 
 import { loadConfig } from '../lib/config.mjs'
 import {
-    agoSaid, askYes, cronLineFor, fullGreenFor, isYes, jobFor, kitRefusal, laneFullSaid, mainFullLines, mainFullOf, nodeManagerOf,
-    plistFor, scratchFor
+    agoSaid, askYes, cronLineFor, followMain, fullGreenFor, isYes, jobFor, kitRefusal, laneFullSaid, mainFullLines, mainFullOf, nodeManagerOf,
+    plistFor, runFullOnMain, scratchFor
 } from '../lib/full.mjs'
 import { lanes as lanesOf } from '../lib/lanes.mjs'
 import { planQueue, landBlockers } from '../lib/queue.mjs'
 import { slowdownLines, slowdownOf } from '../lib/runs.mjs'
+import { machineOf, parseLid, parsePower, parseSleepCount, parseSleepTime } from '../lib/sleep.mjs'
 import { repoState } from '../lib/state.mjs'
 
 const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
@@ -758,4 +761,255 @@ test('the job\'s PATH is the installer\'s in its order: git\'s or node\'s folder
     const elsewhere = dir('elsewhere', ['node'])
     const without = jobFor({ mainRepo: scratch, config, env: { PATH: [brew, system].join(':') }, node: path.join(elsewhere, 'node') })
     assert.deepEqual(without.pathVar.split(':').slice(0, 3), [brew, system, elsewhere], without.pathVar)
+})
+
+// ---------------------------------------------------------------------------
+// a run the machine slept through
+// ---------------------------------------------------------------------------
+
+/** A file holding a number, which a step can bump to be a machine that slept: the stand-in for the sleep count. */
+const counterFile = (name, start = 5) => {
+    const file = path.join(scratch, `${name}.count`)
+    fs.writeFileSync(file, `${start}\n`)
+    return file
+}
+/** A step that sleeps the machine (bumps the count) `times` times in all across runs, failing each, then passes. */
+const sleepyStep = (counter, times, tally = `${counter}.runs`) =>
+    step('running everything', `n=$(cat ${tally} 2>/dev/null || echo 0); echo $((n+1)) > ${tally}; ` +
+        `if [ "$n" -lt ${times} ]; then echo $(( $(cat ${counter}) + 1 )) > ${counter}; echo timed out; exit 1; fi`)
+const asleep = (counter, extra = {}) => ({ LANEKIT_SLEEP_COUNT_FILE: counter, ...extra })
+
+test('sleep: the readers parse what pmset, ioreg and sysctl print on a Mac, and say null for anything else', () => {
+    assert.equal(parseSleepCount('Sleep Count:475\nDark Wake Count:440\nUser Wake Count:37\n'), 475)
+    assert.equal(parseSleepCount('Dark Wake Count:440\n'), null)
+    assert.equal(parseSleepCount('Sleep Count:abc'), null)
+    assert.deepEqual(parsePower("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true\n"), { source: 'ac', said: 'AC Power' })
+    assert.deepEqual(parsePower("Now drawing from 'Battery Power'\n"), { source: 'battery', said: 'Battery Power' })
+    assert.equal(parsePower('nothing here'), null)
+    assert.equal(parseLid('      "AppleClamshellState" = No\n'), 'open')
+    assert.equal(parseLid('      "AppleClamshellState" = Yes\n'), 'shut')
+    assert.equal(parseLid(''), null)
+    assert.equal(parseSleepTime('{ sec = 1794020323, usec = 675919 } Fri Nov  6 18:58:43 2026'), 1794020323675)
+    assert.equal(parseSleepTime('{ sec = 0, usec = 0 }'), null)
+
+    // Off a Mac nothing is run; on one, a reader that throws or prints nonsense says null rather than throwing.
+    const never = () => { throw new Error('no program should run here') }
+    const linux = machineOf({ platform: 'linux', env: {}, exec: never })
+    assert.deepEqual([linux.known, linux.sleepCount(), linux.power(), linux.lid()], [false, null, null, null])
+    const broken = machineOf({ platform: 'darwin', env: {}, exec: never })
+    assert.deepEqual([broken.known, broken.sleepCount(), broken.power(), broken.lid(), broken.lastSleep()], [true, null, null, null, null])
+    const garbled = machineOf({ platform: 'darwin', env: {}, exec: () => 'garbage' })
+    assert.equal(garbled.sleepCount(), null)
+    const calls = []
+    const reads = machineOf({ platform: 'darwin', env: {}, exec: (file, args) => { calls.push([file, ...args]); return 'Sleep Count:7\n' } })
+    assert.equal(reads.sleepCount(), 7)
+    assert.deepEqual(calls, [['/usr/bin/pmset', '-g', 'stats']], 'an absolute path, read-only arguments')
+})
+
+test('sleep: a failed run the count did not move through is failed, as it always was; unreadable counts change nothing', () => {
+    const counter = counterFile('still')
+    const repo = project('wake', { when: 'nightly', at: '03:00', steps: [step('running everything', 'echo broken; exit 1')] })
+    const ran = run('full.mjs', repo, [], asleep(counter))
+    assert.equal(ran.code, 1, ran.out)
+    assert.match(ran.out, /FULL SUITE FAILED/)
+    assert.doesNotMatch(ran.out, /VOID|slept/)
+    const [record] = runsOf(repo)
+    assert.deepEqual([record.result, 'slept' in record], ['failed', false])
+
+    // A stand-in that does not parse, and no reader at all (not a Mac): the same, and no word of sleep.
+    for (const extra of [asleep(path.join(scratch, 'no-such-count-file')), {}]) {
+        const unread = run('full.mjs', repo, ['--force'], extra)
+        assert.equal(unread.code, 1, unread.out)
+        assert.match(unread.out, /FULL SUITE FAILED/)
+        assert.equal(runsOf(repo)[0].result, 'failed')
+    }
+})
+
+test('sleep: a failed run the machine slept through is void: recorded, bannered yellow, exit 3, not red in lanes, kept for reading', () => {
+    const counter = counterFile('slept')
+    const repo = project('sleepy', { when: 'nightly', at: '03:00', label: 'every selftest', steps: [sleepyStep(counter, 99)] })
+    const ran = run('full.mjs', repo, [], asleep(counter, { LANEKIT_FULL_ATTEMPTS: '1' }))
+    assert.equal(ran.code, 3, ran.out)
+    assert.match(ran.out, /FULL SUITE VOID {2}·  every selftest void on main at [0-9a-f]{10}/)
+    assert.match(ran.out, /the sleep count is read from .*slept\.count \(LANEKIT_SLEEP_COUNT_FILE, a test's stand-in\), not from pmset/)
+    assert.match(ran.out, /the machine slept once during this run: its times mean nothing, and a failure is no verdict on main/)
+    assert.match(ran.out, / {2}failed, and no verdict on main: running everything/)
+    assert.doesNotMatch(ran.out, /FULL SUITE FAILED/)
+    const [record] = runsOf(repo)
+    assert.deepEqual([record.result, record.slept.count], ['void', 1])
+    assert.equal(record.failures[0].what, 'running everything', 'its failures are kept')
+
+    const listed = lane(repo, 'list').out
+    assert.doesNotMatch(listed, /FULL SUITE FAILED/)
+    assert.match(listed, /Full suite \(every selftest, nightly at 03:00\): the run on main at [0-9a-f]{7} \(nightly, just now\) was void: the machine slept once through it, so its times mean nothing and what it showed failing is no verdict on main; `lane nightly` runs it again\./)
+    const shown = repoState(repo).fullSuite.main
+    assert.deepEqual([shown.last, shown.voided.result, shown.voided.slept.count], [null, 'void', 1])
+    assert.equal(mainFullLines(shown, 'main').filter((line) => /no run on main yet/.test(line)).length, 0)
+})
+
+test('sleep: void is not the newest verdict, and overdue is measured past it', () => {
+    const now = Date.parse('2026-10-26T12:00:00Z')
+    const config = { slug: 'voids', integrationBranch: 'main', gate: { full: { when: 'nightly', at: '03:00', label: 'every selftest', steps: [] } } }
+    const head = 'a'.repeat(40)
+    const record = (over) => ({ kind: 'full', why: 'nightly', branch: 'main', sha: head, worktree: '/work/voids', durationSeconds: 900, steps: [], failures: [], ...over })
+    const say = (runs) => mainFullLines(mainFullOf(runs, { config, mainRepo: '/work/voids', headSha: head, now, env: { LANEKIT_PLATFORM: 'linux' } }), 'main', now)
+    const voidRun = (id, startedAt) => record({ id, result: 'void', slept: { count: 3 }, failures: [{ what: 'x', status: 1, tail: 't' }], startedAt })
+
+    // A void night after a pass: both said, the pass is still the last verdict, and nothing is in capitals.
+    const lines = say([voidRun('v', '2026-10-26T03:00:00Z'), record({ id: 'p', result: 'passed', startedAt: '2026-10-25T03:00:00Z' })])
+    assert.equal(lines.length, 2, lines.join('\n'))
+    assert.match(lines[0], /^Full suite \(every selftest, nightly at 03:00\): passed on main at aaaaaaa, \d+ hours ago/)
+    assert.match(lines[1], /was void: the machine slept 3 times through it/)
+    assert.equal(lines.some((line) => /FAILED|OVERDUE/.test(line)), false)
+    // A void run older than the verdict is not said.
+    assert.equal(say([record({ id: 'p', result: 'passed', startedAt: '2026-10-26T03:00:00Z' }), voidRun('v', '2026-10-25T03:00:00Z')]).length, 1)
+    // A failure stays said first, with a newer void beside it.
+    assert.match(say([voidRun('v', '2026-10-26T03:00:00Z'), record({ id: 'f', result: 'failed', startedAt: '2026-10-25T03:00:00Z', failures: [{ what: 'y', status: 1, tail: 't' }] })])[0], /^FULL SUITE FAILED/)
+
+    // A machine asleep every night: the voids do not keep the newest run young, so it ends in OVERDUE.
+    const asleepEveryNight = say([voidRun('v2', '2026-10-26T03:00:00Z'), voidRun('v1', '2026-10-25T03:00:00Z'), record({ id: 'p', result: 'passed', startedAt: '2026-10-23T03:00:00Z' })])
+    assert.match(asleepEveryNight.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run that counted began 3 days ago; the runs since were void \(the machine slept through them\)\./)
+    assert.ok(asleepEveryNight.some((line) => /was void/.test(line)))
+})
+
+test('sleep: a run it slept through that passed stays passed, its sleep noted, and is no baseline for a slow-down', async () => {
+    const counter = counterFile('napped')
+    const repo = project('napper', { when: 'nightly', at: '03:00', steps: [step('running everything', `echo $(( $(cat ${counter}) + 1 )) > ${counter}`)] })
+    const ran = run('full.mjs', repo, [], asleep(counter))
+    assert.equal(ran.code, 0, ran.out)
+    assert.match(ran.out, /FULL SUITE PASSED/)
+    assert.match(ran.out, /the machine slept once during the run, so its times mean nothing/)
+    const [record] = runsOf(repo)
+    assert.deepEqual([record.result, record.slept.count], ['passed', 1])
+    assert.match(lane(repo, 'list').out, /passed on main at [0-9a-f]{7}, just now, in [\d.]+s; the machine slept once during it, so its time means little\./)
+
+    const passing = (id, durationSeconds, extra = {}) => ({ id, kind: 'full', result: 'passed', durationSeconds, startedAt: '2026-10-20T03:00:00Z', ...extra })
+    const usual = [1, 2, 3, 4, 5].map((n) => passing(`f${n}`, 100))
+    assert.ok(slowdownOf(passing('now', 400), usual), 'a slow run is a slow-down')
+    assert.equal(slowdownOf(passing('now', 400, { slept: { count: 2 } }), usual), null, 'a run that slept says nothing of itself')
+    // Five usual runs of which two slept leave three: fewer than it takes to go on.
+    const some = [passing('s1', 1000, { slept: { count: 1 } }), passing('s2', 1000, { slept: { count: 1 } }), passing('f3', 100), passing('f4', 100), passing('f5', 100)]
+    assert.equal(slowdownOf(passing('now', 400), some), null, 'slept runs are not baselines')
+})
+
+test('sleep: lane nightly runs a void run once more, and stops after the second; a second that stays awake settles it', () => {
+    // Always asleep: two attempts and no third, the end said, exit 3.
+    const always = counterFile('always')
+    const repo = project('twice', { when: 'nightly', at: '03:00', steps: [sleepyStep(always, 99)] })
+    const ran = run('lane.mjs', repo, ['nightly'], asleep(always))
+    assert.equal(ran.code, 3, ran.out)
+    assert.equal(runsOf(repo).length, 2, 'two attempts in all')
+    assert.deepEqual(runsOf(repo).map((one) => one.result), ['void', 'void'])
+    assert.equal(fs.readFileSync(`${always}.runs`, 'utf8').trim(), '2')
+    assert.match(ran.out, /the machine slept through that run: running it again \(attempt 2 of 2\)/)
+    assert.match(ran.out, /void on all 2 attempts: the machine slept through each, so it is not run again tonight/)
+    assert.equal((ran.out.match(/FULL SUITE VOID/g) ?? []).length, 2)
+
+    // A second attempt that is not slept through is the verdict.
+    const once = counterFile('once')
+    const other = project('twice-ok', { when: 'nightly', at: '03:00', steps: [sleepyStep(once, 1)] })
+    const mended = run('lane.mjs', other, ['nightly'], asleep(once))
+    assert.equal(mended.code, 0, mended.out)
+    assert.deepEqual(runsOf(other).map((one) => one.result), ['passed', 'void'])
+    assert.match(mended.out, /FULL SUITE PASSED/)
+
+    // The bound is a constant that an env variable overrides: three attempts where asked for.
+    const three = project('thrice', { when: 'nightly', at: '03:00', steps: [sleepyStep(counterFile('thrice'), 99, path.join(scratch, 'thrice.tally'))] })
+    const more = run('full.mjs', three, [], asleep(path.join(scratch, 'thrice.count'), { LANEKIT_FULL_ATTEMPTS: '3' }))
+    assert.equal(more.code, 3, more.out)
+    assert.equal(runsOf(three).length, 3)
+})
+
+test('sleep: followMain settles a commit on a verdict, or on FULL_ATTEMPTS void runs of it: one more try, then it ends', async () => {
+    const counter = counterFile('followed')
+    const config = loadConfig(project('follower', { when: 'after-land', steps: [sleepyStep(counter, 99)] }))
+    const repo = path.join(scratch, 'work', 'follower')
+    const followed = await followMain({ mainRepo: repo, config, landed: 'x', log: () => {}, env: { ...env, ...asleep(counter) } })
+    assert.deepEqual(followed.records.map((one) => one.result), ['void', 'void'], 'one more try, then it ends')
+    assert.equal(runsOf(repo).length, 2)
+    assert.equal(fs.readFileSync(`${counter}.runs`, 'utf8').trim(), '2')
+    // And a second call leaves the settled commit be.
+    const again = await followMain({ mainRepo: repo, config, log: () => {}, env: { ...env, ...asleep(counter) } })
+    assert.deepEqual(again.records, [])
+
+    // One void and then a night awake: the second run is the verdict, and it ends there.
+    const once = counterFile('followed-once')
+    const other = loadConfig(project('follower-ok', { when: 'after-land', steps: [sleepyStep(once, 1)] }))
+    const mended = await followMain({ mainRepo: path.join(scratch, 'work', 'follower-ok'), config: other, log: () => {}, env: { ...env, ...asleep(once) } })
+    assert.deepEqual(mended.records.map((one) => one.result), ['void', 'passed'])
+})
+
+test('sleep: overdue is measured from the newest run that counted, else from the first void; its words say the runs since were void', () => {
+    const now = Date.parse('2026-10-26T12:00:00Z')
+    const config = { slug: 'od', integrationBranch: 'main', gate: { full: { when: 'nightly', at: '03:00', label: 'every selftest', steps: [] } } }
+    const head = 'a'.repeat(40)
+    const record = (over) => ({ kind: 'full', why: 'nightly', branch: 'main', sha: head, worktree: '/work/od', durationSeconds: 900, steps: [], failures: [], ...over })
+    const voidRun = (id, startedAt) => record({ id, result: 'void', slept: { count: 2 }, failures: [{ what: 'x', status: 1, tail: 't' }], startedAt })
+    const shown = (runs) => mainFullOf(runs, { config, mainRepo: '/work/od', headSha: head, now, env: { LANEKIT_PLATFORM: 'linux' } })
+    const hoursAgo = (n) => new Date(now - n * 3600e3).toISOString()
+
+    // Every run on record is void, the oldest 16 days ago: overdue, from the first.
+    const allVoid = shown([voidRun('a', hoursAgo(9)), voidRun('b', hoursAgo(33)), voidRun('c', hoursAgo(16 * 24))])
+    assert.equal(allVoid.overdue, true)
+    const lines = mainFullLines(allVoid, 'main', now)
+    assert.match(lines.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and no run has counted since the first, 16 days ago: each was void \(the machine slept through it\)/)
+    assert.ok(lines.some((line) => /was void/.test(line)))
+    // A single void 9 hours old, or only voids younger than 36 hours, is not overdue.
+    assert.equal(shown([voidRun('a', hoursAgo(9))]).overdue, false)
+    assert.equal(shown([voidRun('a', hoursAgo(9)), voidRun('b', hoursAgo(30))]).overdue, false)
+    assert.equal(shown([voidRun('a', hoursAgo(9)), voidRun('b', hoursAgo(37))]).overdue, true)
+
+    // A run counted 40 hours ago and void since: the words say so, and not "is this machine asleep at that hour".
+    const since = mainFullLines(shown([voidRun('a', hoursAgo(9)), record({ id: 'p', result: 'passed', startedAt: hoursAgo(40) })]), 'main', now)
+    assert.match(since.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run that counted began 2 days ago; the runs since were void \(the machine slept through them\)/)
+    assert.doesNotMatch(since.at(-1), /asleep at that hour/)
+    // With no void at all the words are as they were.
+    assert.match(mainFullLines(shown([record({ id: 'p', result: 'passed', startedAt: hoursAgo(40) })]), 'main', now).at(-1), /the newest run began 2 days ago; is this machine asleep at that hour/)
+})
+
+test('sleep: on a Mac the machine is held awake with caffeinate -i -s -w <pid> while the run goes, and let go after; elsewhere nothing is started', async () => {
+    const fake = path.join(scratch, 'fake-caffeinate')
+    const said = path.join(scratch, 'caffeinate.said')
+    fs.writeFileSync(fake, `#!/bin/sh\necho "$$ $*" > ${said}\nexec sleep 60\n`, { mode: 0o755 })
+    const exec = (file, args) => {
+        if (args[1] === 'ps') return "Now drawing from 'Battery Power'\n"
+        if (file.endsWith('ioreg')) return '"AppleClamshellState" = Yes'
+        return 'Sleep Count:9\n'
+    }
+    const repo = project('awake', { when: 'nightly', at: '03:00', steps: [step('running everything', `for i in $(seq 30); do [ -s ${said} ] && break; sleep 0.1; done; cat ${said} > ${said}.during 2>/dev/null; true`)] })
+    const config = loadConfig(repo)
+    const lines = []
+    const done = await runFullOnMain({ mainRepo: repo, config, force: true, log: (line) => lines.push(plain(line)), env: { ...env, LANEKIT_CAFFEINATE: fake },
+        machine: machineOf({ platform: 'darwin', env: { ...env, LANEKIT_CAFFEINATE: fake }, exec }) })
+    assert.equal(done.record.result, 'passed')
+    const during = fs.readFileSync(`${said}.during`, 'utf8').trim()
+    const [pid, ...args] = during.split(' ')
+    assert.deepEqual(args, ['-i', '-s', '-w', String(process.pid)], 'held for this process, no shell')
+    for (let waited = 0; waited < 50; waited++) {
+        try { process.kill(Number(pid), 0) } catch { break }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    assert.throws(() => process.kill(Number(pid), 0), 'stopped when the run ended')
+    const text = lines.join('\n')
+    assert.match(text, /power: Battery Power; macOS may sleep this machine during the run anyway \(caffeinate holds it awake on AC power only\)/)
+    assert.match(text, /lid: shut; a shut lid may sleep it too, which holding it awake is not known to prevent/)
+    assert.doesNotMatch(text, /caffeinate (prevents|keeps) /)
+
+    // Not a Mac: nothing started, nothing said of power.
+    fs.rmSync(said)
+    const quiet = []
+    const elsewhere = await runFullOnMain({ mainRepo: repo, config, force: true, log: (line) => quiet.push(line), env: { ...env, LANEKIT_CAFFEINATE: fake },
+        machine: machineOf({ platform: 'linux', env: { ...env, LANEKIT_CAFFEINATE: fake }, exec }) })
+    assert.equal(elsewhere.record.result, 'passed')
+    assert.equal(fs.existsSync(said), false, 'caffeinate was not started')
+    assert.equal(quiet.some((line) => /power:|lid:/.test(line)), false)
+
+    // A program that cannot be started is said and never fails the run.
+    const failing = []
+    const missing = path.join(scratch, 'no-such-caffeinate')
+    const unstarted = await runFullOnMain({ mainRepo: repo, config, force: true, log: (line) => failing.push(plain(line)), env,
+        machine: machineOf({ platform: 'darwin', env: { ...env, LANEKIT_CAFFEINATE: missing }, exec }) })
+    assert.equal(unstarted.record.result, 'passed')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.match(failing.join('\n'), /could not hold the machine awake/)
 })
