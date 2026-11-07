@@ -745,6 +745,7 @@ FULL SUITE FAILED on main at 4e1c2a9 (nightly, 6 hours ago): "running ./check --
 Full suite (every selftest, nightly at 03:00): passed on main at 4e1c2a9, 6 hours ago, in 840s (412 passed).
 Full suite (every selftest, nightly at 03:00): running on main at 4e1c2a9 since 5 minutes ago.
 Full suite (every selftest, nightly at 03:00): no run on main yet; `lane nightly` runs one now.
+Full suite (every selftest, nightly at 03:00): the run on main at 4e1c2a9 (nightly, 6 hours ago) was void: the machine slept 3 times through it, so its times mean nothing and what it showed failing is no verdict on main; `lane nightly` runs it again.
 FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run began 2 days ago; …
 Full suite (every selftest, after each land): running on 9b0e3d1, 4 commits before main's newest since 2 minutes ago, after a landed; main's newest commit runs when it ends.
 ```
@@ -753,6 +754,21 @@ The page says main's on a line under main's newest commit (*Full suite failed ·
 6 h ago*), a failure first in the line of what waits on you and on Home's card, and opens its failing tests and last
 lines from its words. Where it runs before a land, a lane's full suite is a state of its own under its verification,
 and Land, held, says *the full suite has not passed on this commit*.
+
+**A run the machine slept through is void, not failed.** On a Mac, the system's sleep count (`pmset -g stats`) is read
+when a run begins and when it ends. A MacBook on battery that launchd wakes at night can be woken for two seconds and
+asleep again for a quarter of an hour, hours on end, and every test that times itself counts the sleep and fails; the
+run is then recorded `void` (its failures kept for reading, `slept: { count }` beside them), shown as a line of its own
+and never in capitals, and it is not main's newest verdict: a failure or a pass before it still stands, and
+`FULL SUITE OVERDUE` is measured from the newest run that was not void, so a machine asleep every night ends there.
+`dev/full.mjs` exits 3 for it (0 passed, 1 failed). `lane nightly` makes a void run once more at once, two attempts in
+all, and says so if the second is void too; an after-land run gets one attempt. A run that passed through a sleep stays
+`passed`, with the sleep noted, and is never a baseline for a slow-down. A clock cannot tell this (Node's `hrtime`
+keeps counting through sleep on macOS), which is why the system's counter is read; where it cannot be read, or off a
+Mac, a failed run is failed as before. To make the sleep less likely, a run on a Mac holds it awake with `caffeinate -i -s
+-w <pid>` and begins its log with the power source and, where it can be read, the lid. `caffeinate -s` holds the Mac
+awake on AC power only, so on battery the log says macOS may sleep it anyway, and a shut lid is not known to be held
+off either: the count is what decides. Before-land runs (`verify`) go through no sleep check and are as they were.
 
 The scratch copy is a `git clone --shared` of the main checkout (it borrows main's objects, so it costs little), in
 lanekit's cache folder (`~/Library/Caches/lanekit/full/`, `~/.cache/lanekit/full/`, or `LANEKIT_CACHE`), checked out at

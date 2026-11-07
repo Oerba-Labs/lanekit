@@ -11,15 +11,21 @@
  * the same way once its own run ends. `--wait` waits for a run under way instead of leaving it be. A person types
  * `lane nightly`; this file is what it and the schedule run.
  *
+ * A RUN THE MACHINE SLEPT THROUGH IS VOID (lib/sleep.mjs): the sleep count rose while it ran and it failed, so its failures
+ * say nothing of main (a laptop on battery counts a night's sleep as test time). A nightly run that is void is made once
+ * more at once, two attempts in all (NIGHTLY_ATTEMPTS; LANEKIT_FULL_ATTEMPTS overrides it); if the second is void too it
+ * ends there, saying so, and `lanes` shows the void run and, a day and a half on, FULL SUITE OVERDUE. An after-land run
+ * gets one attempt: followMain treats a void run as settled. While it runs on a Mac the machine is held awake (caffeinate).
+ *
  * Run from anywhere in the repository, a lane included: the main checkout is found from it, and its config is read.
  * It exits 0 when the suite passed, or there was nothing to run (main's commit passed already, or another run holds the
- * scratch copy); 1 when it failed or could not start.
+ * scratch copy); 1 when it failed or could not start; 3 when the last run was void (the machine slept through it).
  */
 
 import path from 'node:path'
 
 import { loadConfig } from '../lib/config.mjs'
-import { followMain, fullOf, fullResultLines, runFullOnMain } from '../lib/full.mjs'
+import { followMain, fullOf, fullResultLines, NIGHTLY_ATTEMPTS, runFullOnMain } from '../lib/full.mjs'
 import { mainRepoFrom } from '../lib/lanes.mjs'
 
 const DIM = '\x1b[2m'
@@ -59,11 +65,16 @@ const banner = (word, colour, detail) => {
     console.log(`\n${rule}\n  ${colour}${word}${OFF}  ·  ${detail}\n${rule}\n`)
 }
 
-/** A run's banner, as it ends: passed, or failed and what to do. */
+/** A run's banner, as it ends: passed, void (the machine slept), or failed and what to do. */
 const said = (record) => {
     const [first, ...rest] = fullResultLines(record, base)
     for (const line of rest) console.log(line)
     if (record.result === 'passed') return banner('FULL SUITE PASSED', GREEN, `${first}  ·  ${elapsed()}`)
+    if (record.result === 'void') {
+        banner('FULL SUITE VOID', YELLOW, `${first}  ·  ${elapsed()}`)
+        console.log(`  The machine slept through it, so its failures are no verdict on ${base}, and lanes does not call it red.${record.why === 'nightly' ? '' : ' lane nightly runs it again.'}\n`)
+        return
+    }
     banner('FULL SUITE FAILED', RED, `${first}  ·  ${elapsed()}`)
     console.log(`  Nothing was changed: ${base} is as it was${record.why === 'after-land' ? `, ${landedSaid(record)} and all` : ''}. Fix it in a lane; lane nightly runs it again.\n`)
 }
@@ -71,7 +82,8 @@ const landedSaid = (record) => {
     const names = [...(record.coalesced ?? []), record.landed].filter(Boolean)
     return names.length ? `${names.join(' and ')} landed` : 'the land'
 }
-const exitWith = (record) => process.exit(record && record.result !== 'passed' ? 1 : 0)
+const VOID_EXIT = 3
+const exitWith = (record) => process.exit(!record || record.result === 'passed' ? 0 : record.result === 'void' ? VOID_EXIT : 1)
 const followsMain = fullOf(config)?.when === 'after-land'
 const following = () => followMain({
     mainRepo, config, landed: flag('--landed') ?? null, landedSha: flag('--sha') ?? null,
@@ -91,7 +103,7 @@ if (why === 'after-land' && !argv.includes('--wait')) {
     exitWith(followed.records.at(-1))
 }
 
-const done = await runFullOnMain({
+const once = () => runFullOnMain({
     mainRepo, config, why,
     sha: flag('--sha'),
     landed: flag('--landed') ?? null,
@@ -100,6 +112,18 @@ const done = await runFullOnMain({
     logFile: flag('--log') ? path.resolve(flag('--log')) : null,
     log
 })
+
+let done = await once()
+// A nightly run the machine slept through is made again, within NIGHTLY_ATTEMPTS: the sleep was the machine's, not main's.
+for (let attempt = 1; why === 'nightly' && done.record?.result === 'void'; attempt++) {
+    if (attempt >= NIGHTLY_ATTEMPTS) {
+        log(`${YELLOW}void on ${attempt === 1 ? 'its one attempt' : `all ${attempt} attempts`}: the machine slept through ${attempt === 1 ? 'it' : 'each'}, so it is not run again tonight${OFF}`)
+        break
+    }
+    said(done.record)
+    log(`${YELLOW}the machine slept through that run: running it again (attempt ${attempt + 1} of ${NIGHTLY_ATTEMPTS})${OFF}`)
+    done = await once()
+}
 
 if (done.refused) {
     console.error(`\n${RED}  ${done.refused}${OFF}\n`)
