@@ -1091,7 +1091,11 @@ const mainFullRow = (repo) => {
         { title: `Its process is gone. lane nightly runs it again on ${base} now\n${fullTitleOf(repo, stopped)}` }))
     if (running) words.push(Object.assign(state('info', `Full suite running · since ${ago(running.at)}`, 'small'), { title: fullTitleOf(repo, running) }), onWhich(running))
     if (!last && !running && !stopped && !voided) words.push(Object.assign(state('quiet', `No full suite run on ${base} yet`, 'small'), { title: `${repo.fullSuite.label}, ${fullWhenOf(repo)}: lane nightly runs one now` }))
-    else if (shown.overdue) words.push(Object.assign(state('warn', `Overdue: it runs ${fullWhenOf(repo)}`, 'small'), { title: 'No run has begun for a day and a half: is this machine asleep at that hour, or its job gone? lane nightly runs it now' }))
+    else if (shown.overdue) words.push(Object.assign(state('warn', `Overdue: it runs ${fullWhenOf(repo)}`, 'small'), { title: shown.overdueVoid === 'only'
+        ? 'No run has counted for a day and a half: each since the first was void, the machine slept through it. lane nightly runs it now'
+        : shown.overdueVoid === 'since'
+            ? 'No run has counted for a day and a half: the runs since were void, the machine slept through them. lane nightly runs it now'
+            : 'No run has begun for a day and a half: is this machine asleep at that hour, or its job gone? lane nightly runs it now' }))
     if (shown.installed === false) words.push(Object.assign(state('warn', 'No nightly job on this machine', 'small'), { title: 'Nothing runs it at night here: lane nightly --install shows what it writes, then writes it' }))
     return el('li', { class: 'main-full', 'data-key': `${repo.id}/:full-suite`, 'data-anim': key, 'data-anim-kids': true },
         el('div', { class: 'facts' }, words),

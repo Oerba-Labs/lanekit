@@ -762,7 +762,7 @@ run is then recorded `void` (its failures kept for reading, `slept: { count }` b
 and never in capitals, and it is not main's newest verdict: a failure or a pass before it still stands, and
 `FULL SUITE OVERDUE` is measured from the newest run that was not void, so a machine asleep every night ends there.
 `dev/full.mjs` exits 3 for it (0 passed, 1 failed). `lane nightly` makes a void run once more at once, two attempts in
-all, and says so if the second is void too; an after-land run gets one attempt. A run that passed through a sleep stays
+all, and says so if the second is void too; an after-land run has the same bound (a commit with a verdict, or void twice, is settled). A run that passed through a sleep stays
 `passed`, with the sleep noted, and is never a baseline for a slow-down. A clock cannot tell this (Node's `hrtime`
 keeps counting through sleep on macOS), which is why the system's counter is read; where it cannot be read, or off a
 Mac, a failed run is failed as before. To make the sleep less likely, a run on a Mac holds it awake with `caffeinate -i -s

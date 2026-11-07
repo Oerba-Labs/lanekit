@@ -831,6 +831,7 @@ test('sleep: a failed run the machine slept through is void: recorded, bannered 
     const ran = run('full.mjs', repo, [], asleep(counter, { LANEKIT_FULL_ATTEMPTS: '1' }))
     assert.equal(ran.code, 3, ran.out)
     assert.match(ran.out, /FULL SUITE VOID {2}·  every selftest void on main at [0-9a-f]{10}/)
+    assert.match(ran.out, /the sleep count is read from .*slept\.count \(LANEKIT_SLEEP_COUNT_FILE, a test's stand-in\), not from pmset/)
     assert.match(ran.out, /the machine slept once during this run: its times mean nothing, and a failure is no verdict on main/)
     assert.match(ran.out, / {2}failed, and no verdict on main: running everything/)
     assert.doesNotMatch(ran.out, /FULL SUITE FAILED/)
@@ -867,7 +868,7 @@ test('sleep: void is not the newest verdict, and overdue is measured past it', (
 
     // A machine asleep every night: the voids do not keep the newest run young, so it ends in OVERDUE.
     const asleepEveryNight = say([voidRun('v2', '2026-10-26T03:00:00Z'), voidRun('v1', '2026-10-25T03:00:00Z'), record({ id: 'p', result: 'passed', startedAt: '2026-10-23T03:00:00Z' })])
-    assert.match(asleepEveryNight.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run began 3 days ago; is this machine asleep at that hour/)
+    assert.match(asleepEveryNight.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run that counted began 3 days ago; the runs since were void \(the machine slept through them\)\./)
     assert.ok(asleepEveryNight.some((line) => /was void/.test(line)))
 })
 
@@ -919,17 +920,51 @@ test('sleep: lane nightly runs a void run once more, and stops after the second;
     assert.equal(runsOf(three).length, 3)
 })
 
-test('sleep: followMain treats a void run as settled, so a laptop shut after a land runs the commit once and ends', async () => {
+test('sleep: followMain settles a commit on a verdict, or on FULL_ATTEMPTS void runs of it: one more try, then it ends', async () => {
     const counter = counterFile('followed')
     const config = loadConfig(project('follower', { when: 'after-land', steps: [sleepyStep(counter, 99)] }))
     const repo = path.join(scratch, 'work', 'follower')
     const followed = await followMain({ mainRepo: repo, config, landed: 'x', log: () => {}, env: { ...env, ...asleep(counter) } })
-    assert.deepEqual(followed.records.map((one) => one.result), ['void'], 'one attempt, then it ends')
-    assert.equal(runsOf(repo).length, 1)
-    assert.equal(fs.readFileSync(`${counter}.runs`, 'utf8').trim(), '1')
+    assert.deepEqual(followed.records.map((one) => one.result), ['void', 'void'], 'one more try, then it ends')
+    assert.equal(runsOf(repo).length, 2)
+    assert.equal(fs.readFileSync(`${counter}.runs`, 'utf8').trim(), '2')
     // And a second call leaves the settled commit be.
     const again = await followMain({ mainRepo: repo, config, log: () => {}, env: { ...env, ...asleep(counter) } })
     assert.deepEqual(again.records, [])
+
+    // One void and then a night awake: the second run is the verdict, and it ends there.
+    const once = counterFile('followed-once')
+    const other = loadConfig(project('follower-ok', { when: 'after-land', steps: [sleepyStep(once, 1)] }))
+    const mended = await followMain({ mainRepo: path.join(scratch, 'work', 'follower-ok'), config: other, log: () => {}, env: { ...env, ...asleep(once) } })
+    assert.deepEqual(mended.records.map((one) => one.result), ['void', 'passed'])
+})
+
+test('sleep: overdue is measured from the newest run that counted, else from the first void; its words say the runs since were void', () => {
+    const now = Date.parse('2026-10-26T12:00:00Z')
+    const config = { slug: 'od', integrationBranch: 'main', gate: { full: { when: 'nightly', at: '03:00', label: 'every selftest', steps: [] } } }
+    const head = 'a'.repeat(40)
+    const record = (over) => ({ kind: 'full', why: 'nightly', branch: 'main', sha: head, worktree: '/work/od', durationSeconds: 900, steps: [], failures: [], ...over })
+    const voidRun = (id, startedAt) => record({ id, result: 'void', slept: { count: 2 }, failures: [{ what: 'x', status: 1, tail: 't' }], startedAt })
+    const shown = (runs) => mainFullOf(runs, { config, mainRepo: '/work/od', headSha: head, now, env: { LANEKIT_PLATFORM: 'linux' } })
+    const hoursAgo = (n) => new Date(now - n * 3600e3).toISOString()
+
+    // Every run on record is void, the oldest 16 days ago: overdue, from the first.
+    const allVoid = shown([voidRun('a', hoursAgo(9)), voidRun('b', hoursAgo(33)), voidRun('c', hoursAgo(16 * 24))])
+    assert.equal(allVoid.overdue, true)
+    const lines = mainFullLines(allVoid, 'main', now)
+    assert.match(lines.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and no run has counted since the first, 16 days ago: each was void \(the machine slept through it\)/)
+    assert.ok(lines.some((line) => /was void/.test(line)))
+    // A single void 9 hours old, or only voids younger than 36 hours, is not overdue.
+    assert.equal(shown([voidRun('a', hoursAgo(9))]).overdue, false)
+    assert.equal(shown([voidRun('a', hoursAgo(9)), voidRun('b', hoursAgo(30))]).overdue, false)
+    assert.equal(shown([voidRun('a', hoursAgo(9)), voidRun('b', hoursAgo(37))]).overdue, true)
+
+    // A run counted 40 hours ago and void since: the words say so, and not "is this machine asleep at that hour".
+    const since = mainFullLines(shown([voidRun('a', hoursAgo(9)), record({ id: 'p', result: 'passed', startedAt: hoursAgo(40) })]), 'main', now)
+    assert.match(since.at(-1), /^FULL SUITE OVERDUE: it runs nightly at 03:00, and the newest run that counted began 2 days ago; the runs since were void \(the machine slept through them\)/)
+    assert.doesNotMatch(since.at(-1), /asleep at that hour/)
+    // With no void at all the words are as they were.
+    assert.match(mainFullLines(shown([record({ id: 'p', result: 'passed', startedAt: hoursAgo(40) })]), 'main', now).at(-1), /the newest run began 2 days ago; is this machine asleep at that hour/)
 })
 
 test('sleep: on a Mac the machine is held awake with caffeinate -i -s -w <pid> while the run goes, and let go after; elsewhere nothing is started', async () => {

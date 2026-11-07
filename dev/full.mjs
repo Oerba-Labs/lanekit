@@ -13,9 +13,9 @@
  *
  * A RUN THE MACHINE SLEPT THROUGH IS VOID (lib/sleep.mjs): the sleep count rose while it ran and it failed, so its failures
  * say nothing of main (a laptop on battery counts a night's sleep as test time). A nightly run that is void is made once
- * more at once, two attempts in all (NIGHTLY_ATTEMPTS; LANEKIT_FULL_ATTEMPTS overrides it); if the second is void too it
+ * more at once, two attempts in all (FULL_ATTEMPTS; LANEKIT_FULL_ATTEMPTS overrides it); if the second is void too it
  * ends there, saying so, and `lanes` shows the void run and, a day and a half on, FULL SUITE OVERDUE. An after-land run
- * gets one attempt: followMain treats a void run as settled. While it runs on a Mac the machine is held awake (caffeinate).
+ * has the same bound: followMain settles a commit on a verdict, or on that many void runs of it. While it runs on a Mac the machine is held awake (caffeinate).
  *
  * Run from anywhere in the repository, a lane included: the main checkout is found from it, and its config is read.
  * It exits 0 when the suite passed, or there was nothing to run (main's commit passed already, or another run holds the
@@ -25,7 +25,7 @@
 import path from 'node:path'
 
 import { loadConfig } from '../lib/config.mjs'
-import { followMain, fullOf, fullResultLines, NIGHTLY_ATTEMPTS, runFullOnMain } from '../lib/full.mjs'
+import { followMain, fullOf, fullResultLines, FULL_ATTEMPTS, runFullOnMain } from '../lib/full.mjs'
 import { mainRepoFrom } from '../lib/lanes.mjs'
 
 const DIM = '\x1b[2m'
@@ -114,14 +114,14 @@ const once = () => runFullOnMain({
 })
 
 let done = await once()
-// A nightly run the machine slept through is made again, within NIGHTLY_ATTEMPTS: the sleep was the machine's, not main's.
+// A nightly run the machine slept through is made again, within FULL_ATTEMPTS: the sleep was the machine's, not main's.
 for (let attempt = 1; why === 'nightly' && done.record?.result === 'void'; attempt++) {
-    if (attempt >= NIGHTLY_ATTEMPTS) {
+    if (attempt >= FULL_ATTEMPTS) {
         log(`${YELLOW}void on ${attempt === 1 ? 'its one attempt' : `all ${attempt} attempts`}: the machine slept through ${attempt === 1 ? 'it' : 'each'}, so it is not run again tonight${OFF}`)
         break
     }
     said(done.record)
-    log(`${YELLOW}the machine slept through that run: running it again (attempt ${attempt + 1} of ${NIGHTLY_ATTEMPTS})${OFF}`)
+    log(`${YELLOW}the machine slept through that run: running it again (attempt ${attempt + 1} of ${FULL_ATTEMPTS})${OFF}`)
     done = await once()
 }
 
